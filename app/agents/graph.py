@@ -79,14 +79,14 @@ def supervisor_router(state: dict) -> Literal["extraction", "analysis", "validat
     
     print(f"[SUPERVISOR] extraction={extraction_done}, analysis={analysis_done}, validation={validation_done}, retries={retry_count}")
     
-    # Check if we need to re-extract due to conflicts
+    # Check if we need to re-extract due to conflicts (after analysis, before validation)
     if analysis_done and not validation_done:
-        conflicts = consistency.get("conflicts", [])
+        requires_reextract = consistency.get("requires_reextraction", False)
         score = consistency.get("overall_score", 100)
         
-        # If critical conflicts found and retries available, re-extract
-        if score < 50 and retry_count < MAX_RETRIES:
-            print(f"[SUPERVISOR] -> extraction (re-extract due to score {score})")
+        # Re-extract if consistency checker requested it and retries available
+        if requires_reextract and retry_count < MAX_RETRIES:
+            print(f"[SUPERVISOR] -> extraction (FEEDBACK LOOP: score={score}, retry {retry_count + 1}/{MAX_RETRIES})")
             return "extraction"
     
     # Check if validation requested retry
@@ -96,7 +96,7 @@ def supervisor_router(state: dict) -> Literal["extraction", "analysis", "validat
             print(f"[SUPERVISOR] -> extraction (validation requested retry)")
             return "extraction"
         # All done
-        print(f"[SUPERVISOR] -> __end__ (all phases complete)")
+        print(f"[SUPERVISOR] -> __end__ (all phases complete, retries={retry_count})")
         return "__end__"
     
     # Normal flow
