@@ -13,6 +13,7 @@
 3. [Dialogue Agent - Production Level 업그레이드](#3-dialogue-agent---production-level-업그레이드)
 4. [Emotion Agent - Production Level 업그레이드](#4-emotion-agent---production-level-업그레이드)
 5. [Consistency Agent - Production Level 업그레이드](#5-consistency-agent---production-level-업그레이드)
+6. [Plot Integration Agent - Production Level 업그레이드](#6-plot-integration-agent---production-level-업그레이드)
 
 ---
 
@@ -438,6 +439,99 @@ for conflict in conflicts:
             WHERE source='{fvc['key']['source']}' AND target='{fvc['key']['target']}'
         \"\"\")
 ```
+
+---
+
+## 6. Plot Integration Agent - Production Level 업그레이드
+
+### 📅 날짜
+2025-12-27
+
+### 🔴 문제 (Problem)
+1. 기본적인 프롬프트로 단순 요약만 제공
+2. 멀티미디어 파이프라인에 필요한 시계열 데이터 없음
+3. 이벤트/캐릭터 참조 없이 자체 이름 생성
+
+**기존 출력**:
+```json
+{
+  "plot_summary": "...",
+  "foreshadowing": ["..."],
+  "tension_level": 5
+}
+```
+
+### 🟡 원인 분석 (Root Cause)
+1. Tension이 단일 숫자로 시간 흐름에 따른 변화 표현 불가
+2. 비트 단위 분할 없어 컷 연출/삽화 생성 활용 불가
+3. Event Agent 결과 참조하지 않음
+
+### 🟢 해결책 (Solution)
+
+#### 1. Tension Curve 배열 도입
+```json
+"tension_curve": [3, 5, 7, 8, 6]
+```
+→ 오디오 빌드업(↑), 드롭(↓) 타이밍 자동 생성 가능
+
+#### 2. Narrative Beats 분할
+```json
+"narrative_beats": [
+  {
+    "beat_id": 1,
+    "text": "서진과 하나가 어두운 숲에서 만남",
+    "beat_type": "SETUP",
+    "event_ref": "E001",
+    "visual_prompt": "Two figures meeting in dark forest"
+  }
+]
+```
+- `beat_type`: SETUP, INCITING_INCIDENT, CLIMAX 등
+- `visual_prompt`: 삽화 AI 직접 입력 가능
+
+#### 3. Multimedia Pipeline Summary
+```json
+{
+  "multimedia_summary": {
+    "beat_count": 5,
+    "tension_curve_length": 5,
+    "has_visual_prompts": true,
+    "tension_range": {"min": 3, "max": 8, "peak_index": 3}
+  }
+}
+```
+
+### 📁 수정된 파일
+- `app/agents/analysis/plot.py` - Production Level 업그레이드
+- `tests/test_agents/test_plot_integration.ipynb` - 7개 섹션으로 확장
+
+### ✅ 결과
+- 3-Act 구조 + Foreshadowing + Neo4j 엣지
+- Tension Curve 배열 (오디오/연출 타이밍용)
+- Narrative Beats (컷 편집/삽화 프롬프트용)
+- Multimedia Summary (파이프라인 검증용)
+
+### 💡 추가 수정: Tension Curve 빈 배열 문제
+
+**문제**: LLM이 `tension_curve`를 빈 배열 `[]`로 반환하는 경우 발생
+
+**해결**: 프로그래매틱 백업 함수 추가
+```python
+def generate_fallback_tension_curve(events: list) -> list:
+    """이벤트 importance로 tension 자동 생성"""
+    return [max(1, min(10, e.get("importance", 5))) for e in events]
+
+def generate_fallback_beats(events: list) -> list:
+    """이벤트에서 narrative beats 자동 생성"""
+    ...
+```
+
+**결과 (로그)**:
+```
+[PLOT] Generating fallback tension_curve from event importance
+[PLOT] Beats: 5, Tension curve: [7, 9, 8, 8, 6]
+```
+→ Raw Data 배열이 항상 보장됨
 
 ---
 
