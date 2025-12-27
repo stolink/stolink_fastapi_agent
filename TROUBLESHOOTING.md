@@ -11,6 +11,7 @@
 1. [Setting Agent - 인물/사건 혼입 문제](#1-setting-agent---인물사건-혼입-문제)
 2. [Event Agent - 배경 묘사 혼입 및 참조 매칭 문제](#2-event-agent---배경-묘사-혼입-및-참조-매칭-문제)
 3. [Dialogue Agent - Production Level 업그레이드](#3-dialogue-agent---production-level-업그레이드)
+4. [Emotion Agent - Production Level 업그레이드](#4-emotion-agent---production-level-업그레이드)
 
 ---
 
@@ -257,6 +258,68 @@ if power_ab == "superior" and power_ba != "subordinate":
 #### 3. 식별자 일관성 강제
 이미 `available_characters` 전달로 해결됨
 추가 보완: 프롬프트에 **"캐릭터 이름은 반드시 제공된 리스트 표기를 그대로 따를 것"** 명시
+
+---
+
+## 4. Emotion Agent - Production Level 업그레이드
+
+### 📅 날짜
+2025-12-27
+
+### 🔴 문제 (Problem)
+1. 기본적인 프롬프트로 출력 구조가 단순함 (emotion, intensity만)
+2. Character Agent와 이름 매칭이 안 됨
+3. 감정 트리거, 표현 방식 등 컨텍스트 부족
+
+### 🟢 해결책 (Solution)
+
+#### 1. 감정 필드 확장
+- `primary_emotion`, `secondary_emotion`: 복합 감정 표현
+- `trigger`: 감정 유발 원인
+- `expression`: 물리적 표현 방식
+- `is_hidden`: 숨겨진 감정 여부
+
+#### 2. Neo4j 노드 속성 업데이트
+```json
+{
+  "neo4j_updates": [
+    {
+      "character_name": "서진",
+      "property_updates": {
+        "current_emotion": "분노",
+        "emotion_intensity": 8,
+        "emotion_valence": "negative"
+      }
+    }
+  ]
+}
+```
+
+### 💡 향후 개선 사항 (Event Sourcing)
+
+현재 방식은 캐릭터 노드의 속성을 덮어쓰기(Overwrite)합니다.
+감정 변화의 역사(History)를 추적해야 한다면:
+
+**현재 (State Update)**:
+```cypher
+SET (Character).emotion = "분노"
+```
+
+**고도화 (Event Graph)**:
+```cypher
+CREATE (c:Character)-[:FELT {timestamp: t, chapter: 3}]->(e:Emotion {type: "분노"})
+```
+
+→ 스토리 진행에 따른 감정 변화 궤적(Trajectory) 분석 가능
+
+### 📁 수정된 파일
+- `app/agents/extraction/emotion.py` - 프롬프트 Production Level 업그레이드
+- `tests/test_agents/test_emotion_tracking.ipynb` - 테스트 노트북 상세화
+
+### ✅ 결과
+- `emotion_states`: 상세 감정 분석 (trigger, expression, is_hidden)
+- `neo4j_updates`: Character 노드 속성 업데이트용 JSON
+- Character Agent 이름과 정확히 매칭
 
 ---
 
