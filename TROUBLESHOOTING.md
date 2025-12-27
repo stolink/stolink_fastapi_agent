@@ -12,6 +12,7 @@
 2. [Event Agent - 배경 묘사 혼입 및 참조 매칭 문제](#2-event-agent---배경-묘사-혼입-및-참조-매칭-문제)
 3. [Dialogue Agent - Production Level 업그레이드](#3-dialogue-agent---production-level-업그레이드)
 4. [Emotion Agent - Production Level 업그레이드](#4-emotion-agent---production-level-업그레이드)
+5. [Consistency Agent - Production Level 업그레이드](#5-consistency-agent---production-level-업그레이드)
 
 ---
 
@@ -320,6 +321,123 @@ CREATE (c:Character)-[:FELT {timestamp: t, chapter: 3}]->(e:Emotion {type: "분�
 - `emotion_states`: 상세 감정 분석 (trigger, expression, is_hidden)
 - `neo4j_updates`: Character 노드 속성 업데이트용 JSON
 - Character Agent 이름과 정확히 매칭
+
+---
+
+## 5. Consistency Agent - Production Level 업그레이드
+
+### 📅 날짜
+2025-12-27
+
+### 🔴 문제 (Problem)
+1. Dialogue/Emotion Agent 결과를 활용하지 않음 (Level 1 데이터 미통합)
+2. 관계 방향성 검증 없음 (BETRAYED/MENTOR는 단방향이어야 함)
+3. 참조 무결성 검증 없음 (존재하지 않는 캐릭터 참조 가능)
+4. Neo4j-ready 출력 구조 없음
+
+**기존 검증 범위**:
+- Character trait 충돌만 감지
+- 단순 점수 계산 (HIGH: -25, MEDIUM: -10)
+
+### 🟡 원인 분석 (Root Cause)
+1. 초기 구현에서 Level 1 Agent 결과 통합을 고려하지 않음
+2. 관계 방향성 규칙(BETRAYED: 배신자→피해자)이 프롬프트에 없음
+3. 프로그래매틱 검증이 trait 충돌에만 한정됨
+
+### 🟢 해결책 (Solution)
+
+#### 1. Level 1 Agent 데이터 통합
+```python
+dialogues = state.get("analyzed_dialogues", {})
+emotions = state.get("tracked_emotions", {})
+```
+
+#### 2. 충돌 유형 확장
+| 충돌 유형 | Severity | 설명 |
+|----------|----------|------|
+| `CHARACTER_TRAIT_CONFLICT` | HIGH | 모순된 성격 특성 |
+| `DIRECTION_CONFLICT` | MEDIUM | BETRAYED/MENTOR 방향성 오류 |
+| `REFERENTIAL_INTEGRITY_ERROR` | HIGH | 존재하지 않는 캐릭터 참조 |
+| `DIALOGUE_CONSISTENCY_CONFLICT` | LOW-MEDIUM | 대화 패턴-성격 불일치 |
+| `EMOTION_CONSISTENCY_CONFLICT` | LOW-MEDIUM | 감정-행동 불일치 |
+
+#### 3. 프로그래매틱 검증 확장
+```python
+def validate_relationship_directions(relationships: list) -> list:
+    """BETRAYED/MENTOR는 bidirectional=false여야 함"""
+    ...
+
+def validate_character_references(relationships: list, available_names: set) -> list:
+    """모든 source/target이 character list에 존재해야 함"""
+    ...
+```
+
+#### 4. Neo4j-Ready 출력 추가
+```json
+{
+  "neo4j_validation": {
+    "is_valid": true,
+    "conflict_count": 0,
+    "high_severity_count": 0
+  }
+}
+```
+
+### 📁 수정된 파일
+- `app/agents/analysis/consistency.py` - Production Level 전면 개선
+- `tests/test_agents/test_consistency_check.ipynb` - 7개 테스트 섹션으로 확장
+
+### ✅ 결과
+- Dialogue/Emotion 데이터 교차 검증
+- 관계 방향성 자동 검증 (BETRAYED, MENTOR)
+- 참조 무결성 자동 검증
+- Neo4j 검증 결과 구조화된 출력
+
+### 💡 추가 기능: 자동 해결 전략 (Auto-Resolution Strategy)
+
+각 충돌에 `suggested_action` 및 `final_value_candidate` 필드 제공:
+
+| Action | 설명 |
+|--------|------|
+| `KEEP_DB_VALUE` | 기존 DB 값 유지 |
+| `OVERWRITE_WITH_NEW` | 새 값으로 덮어쓰기 (저위험) |
+| `FLAG_FOR_HUMAN` | 인간 검토 필요 |
+| `AUTO_FIX` | 시스템 자동 수정 가능 |
+
+**🆕 final_value_candidate 구조** (AUTO_FIX 시):
+```json
+{
+  "table": "relationships",
+  "key": {"source": "이민호", "target": "서진", "relation_type": "BETRAYED"},
+  "update": {"bidirectional": false}
+}
+```
+→ 별도 연산 없이 바로 UPDATE 쿼리에 바인딩 가능!
+
+**Resolution Summary 출력**:
+```json
+{
+  "resolution_summary": {
+    "auto_fixable": 2,
+    "ready_for_update": 2,  // 🆕 바로 DB UPDATE 가능한 수
+    "needs_human_review": 3,
+    "total_conflicts": 6
+  }
+}
+```
+
+**백엔드 로직 예시**:
+```python
+for conflict in conflicts:
+    if conflict['suggested_action'] == 'AUTO_FIX':
+        fvc = conflict['final_value_candidate']
+        # 바로 UPDATE 쿼리 실행 가능!
+        db.execute(f\"\"\"
+            UPDATE {fvc['table']} 
+            SET {', '.join(f'{k}={v}' for k,v in fvc['update'].items())}
+            WHERE source='{fvc['key']['source']}' AND target='{fvc['key']['target']}'
+        \"\"\")
+```
 
 ---
 
