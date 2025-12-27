@@ -1,7 +1,7 @@
 ﻿# StoLink Multi-Agent Architecture
 
-> **Version**: 2.0.0  
-> **Last Updated**: 2025-12-25  
+> **Version**: 2.1.0  
+> **Last Updated**: 2025-12-27  
 > **Architecture Type**: Hierarchical (Supervisor Pattern)  
 > **Total Agents**: 10 (5 Extraction + 3 Analysis + 1 Validation + 1 Orchestration)
 
@@ -17,7 +17,9 @@
 6. [개연성 검증 메커니즘](#6-개연성-검증-메커니즘)
 7. [LangGraph 구현 가이드](#7-langgraph-구현-가이드)
 8. [확장성 고려사항](#8-확장성-고려사항)
-9. [구현 시 고려사항](#9-구현-시-고려사항) ✨ NEW
+9. [구현 시 고려사항](#9-구현-시-고려사항)
+10. [Production Level 파이프라인](#10-production-level-파이프라인) ✨ NEW
+
 
 ---
 
@@ -3694,5 +3696,276 @@ app:
 
 ---
 
+## 10. Production Level 파이프라인
+
+> [!IMPORTANT]
+> 이 섹션은 `2025-12-27`에 추가되었습니다. 시스템의 핵심 목표는 **"텍스트를 읽고 → 관계를 저장하며(Neo4j) → 장면을 시각화(Image Gen)"**하는 완전 자동화 파이프라인 구축입니다.
+
+### 10.1 실행 파이프라인 (Execution Pipeline)
+
+데이터의 **참조 무결성(Referential Integrity)**을 위해 에이전트 실행 순서를 구조화합니다.
+
+> [!NOTE]
+> `PROJECT_ARCHITECTURE.md`의 전체 시스템 흐름을 참고하세요.
+> - Analysis Worker(FastAPI)가 멀티 에이전트 분석 수행 후 Spring Boot로 콜백
+> - Spring Boot가 RDB/Neo4j 저장 및 Image Gen Queue 발행
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  FastAPI Backend (AI Worker - Multi-Agent Pipeline)                 │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  Phase 1: Extraction Layer (Level 1)                                │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │  Step 1: Master Data Extraction (병렬 실행)                    │  │
+│  │  ├── 🎭 Character Agent: 인물 정보 추출                        │  │
+│  │  └── 🏰 Setting Agent: 장소/배경 정보 추출                     │  │
+│  │                                                                │  │
+│  │  Step 2: Narrative Flow Extraction (순차 실행)                 │  │
+│  │  └── 📅 Event Agent: 캐릭터/장소 참조하여 사건 구성             │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│                              │                                       │
+│                              ▼                                       │
+│  Phase 2: Analysis Layer (Level 2)                                  │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │  🔗 Relationship Analyzer: 관계 추론/그래프 생성               │  │
+│  │  🔍 Consistency Checker: 개연성 검증/설정 충돌 감지            │  │
+│  │  🎯 Plot Integrator: 복선 연결/스토리 아크                     │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│                              │                                       │
+│                              ▼                                       │
+│  Phase 3: Validation Layer (Level 3)                                │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │  ✅ Validator Agent: 최종 데이터 검증/형식 유효성 확인          │  │
+│  │     - 충돌 발견 시 → Extraction Layer로 Re-extraction 요청     │  │
+│  │     - 검증 통과 시 → Spring Boot Callback                      │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+                               │
+                               │ POST /internal-callback
+                               │ (분석 결과 + 그래프 데이터)
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  Spring Boot Backend (Callback Handler - Integration)               │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  Step 4: Multi-Persistence (다중 영속화)                            │
+│  ├── 📊 PostgreSQL: 캐릭터 속성/상태 저장                           │
+│  └── 🔗 Neo4j: 인물 관계/서사 그래프 저장 (Cypher/SDN)              │
+│                                                                      │
+│  Step 5: Image Generation Chaining                                  │
+│  └── 🎨 Image Gen Queue 발행 → Image Worker → S3 업로드            │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**실행 순서 요약**:
+| Step | Layer | 에이전트 | 실행 방식 |
+|------|-------|----------|----------|
+| 1 | Extraction | Character + Setting | 병렬 |
+| 2 | Extraction | Event | 순차 (Step 1 이후) |
+| 3 | Analysis | Relationship + Consistency + Plot | 병렬 |
+| 4 | Validation | Validator | 순차 (최종 검증) |
+| 5 | Integration | Spring Boot Callback | 외부 처리 |
+
+### 10.2 에이전트별 R&R 및 JSON 스키마
+
+#### A. Character Extractor (인물 마스터)
+
+**역할**: "캐스팅 디렉터" - 캐릭터 노드 정보 담당
+
+```json
+{
+  "characters": [
+    {
+      "name": "서진",
+      "role": "protagonist",
+      "visual": {
+        "appearance": ["tall", "dark hair"],
+        "attire": ["holding sword", "wearing cloak"],
+        "age_group": "adult",
+        "gender": "male"
+      },
+      "personality": {
+        "core_traits": ["brave", "skilled swordsman"],
+        "flaws": ["impulsive"],
+        "values": ["justice"]
+      },
+      "relationships": [
+        {
+          "target": "이민호",
+          "type": "ENEMY",
+          "history": "former_friend",
+          "strength": 8
+        }
+      ],
+      "current_mood": {
+        "emotion": "tense",
+        "intensity": 7,
+        "trigger": "confronting former friend"
+      }
+    }
+  ]
+}
+```
+
+**필드 분리 기준**:
+| 필드 | 용도 |
+|------|------|
+| `visual` | 이미지 생성 AI용 |
+| `personality` | LLM 페르소나/대화용 |
+| `relationships` | Neo4j 엣지 생성용 |
+| `current_mood` | TTS/표정 생성용 |
+
+#### B. Setting Extractor (장소 마스터)
+
+**역할**: "무대 감독" - 배경, 조명, 분위기 담당
+
+```json
+{
+  "settings": [
+    {
+      "setting_id": "loc_forest_01",
+      "name": "Dark Forest",
+      "location_type": "forest",
+      "visual_background": "Dense ancient forest with tall twisted trees, thick fog covering the ground, moonlight filtering through leaves",
+      "atmosphere": "ominous, tense",
+      "time_of_day": "night",
+      "lighting": "pale moonlight filtering through dense canopy",
+      "weather": "foggy",
+      "notable_features": ["ancient twisted trees", "thick fog", "hidden paths"]
+    }
+  ]
+}
+```
+
+**핵심**: Event Agent가 중복된 장소를 만들지 않도록 **장소의 고유성(Identity)**을 정의합니다.
+
+#### C. Event Extractor (사건 연출)
+
+**역할**: "연출 감독" - 누가, 어디서, 무엇을 했는가?
+
+```json
+{
+  "events": [
+    {
+      "event_id": "E003",
+      "event_type": "confrontation",
+      "narrative_summary": "서진이 이민호에게 배신 이유를 묻는다",
+      
+      "participants": ["서진", "이민호"],
+      "location_ref": "Dark Forest",
+      "prev_event_id": "E002",
+      
+      "visual_scene": "Two men facing each other with swords drawn, intense eye contact, low angle shot",
+      "camera_angle": "low angle",
+      
+      "importance": 9
+    }
+  ]
+}
+```
+
+**핵심**: 직접적인 묘사 대신 **참조(Reference)**와 **행동 묘사(Visual Scene)**에 집중합니다.
+
+### 10.3 Neo4j 그래프 자동 생성 (Auto-Graph)
+
+데이터가 구조화되어 있어 Cypher 쿼리를 템플릿화할 수 있습니다.
+
+```cypher
+// === CHARACTER NODES ===
+CREATE (c:Character {name: '서진', role: 'protagonist'})
+CREATE (c:Character {name: '이민호', role: 'antagonist'})
+
+// === LOCATION NODES ===
+CREATE (l:Location {id: 'loc_forest_01', name: 'Dark Forest', atmosphere: 'ominous'})
+
+// === EVENT NODES & EDGES ===
+// Event E003 생성
+CREATE (e:Event {id: 'E003', summary: '서진이 이민호에게 배신 이유를 묻는다'})
+
+// INVOLVES edges (participants 필드 활용)
+MATCH (c:Character) WHERE c.name IN ['서진', '이민호']
+MATCH (e:Event {id: 'E003'})
+CREATE (e)-[:INVOLVES]->(c)
+
+// HAPPENS_AT edge (location_ref 필드 활용)
+MATCH (l:Location {name: 'Dark Forest'})
+MATCH (e:Event {id: 'E003'})
+CREATE (e)-[:HAPPENS_AT]->(l)
+
+// NEXT edge (prev_event_id 필드 활용)
+MATCH (prev:Event {id: 'E002'})
+MATCH (e:Event {id: 'E003'})
+CREATE (prev)-[:NEXT]->(e)
+```
+
+### 10.4 이미지 프롬프트 조립 (Prompt Assembly)
+
+이미지 생성 모델(Flux, Nova)에 보낼 때, 각 에이전트의 결과물을 **레고 조립**하듯 합칩니다.
+
+**프롬프트 공식**:
+```
+[Event.visual_scene] + [Character.visual] + [Setting.visual_background] + [Quality Tags]
+```
+
+**Python 구현**:
+```python
+def assemble_image_prompt(event, characters, settings):
+    """이미지 생성 프롬프트 조립"""
+    prompt_parts = []
+    
+    # 1. Event visual_scene (액션/구도)
+    if event.get('visual_scene'):
+        prompt_parts.append(f"(Action) {event.get('visual_scene')}")
+    
+    # 2. Character visuals (참여자들)
+    for participant in event.get('participants', []):
+        for char in characters:
+            if char.get('name') == participant:
+                visual = char.get('visual', {})
+                char_desc = []
+                char_desc.extend(visual.get('appearance', []))
+                char_desc.extend(visual.get('attire', []))
+                if char_desc:
+                    prompt_parts.append(f"(Character: {participant}) {', '.join(char_desc)}")
+                break
+    
+    # 3. Setting visual_background (배경)
+    location_ref = event.get('location_ref', '')
+    for setting in settings:
+        if setting.get('name') == location_ref:
+            if setting.get('visual_background'):
+                prompt_parts.append(f"(Background) {setting.get('visual_background')}")
+            break
+    
+    # 4. Quality tags
+    prompt_parts.append("highly detailed, digital art, fantasy style, cinematic lighting")
+    
+    return ", ".join(prompt_parts)
+```
+
+**생성 예시**:
+```
+(Action) Two men facing each other with swords drawn, intense eye contact, low angle shot,
+(Character: 서진) tall, dark hair, holding sword, wearing cloak,
+(Character: 이민호) cold eyes, wearing black armor,
+(Background) Dense ancient forest with tall twisted trees, thick fog covering the ground, moonlight filtering through leaves,
+highly detailed, digital art, fantasy style, cinematic lighting
+```
+
+### 10.5 테스트 노트북
+
+| 노트북 | 설명 |
+|--------|------|
+| `test_character_extraction.ipynb` | 캐릭터 추출 + Production Level 스키마 테스트 |
+| `test_setting_extraction.ipynb` | Setting 추출 + 이미지 배경 프롬프트 조립 |
+| `test_event_extraction.ipynb` | Event 추출 + Graph 연결 + Timeline 시각화 |
+| `test_pipeline_integration.ipynb` | **전체 파이프라인 통합 테스트** |
+
+---
+
 > **Document maintained by**: StoLink AI Team  
-> **Last review**: 2025-12-25
+> **Last review**: 2025-12-27
+

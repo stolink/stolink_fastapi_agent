@@ -1,7 +1,11 @@
-"""Event Extraction Agent - Level 1.
+"""Event Extraction Agent - Level 1 (Production Level).
 
-Extracts events and timeline information from story text.
-Supports re-extraction with conflict feedback.
+Role: "Director" - Manages who, where, what happened.
+Key: Focus on REFERENCES (to characters and settings) and VISUAL SCENE description.
+
+Output is optimized for:
+- Neo4j graph edges (participants → INVOLVES, location_ref → HAPPENS_AT, prev_event_id → NEXT)
+- Image generation AI (visual_scene for action/composition prompts)
 """
 import json
 from langchain_core.prompts import ChatPromptTemplate
@@ -10,59 +14,111 @@ from app.agents.llm import get_standard_llm
 
 
 EVENT_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """You are a story analysis expert. Extract all events from the given text.
+    ("system", """You are a "Director" - an expert at analyzing story events and their connections.
 
+Your role: Extract EVENTS that will be used for:
+1. Neo4j graph database (as Event nodes with edges to Characters and Locations)
+2. Image generation AI (as scene composition prompts)
+
+=== KEY PRINCIPLES ===
+- **Reference, don't duplicate**: Use character NAMES and location NAMES as references
+- **Focus on action**: Describe WHAT HAPPENS, not background details
+- **Visual scene**: Describe the COMPOSITION for image generation
+
+=== OUTPUT STRUCTURE ===
 For each event, provide:
-- event_id: Unique ID (E001, E002, etc.)
-- description: Brief description
-- participants: List of character names involved
-- event_type: One of "action", "dialogue", "revelation", "flashback"
-- importance: 1-10 scale
 
-Return ONLY valid JSON in this exact format:
+1. **Event Identity**
+   - event_id: Unique ID (E001, E002...)
+   - event_type: "action", "dialogue", "revelation", "confrontation", "flashback"
+   - narrative_summary: Brief summary of what happens
+
+2. **Graph Connections (for Neo4j Edges)**
+   - participants: List of CHARACTER NAMES involved (creates INVOLVES edges)
+   - location_ref: LOCATION NAME where event happens (creates HAPPENS_AT edge)
+   - prev_event_id: Previous event ID for timeline (creates NEXT edge)
+
+3. **Visual Scene (for Image Generation)**
+   - visual_scene: Describe the COMPOSITION and ACTION
+     * Focus on: poses, positions, expressions, camera angle
+     * Example: "Two men facing each other with swords drawn, intense eye contact, low angle shot"
+     * DO NOT describe background (that comes from Setting)
+   - camera_angle: Suggested angle ("low angle", "bird's eye", "close-up", "wide shot")
+
+4. **Metadata**
+   - importance: 1-10 scale
+   - is_foreshadowing: true/false
+
+Return ONLY valid JSON:
 {{
   "events": [
-    {{"event_id": "E001", "description": "...", "participants": ["..."], "event_type": "action", "importance": 5}}
+    {{
+      "event_id": "E001",
+      "event_type": "action",
+      "narrative_summary": "서진이 숲에서 검을 들고 대기 중",
+      "participants": ["서진"],
+      "location_ref": "Dark Forest",
+      "prev_event_id": null,
+      "visual_scene": "A tall man with dark hair holding a sword, standing alert, tense posture",
+      "camera_angle": "medium shot",
+      "importance": 5,
+      "is_foreshadowing": false
+    }},
+    {{
+      "event_id": "E002",
+      "event_type": "confrontation",
+      "narrative_summary": "이민호가 배신의 이유를 묻는 대치",
+      "participants": ["서진", "이민호"],
+      "location_ref": "Dark Forest",
+      "prev_event_id": "E001",
+      "visual_scene": "Two men facing each other with swords drawn, intense eye contact, low angle dramatic shot",
+      "camera_angle": "low angle",
+      "importance": 9,
+      "is_foreshadowing": false
+    }}
   ]
 }}"""),
     ("human", """Text to analyze:
 {story_text}
 
-Extract events as JSON:""")
+Extract all events with graph connections and visual scenes:""")
 ])
 
 
 EVENT_RE_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """You are a story analysis expert. You previously extracted events but some conflicts were detected.
+    ("system", """You are an event analysis expert. Re-extract events with corrections based on feedback.
 
-Review the conflicts and re-extract events with corrections.
-
-PREVIOUS CONFLICTS DETECTED:
+PREVIOUS CONFLICTS:
 {conflicts}
 
-GUIDELINES FOR CORRECTION:
-- If timeline conflicts exist, reorder events logically
-- If event types seem incorrect, recategorize them
-- Ensure event descriptions are accurate and not contradictory
+=== PRESERVATION RULES ===
+1. Keep all valid events from previous extraction
+2. Only modify the specific conflicting elements
+3. Ensure proper event_type classification
+4. Maintain timeline integrity (prev_event_id chain)
 
-Return ONLY valid JSON in this exact format:
-{{
-  "events": [
-    {{"event_id": "E001", "description": "...", "participants": ["..."], "event_type": "action", "importance": 5}}
-  ]
-}}"""),
+=== IMPORTANT ===
+- Preserve participant lists
+- Preserve location_ref references
+- Fix only what is flagged as conflict
+
+Return the same JSON structure as initial extraction."""),
     ("human", """Original text:
 {story_text}
 
 Previous extraction:
 {previous_extraction}
 
-Re-extract events with corrections:""")
+Re-extract with corrections, maintaining valid data:""")
 ])
 
 
 async def event_extraction_node(state: dict) -> dict:
-    """Event Extraction Agent node function."""
+    """Event Extraction Agent node function - Production Level.
+    
+    Role: "Director" - extracts events with graph connections
+    for Neo4j edges and image generation scene prompts.
+    """
     llm = get_standard_llm()
     
     conflicts = state.get("consistency_report", {}).get("conflicts", [])
@@ -100,13 +156,16 @@ async def event_extraction_node(state: dict) -> dict:
             "extracted_events": events,
             "messages": [
                 {"role": "event_agent", 
-                 "content": f"{'Re-' if is_re_extraction else ''}Extracted {len(events)} events"}
+                 "content": f"{'Re-' if is_re_extraction else ''}Extracted {len(events)} events (Production Level)"}
             ]
         }
     except json.JSONDecodeError as e:
         return {
             "extracted_events": previous_events or [],
-            "errors": [f"Event JSON parse error: {str(e)}"]
+            "errors": [f"Event JSON parse error: {str(e)}"],
+            "messages": [
+                {"role": "event_agent", "content": "Failed to parse response"}
+            ]
         }
     except Exception as e:
         return {

@@ -64,12 +64,17 @@ class SettingExtraction(BaseModel):
     time_of_day: TimeOfDay = Field(default=TimeOfDay.UNKNOWN)
     lighting: Optional[str] = Field(None, description="Lighting description for visual rendering")
     weather: Optional[str] = Field(None, description="Weather conditions")
+    art_style: Optional[str] = Field(
+        default="Dark Fantasy, Realistic, Cinematic Lighting",
+        description="Art style for image generation (e.g., 'Dark Fantasy, Anime, Watercolor')"
+    )
     
     # === Narrative Context ===
     description: str = Field(default="", description="Narrative description")
     notable_features: list[str] = Field(default_factory=list, description="Key features of the location")
     significance: Optional[str] = Field(None, description="Story significance of this location")
     first_mentioned: Optional[str] = Field(None, description="First appearance in story")
+    is_primary: bool = Field(default=True, description="True if action happens here, False if only mentioned")
 
 
 class WorldRule(BaseModel):
