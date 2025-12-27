@@ -9,6 +9,7 @@
 ## 목차
 
 1. [Setting Agent - 인물/사건 혼입 문제](#1-setting-agent---인물사건-혼입-문제)
+2. [Event Agent - 배경 묘사 혼입 및 참조 매칭 문제](#2-event-agent---배경-묘사-혼입-및-참조-매칭-문제)
 
 ---
 
@@ -79,6 +80,80 @@ the output is INVALID and will be REJECTED.
 
 ---
 
+## 2. Event Agent - 배경 묘사 혼입 및 참조 매칭 문제
+
+### 📅 날짜
+2025-12-27
+
+### 🔴 문제 (Problem)
+1. `visual_scene`에 배경 묘사가 포함됨 (Setting Agent와 중복)
+2. `participants`가 Character Agent의 이름과 정확히 매칭되지 않음
+3. `location_ref`가 Setting Agent의 이름과 매칭되지 않음
+
+**실패 출력 예시**:
+```json
+{
+  "visual_scene": "A man holding a sword in a dark forest with tall trees and fog.",
+  "participants": ["the protagonist"],
+  "location_ref": "A dark forest where trees are twisted"
+}
+```
+
+**기대 출력**:
+```json
+{
+  "visual_scene": "A tall man with dark hair gripping a sword, tense posture, alert expression",
+  "participants": ["서진"],
+  "location_ref": "Dark Forest"
+}
+```
+
+### 🟡 원인 분석 (Root Cause)
+1. Event Agent에게 Character/Setting 정보가 전달되지 않음
+2. 프롬프트에 명확한 역할 분리 지시 없음
+3. 참조용 데이터 없이 LLM이 자체 생성
+
+### 🟢 해결책 (Solution)
+
+#### 1. Phase 분리 (graph.py)
+```python
+# Phase 1: Character + Setting (병렬)
+# Phase 2: Event (순차 - Phase 1 결과 참조)
+```
+
+#### 2. Bad vs Good 예시 추가
+```
+❌ BAD: visual_scene에 "dark forest with trees"
+✅ GOOD: visual_scene에 "intense eye contact, low angle shot" (구도만)
+```
+
+#### 3. 참조 데이터 전달
+```python
+response = await chain.ainvoke({
+    "story_text": state["content"],
+    "available_characters": ["서진", "이민호", ...],  # Character Agent 결과
+    "available_settings": ["Dark Forest", ...],       # Setting Agent 결과
+})
+```
+
+#### 4. 페널티 경고
+```
+If visual_scene contains "forest", "trees", "moon", "fog" - REJECTED
+```
+
+### 📁 수정된 파일
+- `app/agents/graph.py` - 2-Phase Extraction 구현
+- `app/agents/extraction/event.py` - 프롬프트 전면 개선
+- `app/schemas/events.py` - (이미 Production Level)
+
+### ✅ 결과
+- Event의 `visual_scene`에서 배경 묘사 제거
+- `participants`가 Character Agent 이름과 정확히 매칭
+- `location_ref`가 Setting Agent 이름과 정확히 매칭
+- Neo4j 그래프 엣지 자동 생성 가능
+
+---
+
 ## 템플릿 (새 이슈 추가 시 사용)
 
 ```markdown
@@ -102,3 +177,4 @@ YYYY-MM-DD
 ### ✅ 결과
 [결과]
 ```
+

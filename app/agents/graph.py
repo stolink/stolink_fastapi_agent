@@ -117,21 +117,51 @@ def supervisor_router(state: dict) -> Literal["extraction", "analysis", "validat
 
 
 async def extraction_node(state: dict) -> dict:
-    """Execute all extraction agents in parallel."""
+    """Execute extraction agents in proper order.
+    
+    Phase 1: Master Data (병렬)
+        - Character Agent
+        - Setting Agent
+        
+    Phase 2: Narrative Flow (순차 - Phase 1 완료 후)
+        - Event Agent (Character/Setting 결과 참조)
+        - Dialogue Agent
+        - Emotion Agent
+    """
     print(f"[EXTRACTION] Starting, content length: {len(state.get('content', ''))}")
     
-    tasks = [
+    # === Phase 1: Master Data Extraction (병렬) ===
+    print("[EXTRACTION] Phase 1: Master Data (Character + Setting) - 병렬 실행")
+    phase1_tasks = [
         asyncio.create_task(character_extraction_node(state)),
-        asyncio.create_task(event_extraction_node(state)),
         asyncio.create_task(setting_extraction_node(state)),
-        asyncio.create_task(dialogue_analysis_node(state)),
-        asyncio.create_task(emotion_tracking_node(state)),
     ]
+    phase1_results = await asyncio.gather(*phase1_tasks, return_exceptions=True)
     
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Merge Phase 1 results into state
+    phase1_state = dict(state)  # Copy state
+    for result in phase1_results:
+        if isinstance(result, dict):
+            for key, value in result.items():
+                if key not in ("messages", "errors", "partial_failure"):
+                    phase1_state[key] = value
     
+    char_count = len(phase1_state.get("extracted_characters", []))
+    setting_count = len(phase1_state.get("extracted_settings", []))
+    print(f"[EXTRACTION] Phase 1 완료: Characters={char_count}, Settings={setting_count}")
+    
+    # === Phase 2: Narrative Flow Extraction (순차 - Phase 1 결과 참조) ===
+    print("[EXTRACTION] Phase 2: Narrative Flow (Event) - 순차 실행 (Character/Setting 참조)")
+    phase2_tasks = [
+        asyncio.create_task(event_extraction_node(phase1_state)),  # Phase 1 결과 참조!
+        asyncio.create_task(dialogue_analysis_node(phase1_state)),
+        asyncio.create_task(emotion_tracking_node(phase1_state)),
+    ]
+    phase2_results = await asyncio.gather(*phase2_tasks, return_exceptions=True)
+    
+    # Combine all results
     updates = {
-        "messages": [{"role": "extraction", "content": "Extraction complete"}],
+        "messages": [{"role": "extraction", "content": "Extraction complete (2-phase)"}],
         "errors": [],
         "extraction_done": True,
         "analysis_done": False,  # Reset for re-extraction
@@ -139,9 +169,10 @@ async def extraction_node(state: dict) -> dict:
         "retry_count": state.get("retry_count", 0) + (1 if state.get("extraction_done", False) else 0),
     }
     
-    for i, result in enumerate(results):
+    # Apply Phase 1 results
+    for result in phase1_results:
         if isinstance(result, Exception):
-            updates["errors"].append(f"Agent {i} failed: {str(result)}")
+            updates["errors"].append(f"Phase 1 agent failed: {str(result)}")
         elif isinstance(result, dict):
             for key, value in result.items():
                 if key == "messages":
@@ -151,7 +182,22 @@ async def extraction_node(state: dict) -> dict:
                 elif key not in ("partial_failure",):
                     updates[key] = value
     
-    print(f"[EXTRACTION] Done: chars={len(updates.get('extracted_characters', []))}")
+    # Apply Phase 2 results
+    for result in phase2_results:
+        if isinstance(result, Exception):
+            updates["errors"].append(f"Phase 2 agent failed: {str(result)}")
+        elif isinstance(result, dict):
+            for key, value in result.items():
+                if key == "messages":
+                    updates["messages"].extend(value)
+                elif key == "errors":
+                    updates["errors"].extend(value)
+                elif key not in ("partial_failure",):
+                    updates[key] = value
+    
+    event_count = len(updates.get("extracted_events", []))
+    print(f"[EXTRACTION] Phase 2 완료: Events={event_count}")
+    print(f"[EXTRACTION] Done: chars={char_count}, settings={setting_count}, events={event_count}")
     return updates
 
 
