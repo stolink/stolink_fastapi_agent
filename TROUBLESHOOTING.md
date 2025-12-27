@@ -10,6 +10,7 @@
 
 1. [Setting Agent - 인물/사건 혼입 문제](#1-setting-agent---인물사건-혼입-문제)
 2. [Event Agent - 배경 묘사 혼입 및 참조 매칭 문제](#2-event-agent---배경-묘사-혼입-및-참조-매칭-문제)
+3. [Dialogue Agent - Production Level 업그레이드](#3-dialogue-agent---production-level-업그레이드)
 
 ---
 
@@ -151,6 +152,111 @@ If visual_scene contains "forest", "trees", "moon", "fog" - REJECTED
 - `participants`가 Character Agent 이름과 정확히 매칭
 - `location_ref`가 Setting Agent 이름과 정확히 매칭
 - Neo4j 그래프 엣지 자동 생성 가능
+
+---
+
+## 3. Dialogue Agent - Production Level 업그레이드
+
+### 📅 날짜
+2025-12-27
+
+### 🔴 문제 (Problem)
+1. 기본적인 프롬프트만 있어서 출력 구조가 단순함
+2. Character Agent와 이름 매칭이 안 됨
+3. Neo4j 엣지 생성에 필요한 속성(formality, power, intimacy)이 없음
+
+**기존 출력**:
+```json
+{
+  "key_dialogues": ["..."],
+  "speech_patterns": {}
+}
+```
+
+### 🟡 원인 분석 (Root Cause)
+1. Dialogue Agent가 Character Agent 결과를 참조하지 않음
+2. 스키마(`dialogues.py`)에 상세 모델이 있지만 프롬프트에서 활용 안 함
+3. 관계성(speaker → listener)이 구조화되지 않음
+
+### 🟢 해결책 (Solution)
+
+#### 1. Character 참조 전달
+```python
+available_characters = [c.get("name", "") for c in state.get("extracted_characters", [])]
+response = await chain.ainvoke({
+    "story_text": state["content"],
+    "available_characters": json.dumps(available_characters)
+})
+```
+
+#### 2. 3차원 관계 모델링
+- `formality`: "formal", "informal", "mixed"
+- `power_dynamic`: "superior", "equal", "subordinate"
+- `intimacy_level`: 1-10 정량화
+
+#### 3. Neo4j 엣지 속성 추출
+```json
+{
+  "dialogue_relationships": [
+    {
+      "speaker": "하나",
+      "listener": "서진",
+      "formality_to_listener": "formal",
+      "power_dynamic": "subordinate",
+      "intimacy_level": 7
+    }
+  ]
+}
+```
+
+### ⚠️ 주의사항 (Data Integrity)
+
+#### Enum 유효성 검증
+LLM이 "polite" 대신 "formal", "lower" 대신 "subordinate" 등 유의어를 출력할 수 있음.
+→ Pydantic 또는 후처리에서 허용값 검증 필요
+
+#### 노드 키 무결성
+Character Agent가 "Seojin"(영문), Dialogue Agent가 "서진"(한글) 출력 시 매칭 실패
+→ 일관된 식별자(Identifier) 사용 권장
+
+### 📁 수정된 파일
+- `app/agents/extraction/dialogue.py` - 프롬프트 Production Level 업그레이드
+- `tests/test_agents/test_dialogue_analysis.ipynb` - 테스트 노트북 상세화
+
+### ✅ 결과
+- `key_dialogues`: 중요 대사 + 숨겨진 의미(subtext) 추출
+- `speech_patterns`: 캐릭터별 말투 특성
+- `dialogue_relationships`: Neo4j 엣지 속성 (formality, power, intimacy)
+- Character Agent 이름과 정확히 매칭
+
+### 💡 향후 개선 사항 (Future Enhancements)
+
+#### 1. 친밀도(Intimacy) 변수 분리
+현재: 단일 `intimacy_level` (1-10)
+문제: 소꿉친구 설정에도 현재 적대적이면 낮게 측정됨
+
+**제안된 분리**:
+```json
+{
+  "friendliness": 2,      // 현재 우호도 (낮음)
+  "bond_strength": 9      // 관계의 깊이/역사 (높음)
+}
+```
+→ "죽이고 싶을 만큼 미우면서도 서로를 가장 잘 아는 애증 관계" 표현 가능
+
+#### 2. 권력 관계 비대칭성 검증
+A→B가 "superior"면 B→A는 "subordinate"여야 함
+현재: LLM이 상황에 따라 다르게 판단 (하나가 이민호에게 맞서는 태도 = equal)
+
+**검증 로직 추가 제안**:
+```python
+if power_ab == "superior" and power_ba != "subordinate":
+    conflicts.append("Power asymmetry detected")
+```
+
+#### 3. 식별자 일관성 강제
+이미 `available_characters` 전달로 해결됨
+추가 보완: 프롬프트에 **"캐릭터 이름은 반드시 제공된 리스트 표기를 그대로 따를 것"** 명시
 
 ---
 
