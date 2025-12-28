@@ -845,6 +845,55 @@ arguments={
 }
 ```
 
+### 🐛 추가 버그 수정: Callback URL 무시 문제
+
+#### 문제
+RabbitMQ 메시지에서 `callback_url`을 `https://webhook.site/...`로 설정해도 항상 `settings.spring_callback_url`로 요청이 전송됨.
+
+**에러 로그**:
+```
+Callback request error error='All connection attempts failed' job_id=test-job-003
+```
+
+#### 원인
+`callback_client.py`가 메시지의 `callback_url`을 파라미터로 받지 않고, 항상 설정 파일의 기본 URL을 사용:
+
+```python
+# 기존 코드 (문제)
+callback_url = f"{self.base_url}/api/internal/ai/analysis/callback"
+```
+
+#### 해결
+1. `callback_client.py` - `callback_url` 파라미터 추가:
+```python
+async def send_analysis_callback(
+    self,
+    ...,
+    callback_url: Optional[str] = None  # NEW
+) -> bool:
+    if callback_url and callback_url.startswith("http"):
+        url = callback_url  # 메시지의 URL 직접 사용
+    else:
+        url = f"{settings.spring_callback_url}/api/internal/ai/analysis/callback"
+```
+
+2. `analysis_service.py` - `task.callback_url` 전달:
+```python
+callback_url = task.callback_url  # 메시지에서 추출
+await callback_client.send_analysis_callback(
+    ...,
+    callback_url=callback_url  # 전달
+)
+```
+
+#### 테스트 방법
+1. RabbitMQ WebUI에서 메시지 발행 (callback_url을 webhook.site로 설정)
+2. webhook.site에서 결과 수신 확인
+
+#### 수정된 파일
+- `app/services/callback_client.py`
+- `app/services/analysis_service.py`
+
 ---
 
 ## 템플릿 (새 이슈 추가 시 사용)
