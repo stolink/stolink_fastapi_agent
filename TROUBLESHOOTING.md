@@ -1,6 +1,6 @@
 # StoLink AI Backend - Troubleshooting Guide
 
-> **Last Updated**: 2025-12-27
+> **Last Updated**: 2025-12-28
 
 이 문서는 개발 과정에서 발생한 주요 문제와 해결책을 기록합니다.
 
@@ -14,6 +14,8 @@
 4. [Emotion Agent - Production Level 업그레이드](#4-emotion-agent---production-level-업그레이드)
 5. [Consistency Agent - Production Level 업그레이드](#5-consistency-agent---production-level-업그레이드)
 6. [Plot Integration Agent - Production Level 업그레이드](#6-plot-integration-agent---production-level-업그레이드)
+7. [Validator Agent - Production Level 업그레이드](#7-validator-agent---production-level-업그레이드)
+8. [Supervisor Agent - Production Level 업그레이드](#8-supervisor-agent---production-level-업그레이드)
 
 ---
 
@@ -532,6 +534,92 @@ def generate_fallback_beats(events: list) -> list:
 [PLOT] Beats: 5, Tension curve: [7, 9, 8, 8, 6]
 ```
 → Raw Data 배열이 항상 보장됨
+
+---
+
+## 7. Validator Agent - Production Level 업그레이드
+
+### 📅 날짜
+2025-12-28
+
+### 🔴 문제 (Problem)
+1. 기본적인 True/False 검증만 제공
+2. 에러 발생 시 "어디에, 왜" 정보 없음
+3. 성능 모니터링 불가
+
+### 🟢 해결책 (Solution)
+
+#### 1. 구조화된 에러 출력
+```json
+{
+  "field": "extracted_characters[0].name",
+  "code": "VAL_003",
+  "message": "Required field 'name' is missing",
+  "value": null
+}
+```
+
+#### 2. 실행 시간 메트릭
+```json
+"execution_time_ms": 12.5
+```
+
+### 📁 수정된 파일
+- `app/agents/validation/validator.py` - 구조화된 에러, 실행 시간
+- `tests/test_agents/test_validator.ipynb` - 테스트 케이스
+
+### ✅ 결과
+- 8개 에이전트 출력 개별 검증
+- 구조화된 에러 리포트 (field, code, message, value)
+- 실행 시간 메트릭
+
+---
+
+## 8. Supervisor Agent - Production Level 업그레이드
+
+### 📅 날짜
+2025-12-28
+
+### 🔴 문제 (Problem)
+1. 요청 추적 불가 - 비동기 환경에서 로그 추적 어려움
+2. Validation 실패 시 무한 루프 가능성
+3. 최대 재시도 초과 시 처리 방안 없음
+
+### 🟢 해결책 (Solution)
+
+#### 1. Global Trace ID (전역 추적 ID)
+```python
+def generate_trace_id() -> str:
+    return f"req-{date_str}-{short_uuid}"
+# 출력: "req-20251228-123456-a1b2c3d4"
+```
+→ 모든 로그에 요청 추적 ID 포함
+
+#### 2. Supervisor State (재시도 모니터링)
+```json
+{
+  "trace_id": "req-20251228-123456-a1b2c3d4",
+  "current_phase": "extraction",
+  "retry_counts": {"extraction": 1, "analysis": 0},
+  "max_retries": {"extraction": 3, "analysis": 2}
+}
+```
+
+#### 3. Human Review Node
+```python
+if retry_count >= MAX_EXTRACTION_RETRIES:
+    return "human_review"  # 사람 개입 요청
+```
+→ 최대 재시도 (3회) 초과 시 사람 개입
+
+### 📁 수정된 파일
+- `app/agents/supervisor.py` - trace_id, supervisor_state, human_review_node
+- `tests/test_agents/test_supervisor.ipynb` - 9개 테스트 케이스
+
+### ✅ 결과
+- **trace_id**: 전역 요청 추적 ID
+- **supervisor_state**: 재시도 횟수 모니터링
+- **human_review**: 무한 루프 방지 + 사람 개입 라우팅
 
 ---
 
