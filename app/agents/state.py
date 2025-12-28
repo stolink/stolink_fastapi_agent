@@ -1,4 +1,9 @@
-"""LangGraph State definition for story analysis pipeline."""
+"""LangGraph State definition for story analysis pipeline.
+
+Updated to align with hybrid message schema:
+- Trace ID for distributed tracing
+- Context data from Spring Boot + optional DB enrichment
+"""
 from typing import Annotated, Any, Literal, Optional
 from pydantic import BaseModel, Field
 from langgraph.graph import add_messages
@@ -9,6 +14,11 @@ class StoryAnalysisState(BaseModel):
     
     This state is passed through all agents in the LangGraph workflow.
     Each agent reads from and writes to specific fields.
+    
+    Data Flow:
+    1. Initial state created from RabbitMQ message (AnalysisTaskMessage)
+    2. Optional: Enriched with DB queries via DatabaseQueryService
+    3. Passed through extraction → analysis → validation agents
     """
     
     # ===== Input Data =====
@@ -18,22 +28,30 @@ class StoryAnalysisState(BaseModel):
     job_id: str = Field(..., description="Analysis job UUID")
     callback_url: str = Field(..., description="Spring callback endpoint")
     
-    # ===== Existing Data (Context from DB) =====
+    # ===== Tracing =====
+    trace_id: str = Field(default="", description="Global trace ID for distributed tracing")
+    
+    # ===== Context from Message =====
+    chapter_number: Optional[int] = Field(None, description="Current chapter number")
+    total_chapters: Optional[int] = Field(None, description="Total chapters in project")
+    world_rules_summary: Optional[str] = Field(None, description="Summary of world rules")
+    
+    # ===== Existing Data (From Spring Boot context or DB query) =====
     existing_characters: list[dict[str, Any]] = Field(
         default_factory=list, 
-        description="Existing characters from PostgreSQL"
+        description="Existing character refs/data from Spring Boot or DB"
     )
     existing_events: list[dict[str, Any]] = Field(
         default_factory=list,
-        description="Existing events from PostgreSQL"
+        description="Existing event refs/data from Spring Boot or DB"
     )
     existing_relationships: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Existing relationships from Neo4j"
     )
-    existing_settings: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Existing worldbuilding settings"
+    existing_settings: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Existing settings/locations"
     )
     
     # ===== Level 1: Extraction Results =====

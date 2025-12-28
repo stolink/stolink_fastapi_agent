@@ -16,6 +16,7 @@
 6. [Plot Integration Agent - Production Level 업그레이드](#6-plot-integration-agent---production-level-업그레이드)
 7. [Validator Agent - Production Level 업그레이드](#7-validator-agent---production-level-업그레이드)
 8. [Supervisor Agent - Production Level 업그레이드](#8-supervisor-agent---production-level-업그레이드)
+9. [Message Schema - 하이브리드 아키텍처 업그레이드](#9-message-schema---하이브리드-아키텍처-업그레이드)
 
 ---
 
@@ -620,6 +621,229 @@ if retry_count >= MAX_EXTRACTION_RETRIES:
 - **trace_id**: 전역 요청 추적 ID
 - **supervisor_state**: 재시도 횟수 모니터링
 - **human_review**: 무한 루프 방지 + 사람 개입 라우팅
+
+---
+
+## 9. Message Schema - 하이브리드 아키텍처 업그레이드
+
+### 📅 날짜
+2025-12-28
+
+### 🔴 문제 (Problem)
+1. `messages.py`의 `AnalysisContext`가 기본 count 정보만 포함
+2. `rabbitmq_consumer.py`가 Supervisor와 연동되지 않음
+3. 에이전트들이 기존 캐릭터/이벤트 데이터에 접근 불가
+4. 분산 추적을 위한 Global Trace ID 미지원
+
+**기존 메시지 스키마**:
+```python
+class AnalysisContext(BaseModel):
+    previous_chapters: list[str] = []
+    existing_characters_count: int = 0  # count만
+    existing_events_count: int = 0      # count만
+```
+
+**기존 데이터 접근 문제**:
+- ConsistencyChecker: 기존 캐릭터 속성과 비교 불가
+- RelationshipAnalyzer: 기존 관계 데이터 참조 불가
+- 일관성 검사가 동일 문서 내에서만 가능
+
+### 🟡 원인 분석 (Root Cause)
+1. 초기 설계에서 Spring Boot → FastAPI 방향만 고려
+2. FastAPI가 기존 데이터를 조회할 방법이 없었음
+3. 메시지 크기 최소화를 위해 count만 전송하도록 설계
+
+### 🟢 해결책 (Solution)
+
+#### 아키텍처 결정: 하이브리드 방식
+두 가지 접근 방식의 장점을 결합:
+
+| 옵션 | 설명 | 장단점 |
+|------|------|--------|
+| **A. Spring Boot 전송** | 기존 데이터를 메시지에 포함 | 빠름, 메시지 크기 증가 |
+| **B. FastAPI DB 조회** | 필요시 직접 DB 조회 | 항상 최신, 네트워크 홉 |
+| **✅ C. 하이브리드** | 경량 참조 전송 + 필요시 DB 조회 | 균형 잡힌 접근 |
+
+**핵심 원칙**:
+- **읽기 (Read)**: FastAPI가 PostgreSQL/Neo4j 직접 조회
+- **쓰기 (Write)**: Spring Boot 콜백을 통해 처리
+
+#### 1. 경량 참조 스키마 (`messages.py`)
+```python
+class ExistingCharacterRef(BaseModel):
+    """경량 참조 - 이름 매칭용"""
+    id: str
+    name: str
+    role: Optional[str] = None
+
+class ExistingRelationshipRef(BaseModel):
+    """Neo4j 관계 경량 참조"""
+    source_name: str
+    target_name: str
+    relation_type: str
+    strength: int = 5
+
+class AnalysisContext(BaseModel):
+    """확장된 컨텍스트"""
+    chapter_number: Optional[int] = None
+    existing_characters: list[ExistingCharacterRef] = []
+    existing_events: list[ExistingEventRef] = []
+    existing_relationships: list[ExistingRelationshipRef] = []
+    existing_settings: list[ExistingSettingRef] = []
+    world_rules_summary: Optional[str] = None
+```
+
+#### 2. DB 조회 서비스 (`db_query_service.py`) - NEW
+```python
+class DatabaseQueryService:
+    """읽기 전용 DB 조회 서비스"""
+    
+    async def get_character_details(self, project_id: str, name: str):
+        """캐릭터 상세 정보 조회"""
+        ...
+    
+    async def get_all_relationships(self, project_id: str):
+        """Neo4j 관계 전체 조회"""
+        ...
+    
+    async def get_world_rules(self, project_id: str):
+        """세계관 규칙 조회"""
+        ...
+```
+
+#### 3. RabbitMQ Consumer 강화 (`rabbitmq_consumer.py`)
+```python
+class RabbitMQConsumer:
+    """프로덕션 레벨 Consumer"""
+    
+    # 연결 재시도 로직 (최대 5회)
+    async def connect(self) -> None:
+        for attempt in range(max_retries):
+            try: ...
+    
+    # Global Trace ID 전파
+    async def _process_message(self, message):
+        trace_id = task_message.trace_id or self._generate_trace_id()
+        bound_logger = logger.bind(trace_id=trace_id)
+    
+    # 헬스 체크
+    async def health_check(self) -> dict:
+        return {"connected": ..., "consuming": ...}
+```
+
+#### 4. Analysis Service 하이브리드 통합 (`analysis_service.py`)
+```python
+async def run_analysis(task, trace_id, enrich_from_db=False):
+    # 1. 메시지에서 초기 상태 생성
+    initial_state = await create_initial_state_from_message(task, trace_id)
+    
+    # 2. 필요시 DB에서 추가 데이터 조회
+    if enrich_from_db:
+        db_service = await get_db_service()
+        initial_state = await enrich_state_with_db(initial_state, db_service)
+    
+    # 3. 파이프라인 실행
+    final_state = await run_analysis_pipeline(...)
+```
+
+#### 5. State/Graph 업데이트
+```python
+# state.py - 새 필드 추가
+trace_id: str = ""
+chapter_number: Optional[int] = None
+world_rules_summary: Optional[str] = None
+existing_settings: list[dict] = []  # dict → list 타입 변경
+
+# graph.py - 파라미터 추가
+async def run_analysis_pipeline(
+    ...,
+    existing_settings: list = None,  # NEW
+    trace_id: str = "",              # NEW
+):
+```
+
+### 📁 수정된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `app/schemas/messages.py` | 경량 참조 스키마 (ExistingCharacterRef, ExistingEventRef, ExistingRelationshipRef, ExistingSettingRef), trace_id 지원 |
+| `app/services/rabbitmq_consumer.py` | 연결 재시도 로직, Global Trace ID 전파, graceful shutdown, 헬스 체크 |
+| `app/services/db_query_service.py` | **[NEW]** PostgreSQL/Neo4j 읽기 전용 조회 서비스 |
+| `app/services/analysis_service.py` | 하이브리드 통합 - 메시지에서 초기 상태 생성 + 필요시 DB 보강 |
+| `app/agents/state.py` | trace_id, chapter_number, world_rules_summary 필드 추가 |
+| `app/agents/graph.py` | trace_id, existing_settings 파라미터 추가 |
+| `pyproject.toml` | asyncpg>=0.30.0, neo4j>=5.26.0 의존성 추가 |
+
+### ✅ 결과
+
+**데이터 흐름**:
+```
+Spring Boot 전송: 텍스트 + 경량 참조 (이름, ID 등)
+         ↓
+FastAPI 수신: AnalysisTaskMessage 파싱
+         ↓
+[선택적] DB 보강: 컨텍스트가 부족하면 PostgreSQL/Neo4j 직접 조회
+         ↓
+에이전트 파이프라인 실행: 상세 분석
+         ↓
+Spring Boot 콜백: 결과 전송
+```
+
+**주요 개선점**:
+- ✅ 에이전트가 기존 캐릭터/이벤트/관계 데이터에 접근 가능
+- ✅ 일관성 검사가 전체 프로젝트 범위에서 가능
+- ✅ Global Trace ID로 분산 환경 로그 추적 가능
+- ✅ 연결 실패 시 자동 재시도
+
+### ⚠️ 다음 단계 (Implementation Checklist)
+
+1. **의존성 설치**:
+   ```bash
+   pip install asyncpg neo4j
+   ```
+
+2. **Spring Boot 메시지 형식 업데이트**:
+   새로운 `AnalysisContext` 스키마에 맞게 메시지 생성
+
+3. **DB 테이블 확인**:
+   `characters`, `events`, `settings`, `world_rules` 테이블 존재 확인
+
+4. **환경 변수 설정** (`.env`):
+   ```
+   POSTGRES_HOST=localhost
+   POSTGRES_PORT=5432
+   POSTGRES_DB=stolink
+   POSTGRES_USER=stolink
+   POSTGRES_PASSWORD=stolink123
+   
+   NEO4J_URI=bolt://localhost:7687
+   NEO4J_USER=neo4j
+   NEO4J_PASSWORD=stolink123
+   ```
+
+### 💡 향후 개선 사항
+
+#### 1. 캐싱 레이어 추가
+자주 조회되는 데이터 (캐릭터 목록 등)를 Redis 캐싱:
+```python
+@cached(ttl=300)
+async def get_all_characters(self, project_id: str):
+    ...
+```
+
+#### 2. Connection Pooling 최적화
+현재: min_size=2, max_size=10
+프로덕션: 동시 분석 작업 수에 따라 조정 필요
+
+#### 3. Dead Letter Queue 구현
+처리 실패한 메시지를 별도 큐로 이동:
+```python
+# rabbitmq_consumer.py에 DLX 설정 (TODO)
+arguments={
+    "x-dead-letter-exchange": "stolink.dlx",
+    "x-dead-letter-routing-key": "stolink.analysis.failed"
+}
+```
 
 ---
 

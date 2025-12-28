@@ -32,10 +32,14 @@ class AnalysisState(TypedDict, total=False):
     job_id: str
     callback_url: str
     
-    # Existing data
+    # Tracing
+    trace_id: str
+    
+    # Existing data (from Spring Boot context or DB query)
     existing_characters: list
     existing_events: list
     existing_relationships: list
+    existing_settings: list
     
     # Extraction results
     extracted_characters: list
@@ -327,6 +331,8 @@ async def run_analysis_pipeline(
     existing_characters: list = None,
     existing_events: list = None,
     existing_relationships: list = None,
+    existing_settings: list = None,
+    trace_id: str = "",
 ) -> dict[str, Any]:
     """Run the complete analysis pipeline with Supervisor."""
     import time
@@ -337,9 +343,11 @@ async def run_analysis_pipeline(
         "document_id": document_id,
         "job_id": job_id,
         "callback_url": callback_url,
+        "trace_id": trace_id,
         "existing_characters": existing_characters or [],
         "existing_events": existing_events or [],
         "existing_relationships": existing_relationships or [],
+        "existing_settings": existing_settings or [],
         "extracted_characters": [],
         "extracted_events": [],
         "extracted_settings": {},

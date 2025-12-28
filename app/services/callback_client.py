@@ -1,7 +1,7 @@
 """HTTP Callback client for Spring Boot integration."""
 import httpx
 import structlog
-from typing import Any
+from typing import Any, Optional
 
 from app.config import settings
 from app.schemas.callback import AnalysisCallbackPayload
@@ -12,14 +12,12 @@ logger = structlog.get_logger()
 class CallbackClient:
     """HTTP client for sending analysis results to Spring Boot."""
     
-    def __init__(self, base_url: str = None, timeout: float = 30.0):
+    def __init__(self, timeout: float = 30.0):
         """Initialize callback client.
         
         Args:
-            base_url: Spring Boot server base URL
             timeout: Request timeout in seconds
         """
-        self.base_url = base_url or settings.spring_callback_url
         self.timeout = timeout
     
     async def send_analysis_callback(
@@ -27,7 +25,8 @@ class CallbackClient:
         job_id: str,
         status: str,
         result: dict[str, Any] = None,
-        error: str = None
+        error: str = None,
+        callback_url: Optional[str] = None
     ) -> bool:
         """Send analysis result callback to Spring Boot.
         
@@ -36,11 +35,20 @@ class CallbackClient:
             status: Analysis status (COMPLETED, WARNING, FAILED)
             result: Analysis results dictionary
             error: Error message if failed
+            callback_url: Override callback URL (from message)
             
         Returns:
             True if callback was successful
         """
-        callback_url = f"{self.base_url}/api/internal/ai/analysis/callback"
+        # Use provided callback_url or fall back to settings
+        if callback_url:
+            # If callback_url is a full URL, use it directly
+            if callback_url.startswith("http"):
+                url = callback_url
+            else:
+                url = f"{settings.spring_callback_url}{callback_url}"
+        else:
+            url = f"{settings.spring_callback_url}/api/internal/ai/analysis/callback"
         
         payload = AnalysisCallbackPayload(
             job_id=job_id,
@@ -49,10 +57,12 @@ class CallbackClient:
             error=error
         )
         
+        logger.info("Sending callback", job_id=job_id, url=url, status=status)
+        
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
-                    callback_url,
+                    url,
                     json=payload.model_dump(by_alias=True),
                     headers={"Content-Type": "application/json"}
                 )
@@ -75,7 +85,7 @@ class CallbackClient:
                     return False
                     
         except httpx.TimeoutException:
-            logger.error("Callback timeout", job_id=job_id, url=callback_url)
+            logger.error("Callback timeout", job_id=job_id, url=url)
             return False
         except httpx.RequestError as e:
             logger.error("Callback request error", job_id=job_id, error=str(e))
