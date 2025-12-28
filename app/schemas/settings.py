@@ -47,6 +47,7 @@ class SettingExtraction(BaseModel):
     # === Neo4j Node Key ===
     setting_id: str = Field(..., description="Unique location ID (loc_forest_01, loc_castle_main...)")
     name: str = Field(..., description="Location name (Neo4j node key)")
+    location_name: str = Field(..., description="Location name (display name)")
     
     # === Classification ===
     location_type: LocationType = Field(default=LocationType.OTHER)

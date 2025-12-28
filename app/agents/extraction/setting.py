@@ -80,36 +80,41 @@ is included in 'static_visual_prompt', the output is INVALID and will be REJECTE
     {{
       "setting_id": "loc_forest_01",
       "name": "Dark Forest",
+      "location_name": "Dark Forest",
       "location_type": "forest",
       
       // [CRITICAL] Image generation prompt - NO PEOPLE, NO ACTIONS
-      "static_visual_prompt": "Dense ancient forest, tall twisted trees with rough dark bark, thick white fog covering the forest floor, pale moonlight filtering weakly through dense leaf canopy, deep shadows between trunks, moss-covered rocks scattered on dead leaves",
+      "visual_background": "Dense ancient forest, tall twisted trees with rough dark bark, thick white fog covering the forest floor, pale moonlight filtering weakly through dense leaf canopy, deep shadows between trunks, moss-covered rocks scattered on dead leaves",
       
       // Lighting & Atmosphere Control
       "time_of_day": "night",
-      "lighting_description": "dim pale moonlight filtering through dense canopy, low-key lighting",
-      "atmosphere_keywords": "ominous, tense, mysterious, foreboding",
-      "weather_condition": "foggy",
+      "lighting": "dim pale moonlight filtering through dense canopy, low-key lighting",
+      "atmosphere": "ominous, tense, mysterious, foreboding",
+      "weather": "foggy",
+      "art_style": "Dark Fantasy, Realistic, Cinematic Lighting",
       
       // Physical Features (static objects only)
-      "static_objects": ["ancient twisted trees", "thick ground fog", "moss-covered rocks", "dead leaves on ground"],
+      "notable_features": ["ancient twisted trees", "thick ground fog", "moss-covered rocks", "dead leaves on ground"],
       
-      // Metadata
-      "is_primary_location": true,
-      "story_significance": "Site of the confrontation"
+      // Narrative Context
+      "description": "An ancient, cursed forest where the confrontation takes place.",
+      "is_primary": true,
+      "significance": "Site of the confrontation"
     }},
     {{
       "setting_id": "loc_village_01", 
       "name": "The Village",
+      "location_name": "The Village",
       "location_type": "village",
-      "static_visual_prompt": "Rustic medieval fantasy village, small wooden houses with thatched straw roofs, narrow cobblestone paths, warm orange lantern light glowing from windows",
+      "visual_background": "Rustic medieval fantasy village, small wooden houses with thatched straw roofs, narrow cobblestone paths, warm orange lantern light glowing from windows",
       "time_of_day": "unknown",
-      "lighting_description": "warm ambient lantern light",
-      "atmosphere_keywords": "peaceful, homely, rustic",
-      "weather_condition": "clear",
-      "static_objects": ["wooden houses", "thatched roofs", "cobblestone paths", "lanterns"],
-      "is_primary_location": false,
-      "story_significance": "Home of the characters, mentioned in backstory"
+      "lighting": "warm ambient lantern light",
+      "atmosphere": "peaceful, homely, rustic",
+      "weather": "clear",
+      "notable_features": ["wooden houses", "thatched roofs", "cobblestone paths", "lanterns"],
+      "description": "A peaceful village where the protagonist grew up.",
+      "is_primary": false,
+      "significance": "Home of the characters, mentioned in backstory"
     }}
   ],
   "world_context": {{
@@ -210,6 +215,8 @@ async def setting_extraction_node(state: dict) -> dict:
                 setting["notable_features"] = setting["static_objects"]
             if "is_primary_location" in setting and "is_primary" not in setting:
                 setting["is_primary"] = setting["is_primary_location"]
+            if "location_name" not in setting and "name" in setting:
+                setting["location_name"] = setting["name"]
             if "story_significance" in setting and "significance" not in setting:
                 setting["significance"] = setting["story_significance"]
         

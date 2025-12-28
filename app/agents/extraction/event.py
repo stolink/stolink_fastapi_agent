@@ -67,6 +67,7 @@ Extract events with THREE purposes:
       "event_id": "E001",
       "event_type": "action",
       "narrative_summary": "서진이 검을 쥐고 숲에서 대기 중",
+      "description": "서진이 어두운 숲에서 위험을 감지하고 검을 뽑아들어 경계 태세를 취함",
       
       // Neo4j Edges
       "participants": ["서진"],
@@ -84,6 +85,7 @@ Extract events with THREE purposes:
       "event_id": "E002",
       "event_type": "dialogue",
       "narrative_summary": "하나가 불안하게 질문함",
+      "description": "하나가 서진의 긴장된 모습을 보고 불안해하며 무슨 일이냐고 물음",
       "participants": ["하나", "서진"],
       "location_ref": "Dark Forest",
       "prev_event_id": "E001",
@@ -96,6 +98,7 @@ Extract events with THREE purposes:
       "event_id": "E003",
       "event_type": "appearance",
       "narrative_summary": "이민호가 그림자 속에서 등장",
+      "description": "나무 뒤 그림자 속에서 이민호가 비웃음을 흘리며 천천히 걸어나옴",
       "participants": ["이민호"],
       "location_ref": "Dark Forest",
       "prev_event_id": "E002",
@@ -108,6 +111,7 @@ Extract events with THREE purposes:
       "event_id": "E004",
       "event_type": "confrontation",
       "narrative_summary": "서진이 이민호에게 배신 이유를 추궁",
+      "description": "서진이 이민호에게 칼을 겨누며 왜 우리를 배신했는지 소리침",
       "participants": ["서진", "이민호"],
       "location_ref": "Dark Forest",
       "prev_event_id": "E003",
@@ -118,6 +122,7 @@ Extract events with THREE purposes:
     }}
   ]
 }}
+
 
 === PENALTY WARNING ===
 If visual_scene contains background descriptions like "dark forest", "trees", "fog", "moonlight",
