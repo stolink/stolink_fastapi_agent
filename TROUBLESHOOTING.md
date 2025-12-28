@@ -1,6 +1,6 @@
 # StoLink AI Backend - Troubleshooting Guide
 
-> **Last Updated**: 2025-12-28
+> **Last Updated**: 2025-12-27
 
 이 문서는 개발 과정에서 발생한 주요 문제와 해결책을 기록합니다.
 
@@ -14,8 +14,6 @@
 4. [Emotion Agent - Production Level 업그레이드](#4-emotion-agent---production-level-업그레이드)
 5. [Consistency Agent - Production Level 업그레이드](#5-consistency-agent---production-level-업그레이드)
 6. [Plot Integration Agent - Production Level 업그레이드](#6-plot-integration-agent---production-level-업그레이드)
-7. [Validator Agent - Production Level 업그레이드](#7-validator-agent---production-level-업그레이드)
-8. [Supervisor Agent - Production Level 업그레이드](#8-supervisor-agent---production-level-업그레이드)
 
 ---
 
@@ -534,152 +532,6 @@ def generate_fallback_beats(events: list) -> list:
 [PLOT] Beats: 5, Tension curve: [7, 9, 8, 8, 6]
 ```
 → Raw Data 배열이 항상 보장됨
-
----
-
-## 7. Validator Agent - Production Level 업그레이드
-
-### 📅 날짜
-2025-12-28
-
-### 🔴 문제 (Problem)
-1. 기본적인 True/False 검증만 제공
-2. LLM 없이 단순 카운트 기반 검증
-3. 에러 발생 시 "어디에, 왜" 정보 없음
-4. 성능 모니터링 불가
-
-**기존 출력**:
-```json
-{
-  "is_valid": true,
-  "quality_score": 80,
-  "action": "approve",
-  "warnings": ["..."]
-}
-```
-
-### 🟡 원인 분석 (Root Cause)
-1. 각 에이전트 출력별 개별 검증 없음
-2. 참조 무결성(Referential Integrity) 검증 없음
-3. 디버깅용 구조화된 에러 정보 부재
-4. 실행 시간 추적 없음
-
-### 🟢 해결책 (Solution)
-
-#### 1. ValidationErrorCode 상수 정의
-```python
-class ValidationErrorCode:
-    MISSING_REQUIRED = "VAL_001"
-    EMPTY_DATA = "VAL_002"
-    MISSING_FIELD = "VAL_003"
-    REF_INTEGRITY = "VAL_005"
-    CONSISTENCY_FAIL = "VAL_006"
-```
-
-#### 2. 구조화된 에러 출력
-```json
-{
-  "field": "extracted_characters[0].name",
-  "code": "VAL_003",
-  "message": "Required field 'name' is missing",
-  "value": null
-}
-```
-→ 프론트엔드에서 정확한 가이드 제공 가능
-
-#### 3. 실행 시간 메트릭
-```json
-"execution_time_ms": 12.5
-```
-→ 파이프라인 병목 감시 가능
-
-### 📁 수정된 파일
-- `app/agents/validation/validator.py` - Production Level 업그레이드
-- `tests/test_agents/test_validator.ipynb` - 6개 섹션으로 확장
-
-### ✅ 결과
-- 8개 에이전트 출력 개별 검증
-- 참조 무결성 검증 (관계/이벤트 참가자)
-- 구조화된 에러 리포트 (field, code, message, value)
-- 실행 시간 메트릭 (execution_time_ms)
-
----
-
-## 8. Supervisor Agent - Production Level 업그레이드
-
-### 📅 날짜
-2025-12-28
-
-### 🔴 문제 (Problem)
-1. 단순 순차 라우팅만 지원
-2. Validation 실패 시 피드백 루프 없음
-3. 에러 과다 시 무한 루프 가능성
-4. 각 단계별 상태 추적 어려움
-5. **요청 추적 불가** - 비동기 환경에서 로그 추적 어려움
-
-**기존 라우팅**:
-```
-extraction → analysis → validation → __end__
-```
-(품질 낮아도 그대로 종료, 무한 루프 가능)
-
-### 🟡 원인 분석 (Root Cause)
-1. `validation_result.action` 확인 없음
-2. `consistency_report.requires_reextraction` 확인 없음
-3. 재시도 횟수 제한 없음
-4. 단계별 상세 상태 출력 없음
-5. 전역 추적 ID 없음
-
-### 🟢 해결책 (Solution)
-
-#### 1. Global Trace ID (전역 추적 ID)
-```python
-def generate_trace_id() -> str:
-    date_str = datetime.now().strftime("%Y%m%d-%H%M%S")
-    short_uuid = str(uuid.uuid4())[:8]
-    return f"req-{date_str}-{short_uuid}"
-
-# 출력: "req-20251228-123456-a1b2c3d4"
-```
-→ 요청 전체를 하나의 ID로 추적 가능
-
-#### 2. Supervisor State (재시도 모니터링)
-```json
-{
-  "trace_id": "req-20251228-123456-a1b2c3d4",
-  "current_phase": "extraction",
-  "retry_counts": {"extraction": 1, "analysis": 0},
-  "max_retries": {"extraction": 3, "analysis": 2},
-  "force_fail": false
-}
-```
-
-#### 3. Max Retry with Human Review
-```python
-MAX_EXTRACTION_RETRIES = 3
-
-if retry_count >= MAX_EXTRACTION_RETRIES:
-    return "human_review"  # 사람 개입 요청
-```
-
-#### 4. Human Review Node
-```python
-async def human_review_node(state):
-    return {
-        "human_review_required": True,
-        "human_review_reason": "max_retries_exceeded"
-    }
-```
-
-### 📁 수정된 파일
-- `app/agents/supervisor.py` - trace_id, supervisor_state, human_review_node 추가
-- `tests/test_agents/test_supervisor.ipynb` - 9개 테스트 케이스
-
-### ✅ 결과
-- **trace_id**: 모든 로그에 요청 추적 ID 포함
-- **supervisor_state**: 재시도 횟수 및 상태 모니터링
-- **human_review**: 최대 재시도 (3회) 초과 시 사람 개입 요청
-- 무한 루프 완전 방지
 
 ---
 
