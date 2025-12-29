@@ -16,6 +16,7 @@ from typing import Callable, Awaitable, Optional
 import aio_pika
 from aio_pika import IncomingMessage
 
+from pydantic import ValidationError
 from app.config import settings
 from app.schemas.messages import AnalysisTaskMessage
 
@@ -182,13 +183,13 @@ class RabbitMQConsumer:
                     elapsed_ms=elapsed_ms
                 )
                     
-            except json.JSONDecodeError as e:
+            except (json.JSONDecodeError, ValidationError) as e:
                 logger.error(
-                    "Failed to parse message JSON",
+                    "Invalid message format",
                     error=str(e),
-                    trace_id=trace_id
+                    trace_id=trace_id or "unknown"
                 )
-                # Don't requeue malformed messages
+                # Don't requeue malformed or invalid messages
                 
             except Exception as e:
                 logger.error(

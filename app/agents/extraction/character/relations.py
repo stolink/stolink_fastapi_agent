@@ -132,6 +132,12 @@ RELATIONS_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
 ### LANGUAGE CONSISTENCY RULE ###
 Output ALL text in the SAME language as the input.
 
+### CRITICAL: NAME EXTRACTION RULE ###
+When a character is introduced as "베라(Vera)" or "리안(Lian)", use ONLY the Korean name.
+The English in parentheses is just a transliteration hint - DO NOT use it.
+❌ BAD: "name": "Vera", "target": "Lian", "target": "Tio"
+✅ GOOD: "name": "베라", "target": "리안", "target": "티오"
+
 ### RELATIONSHIP ASYMMETRY ###
 ⚠️ Create SEPARATE entries for each direction:
 

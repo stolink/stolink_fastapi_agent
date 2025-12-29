@@ -73,10 +73,14 @@ Use the EXACT event_ids and character names from the provided data.
 **Characters** (for context):
 {characters}
 
+**Character Personalities** (for motivation):
+{personalities}
+
 **Relationships** (for conflict understanding):
 {relationships}
 
-Analyze the plot structure with tension curve and narrative beats.""")
+Analyze the plot structure with tension curve and narrative beats.
+TIP: Use "Character Personalities" to understand WHY characters act this way (Motivations).""")
 ])
 
 
@@ -128,8 +132,56 @@ async def plot_integration_node(state: dict) -> dict:
     
     available_event_ids = [e.get("event_id", "") for e in events if e.get("event_id")]
     
+    # Extract Personalities for context
+    available_personalities = []
+    for c in characters:
+        name = c.get("name") or (c.get("profile", {}) or {}).get("name")
+        if name:
+            pers = c.get("personality", {}) or c.get("char_personality", {})
+            traits = []
+            if isinstance(pers, dict):
+                traits = pers.get("core_traits", [])
+                if not traits and "traits" in pers:
+                    traits = pers["traits"]
+            
+            if traits:
+                clean_traits = [t if isinstance(t, str) else str(t) for t in traits]
+                available_personalities.append(f"{name}: [{', '.join(clean_traits[:5])}]")
+    
+    pers_str = "\n".join(available_personalities) if available_personalities else "None"
+    
     print(f"[PLOT] Analyzing {len(events)} events for narrative structure")
     print(f"[PLOT] Available event_ids: {available_event_ids}")
+    
+    # === GUARD: Return minimal result if no events ===
+    if not events:
+        print("[PLOT] No events available - returning minimal result without event_refs")
+        
+        # Extract character names for basic narrative
+        char_names = [c.get("name") or (c.get("profile", {}) or {}).get("name") for c in characters if c.get("name") or (c.get("profile", {}) or {}).get("name")]
+        
+        return {
+            "plot_integration": {
+                "plot_summary": {
+                    "narrative": f"Characters present: {', '.join(char_names[:5]) if char_names else 'Unknown'}. No detailed events extracted.",
+                    "central_conflict": "Unable to determine without event data"
+                },
+                "overall_tension": 5.0,
+                "narrative_beats": [],  # NO hallucinated event_refs
+                "tension_curve": [],
+                "three_act_structure": [],
+                "foreshadowing": [],
+                "multimedia_summary": {
+                    "beat_count": 0,
+                    "tension_curve_length": 0,
+                    "has_visual_prompts": False
+                }
+            },
+            "messages": [
+                {"role": "plot_agent", "content": "No events available - skipped plot analysis to prevent hallucination"}
+            ]
+        }
+    
     
     try:
         # Get structured LLM
@@ -140,6 +192,7 @@ async def plot_integration_node(state: dict) -> dict:
             "events": str(events),
             # Support both legacy (c["name"]) and FullCharacter (c["profile"]["name"]) formats
             "characters": str([c.get("name") or (c.get("profile", {}) or {}).get("name") for c in characters if c.get("name") or (c.get("profile", {}) or {}).get("name")]),
+            "personalities": pers_str,
             "relationships": str(relationships) if relationships else "[]"
         })
         

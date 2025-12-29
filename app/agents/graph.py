@@ -69,57 +69,8 @@ class AnalysisState(TypedDict, total=False):
     errors: Annotated[list, operator.add]
 
 
-# Constants
-MAX_RETRIES = 2
-
-
-def supervisor_router(state: dict) -> Literal["extraction", "analysis", "validation", "__end__"]:
-    """Supervisor routing logic with feedback loop support."""
-    
-    extraction_done = state.get("extraction_done", False)
-    analysis_done = state.get("analysis_done", False)
-    validation_done = state.get("validation_done", False)
-    retry_count = state.get("retry_count", 0)
-    consistency = state.get("consistency_report", {})
-    validation = state.get("validation_result", {})
-    
-    print(f"[SUPERVISOR] extraction={extraction_done}, analysis={analysis_done}, validation={validation_done}, retries={retry_count}")
-    
-    # Check if we need to re-extract due to conflicts (after analysis, before validation)
-    if analysis_done and not validation_done:
-        requires_reextract = consistency.get("requires_reextraction", False)
-        score = consistency.get("overall_score", 100)
-        
-        # Re-extract if consistency checker requested it and retries available
-        if requires_reextract and retry_count < MAX_RETRIES:
-            print(f"[SUPERVISOR] -> extraction (FEEDBACK LOOP: score={score}, retry {retry_count + 1}/{MAX_RETRIES})")
-            return "extraction"
-    
-    # Check if validation requested retry
-    if validation_done:
-        action = validation.get("action", "approve")
-        if action == "retry_extraction" and retry_count < MAX_RETRIES:
-            print(f"[SUPERVISOR] -> extraction (validation requested retry)")
-            return "extraction"
-        # All done
-        print(f"[SUPERVISOR] -> __end__ (all phases complete, retries={retry_count})")
-        return "__end__"
-    
-    # Normal flow
-    if not extraction_done:
-        print(f"[SUPERVISOR] -> extraction")
-        return "extraction"
-    
-    if not analysis_done:
-        print(f"[SUPERVISOR] -> analysis")
-        return "analysis"
-    
-    if not validation_done:
-        print(f"[SUPERVISOR] -> validation")
-        return "validation"
-    
-    print(f"[SUPERVISOR] -> __end__")
-    return "__end__"
+# Supervisor Logic
+from app.agents.supervisor import supervisor_router, supervisor_node, MAX_EXTRACTION_RETRIES
 
 
 async def extraction_node(state: dict) -> dict:

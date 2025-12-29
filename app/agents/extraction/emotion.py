@@ -91,10 +91,15 @@ the output will be REJECTED because it breaks database referential integrity."""
 Available Characters (from Character Agent) - MUST use EXACT names:
 {available_characters}
 
+Character Personalities (CONTEXT):
+{available_personalities}
+
 Track emotions for each character with:
 - primary_emotion, secondary_emotion
 - intensity (1-10)
-- trigger, expression""")
+- trigger, expression
+
+TIP: Use "Character Personalities" to understand emotional reactions (e.g., A "Calm" character might have lower intensity or hide emotions more).""")
 ])
 
 
@@ -112,10 +117,26 @@ async def emotion_tracking_node(state: dict) -> dict:
     # Support both legacy (c["name"]) and FullCharacter (c["profile"]["name"]) formats
     characters = state.get("extracted_characters", [])
     available_characters = []
+    available_personalities = [] # Format: "Name: [Trait1, Trait2]"
+    
     for c in characters:
         name = c.get("name") or (c.get("profile", {}) or {}).get("name")
         if name:
             available_characters.append(name)
+            
+            # Extract Personality
+            pers = c.get("personality", {}) or c.get("char_personality", {})
+            traits = []
+            if isinstance(pers, dict):
+                traits = pers.get("core_traits", [])
+                if not traits and "traits" in pers:
+                    traits = pers["traits"]
+            
+            if traits:
+                clean_traits = [t if isinstance(t, str) else str(t) for t in traits]
+                available_personalities.append(f"{name}: [{', '.join(clean_traits[:5])}]")
+    
+    pers_str = "\n".join(available_personalities) if available_personalities else "None"
     
     print(f"[EMOTION] Available characters: {available_characters}")
     
@@ -136,7 +157,8 @@ async def emotion_tracking_node(state: dict) -> dict:
         chain = EMOTION_TRACKING_PROMPT | llm
         response = await chain.ainvoke({
             "story_text": state["content"],
-            "available_characters": json.dumps(available_characters, ensure_ascii=False)
+            "available_characters": json.dumps(available_characters, ensure_ascii=False),
+            "available_personalities": pers_str
         })
         
         content = response.content.strip()

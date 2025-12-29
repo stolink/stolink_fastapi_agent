@@ -101,10 +101,15 @@ the output will be REJECTED because it breaks database referential integrity."""
 Available Characters (from Character Agent) - MUST use EXACT names:
 {available_characters}
 
+Character Personalities (CONTEXT):
+{available_personalities}
+
 Analyze all relationships with:
 - source, target: EXACT character names
 - relation_type, strength, description
-- bidirectional, evolved_from (if applicable)""")
+- bidirectional, evolved_from (if applicable)
+
+TIP: Use "Character Personalities" to infer relationship dynamics (e.g., A "Suspicious" character is less likely to have "FRIENDLY" relations easily).""")
 ])
 
 
@@ -149,6 +154,7 @@ RELATIONSHIP_RE_ANALYSIS_PROMPT = ChatPromptTemplate.from_messages([
   ]
 }}"""),
     ("human", """Available Characters: {available_characters}
+Character Personalities: {available_personalities}
 
 Original text: {content}
 
@@ -175,10 +181,27 @@ async def relationship_analysis_node(state: dict) -> dict:
     # Support both legacy (c["name"]) and FullCharacter (c["profile"]["name"]) formats
     characters = state.get("extracted_characters", [])
     available_characters = []
+    available_personalities = [] # Format: "Name: [Trait1, Trait2]"
+    
     for c in characters:
         name = c.get("name") or (c.get("profile", {}) or {}).get("name")
         if name:
             available_characters.append(name)
+            
+            # Extract Personality
+            # Check paths: c['personality']['core_traits'] or c['char_personality']['core_traits']
+            pers = c.get("personality", {}) or c.get("char_personality", {})
+            traits = []
+            if isinstance(pers, dict):
+                traits = pers.get("core_traits", [])
+                if not traits and "traits" in pers:
+                    traits = pers["traits"]
+            
+            if traits:
+                clean_traits = [t if isinstance(t, str) else str(t) for t in traits]
+                available_personalities.append(f"{name}: [{', '.join(clean_traits[:5])}]") # Limit to top 5
+    
+    pers_str = "\n".join(available_personalities) if available_personalities else "None"
     
     print(f"[RELATIONSHIP] Available characters: {available_characters}")
     
@@ -207,6 +230,7 @@ async def relationship_analysis_node(state: dict) -> dict:
             chain = RELATIONSHIP_RE_ANALYSIS_PROMPT | llm
             response = await chain.ainvoke({
                 "available_characters": json.dumps(available_characters, ensure_ascii=False),
+                "available_personalities": pers_str,
                 "content": state.get("content", "")[:1500],
                 "conflicts": json.dumps(conflicts, ensure_ascii=False, indent=2),
                 "previous_analysis": json.dumps(previous, ensure_ascii=False, indent=2)
@@ -215,6 +239,7 @@ async def relationship_analysis_node(state: dict) -> dict:
             chain = RELATIONSHIP_ANALYSIS_PROMPT | llm
             response = await chain.ainvoke({
                 "available_characters": json.dumps(available_characters, ensure_ascii=False),
+                "available_personalities": pers_str,
                 "content": state.get("content", "")[:1500]
             })
         

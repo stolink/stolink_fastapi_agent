@@ -89,19 +89,31 @@ def merge_character_data(
     relations: dict,
     dialogue_mood: dict,
     stats: dict,
-    inventory: dict = None
+    inventory: dict = None,
+    existing_characters: list = None
 ) -> list[dict]:
     """Merge sub-agent results by character name into FullCharacter format.
     
     Args:
         Each dict is keyed by character name with that agent's extracted data.
+        existing_characters: List of pre-existing character dicts from context (reuses their IDs).
     
     Returns:
         List of FullCharacter dicts with:
         - Null Safety: Game fields use safe defaults
         - relations.graph (not relations.relations)
         - event_refs (Event ID list)
+        - Existing character IDs preserved
     """
+    # Build existing character lookup
+    existing_lookup = {}
+    if existing_characters:
+        for ec in existing_characters:
+            ec_name = ec.get("name")
+            if ec_name:
+                existing_lookup[ec_name] = ec
+                print(f"[AGGREGATOR] Found existing character: {ec_name} (id={ec.get('id')})")
+    
     # Get all unique character names
     all_names = set()
     all_names.update(identity.keys())
@@ -116,6 +128,16 @@ def merge_character_data(
     characters = []
     
     for name in all_names:
+        # Check for existing character - reuse ID and role if available
+        existing_char = existing_lookup.get(name)
+        if existing_char:
+            char_id = existing_char.get("id", f"char-{name}-{len(characters)+1:03d}")
+            char_role = existing_char.get("role", "other")
+            print(f"[AGGREGATOR] Reusing existing ID for '{name}': {char_id}")
+        else:
+            char_id = f"char-{name}-{len(characters)+1:03d}"
+            char_role = None  # Will be set from id_data
+        
         # Get data from each agent (default to empty dict if not found)
         id_data = identity.get(name, {})
         app_data = appearance.get(name, {})
@@ -148,16 +170,19 @@ def merge_character_data(
         final_hp_max = (base_state.get("hp_max", 100)) + item_hp_bonus
         
         # Build FullCharacter structure with improvements
+        # Use role from: 1) id_data (extracted), 2) existing_char, 3) fallback to "other"
+        final_role = id_data.get("role") or char_role or "other"
+        
         full_char = {
             # === SEARCH INDEXING: Root-level fields for fast DB queries ===
-            "_id": f"char-{name}-{len(characters)+1:03d}",  # MongoDB-style ID
+            "_id": char_id,  # MongoDB-style ID (uses existing if available)
             "name": name,  # Hoisted for search
-            "role": id_data.get("role", "other"),  # Hoisted for search
+            "role": final_role,  # Hoisted for search
             "level": base_stats.get("level", 1),  # Hoisted for search
             "faction": id_data.get("faction"),  # Hoisted for search
             
             "profile": {
-                "character_id": f"char-{name}-{len(characters)+1:03d}",
+                "character_id": char_id,
                 "name": name,
                 "age": id_data.get("age"),
                 "gender": id_data.get("gender"),
@@ -283,8 +308,13 @@ async def character_aggregator_node(state: dict) -> dict:
     stats = state.get("char_stats") or {}
     inventory = state.get("char_inventory") or {}
     
+    # Extract existing_characters from context if available
+    context = state.get("context") or {}
+    existing_characters = context.get("existing_characters") or []
+    
     characters = merge_character_data(
-        identity, appearance, personality, relations, dialogue_mood, stats, inventory
+        identity, appearance, personality, relations, dialogue_mood, stats, inventory,
+        existing_characters=existing_characters
     )
     
     return {

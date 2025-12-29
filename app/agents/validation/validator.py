@@ -232,6 +232,48 @@ def validate_consistency_status(state: dict) -> tuple:
     return penalty, errors
 
 
+def validate_character_richness(state: dict) -> tuple:
+    """Check if characters have rich data (personality, inventory, etc). Returns (penalty, warnings)."""
+    characters = state.get("extracted_characters") or []
+    if not characters:
+        return 0, []
+    
+    penalty = 0
+    warnings = []
+    
+    richness_score = 0
+    total_checks = 0
+    
+    for idx, char in enumerate(characters[:5]): # Check top 5 characters
+        name = char.get("name") or (char.get("profile", {}) or {}).get("name") or f"Char_{idx}"
+        
+        # Check Personality
+        has_personality = bool(char.get("personality") or char.get("char_personality"))
+        
+        # Check Inventory
+        has_inventory = bool(char.get("inventory") or char.get("char_inventory"))
+        
+        # Check Stats
+        has_stats = bool(char.get("stats") or char.get("char_stats"))
+        
+        total_checks += 3
+        if has_personality: richness_score += 1
+        if has_inventory: richness_score += 1
+        if has_stats: richness_score += 1
+        
+        if not has_personality:
+            warnings.append(f"Character '{name}' missing personality data")
+            penalty += 2
+        if not has_inventory:
+            warnings.append(f"Character '{name}' missing inventory data")
+            penalty += 1 # Less critical
+    
+    # Cap penalty
+    penalty = min(penalty, 15)
+    
+    return penalty, warnings
+
+
 def calculate_data_completeness(state: dict) -> dict:
     """Calculate data completeness percentage for each agent."""
     completeness = {}
@@ -333,7 +375,16 @@ async def validator_node(state: dict) -> dict:
     structured_errors.extend(consistency_errors)
     warnings.extend([e["message"] for e in consistency_errors])
     
-    # === 4. Existing Errors ===
+    # === 4. Character Data Richness ===
+    richness_penalty, richness_warnings = validate_character_richness(state)
+    quality_score -= richness_penalty
+    warnings.extend(richness_warnings)
+    if richness_warnings:
+        validation_details["character_richness"] = {"status": "warning", "warnings": richness_warnings}
+    else:
+        validation_details["character_richness"] = {"status": "valid"}
+
+    # === 5. Existing Errors ===
     pipeline_errors = state.get("errors") or []
     if pipeline_errors:
         quality_score -= len(pipeline_errors) * 5

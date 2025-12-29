@@ -3,10 +3,61 @@
 Updated to align with hybrid message schema:
 - Trace ID for distributed tracing
 - Context data from Spring Boot + optional DB enrichment
+- Centralized TypedDict for LangGraph compatibility
 """
-from typing import Annotated, Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional, TypedDict
+import operator
 from pydantic import BaseModel, Field
 from langgraph.graph import add_messages
+
+
+class AnalysisState(TypedDict, total=False):
+    """Centralized TypedDict for LangGraph state management.
+    
+    This replaces the local definition in graph.py.
+    """
+    # Input (never changes)
+    content: str
+    project_id: str
+    document_id: str
+    job_id: str
+    callback_url: str
+    
+    # Tracing
+    trace_id: str
+    
+    # Existing data (from Spring Boot context or DB query)
+    existing_characters: list
+    existing_events: list
+    existing_relationships: list
+    existing_settings: list
+    
+    # Extraction results
+    extracted_characters: list
+    extracted_events: list
+    extracted_settings: dict
+    analyzed_dialogues: dict
+    tracked_emotions: dict
+    
+    # Analysis results
+    relationship_graph: dict
+    consistency_report: dict
+    plot_integration: dict
+    
+    # Validation
+    validation_result: dict
+    
+    # Control flags (supervisor uses these)
+    extraction_done: bool
+    analysis_done: bool
+    validation_done: bool
+    retry_count: int
+    force_fail: bool
+    force_fail_reason: str
+    
+    # Accumulating fields (use operator.add reducer)
+    messages: Annotated[list, operator.add]
+    errors: Annotated[list, operator.add]
 
 
 class StoryAnalysisState(BaseModel):
