@@ -180,19 +180,24 @@ async def run_analysis(
         else:
             status = "COMPLETED"
         
-        # Compile result for callback
+        # Compile result for callback - matches Spring Boot FullAnalysisResult
         result = {
+            # Level 1 Extraction Results
             "characters": final_state.get("extracted_characters", []),
             "events": final_state.get("extracted_events", []),
+            "settings": final_state.get("extracted_settings", []),  # List, not dict
             "relationships": final_state.get("relationship_graph", {}).get("relationships", []),
-            "timeline": [],  # Extracted from events
-            "foreshadowing": [],  # Extracted from plot
-            "settings": final_state.get("extracted_settings", {}),
+            
+            # Level 1 Analysis Results
             "dialogues": final_state.get("analyzed_dialogues", {}),
             "emotions": final_state.get("tracked_emotions", {}),
+            
+            # Level 2 Analysis Results
             "plot_integration": final_state.get("plot_integration", {}),
             "consistency_report": final_state.get("consistency_report", {}),
             "validation": validation,
+            
+            # Metadata
             "metadata": {
                 "processing_time_ms": final_state.get("processing_time_ms", 0),
                 "tokens_used": final_state.get("tokens_used", 0),

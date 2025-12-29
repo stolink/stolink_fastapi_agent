@@ -1,4 +1,10 @@
-"""Consistency checker schemas."""
+"""Consistency checker schemas - Updated for Spring Boot compatibility.
+
+Provides:
+- Conflict detection and classification
+- Resolution suggestions
+- Neo4j validation status
+"""
 from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, Field
@@ -20,39 +26,52 @@ class ConflictType(str, Enum):
     STATUS_CONFLICT = "STATUS_CONFLICT"
     PHYSICAL_CONFLICT = "PHYSICAL_CONFLICT"
     SETTING_CONFLICT = "SETTING_CONFLICT"
+    CHARACTER_TRAIT_CONFLICT = "CHARACTER_TRAIT_CONFLICT"
 
 
-class Evidence(BaseModel):
-    """Evidence for detected conflict."""
-    existing_setting: str = Field(..., description="Existing setting content")
-    new_content: str = Field(..., description="New conflicting content")
-    chapter_reference: Optional[str] = None
+class SuggestedAction(str, Enum):
+    """Suggested action for conflict resolution."""
+    AUTO_FIX = "AUTO_FIX"
+    FLAG_FOR_HUMAN = "FLAG_FOR_HUMAN"
+    IGNORE = "IGNORE"
+    REEXTRACT = "REEXTRACT"
 
 
 class Conflict(BaseModel):
-    """Detected consistency conflict."""
-    id: str = Field(..., description="Conflict ID")
-    rule_id: str = Field(..., description="Violated rule ID")
-    severity: Severity
-    conflict_type: ConflictType
-    title: str = Field(..., description="Conflict title")
-    description: str = Field(..., description="Conflict description")
-    affected_characters: list[str] = Field(default_factory=list)
-    evidence: Evidence
-    suggestions: list[str] = Field(default_factory=list, description="Resolution suggestions")
+    """Detected consistency conflict - Spring Boot compatible."""
+    type: ConflictType = Field(..., description="Conflict type")
+    severity: Severity = Field(default=Severity.MEDIUM)
+    source: str = Field(default="extracted", description="Source of conflict")
+    existing: Optional[str] = Field(None, description="Existing value")
+    new: Optional[str] = Field(None, description="New conflicting value")
+    character: Optional[str] = Field(None, description="Affected character name")
+    description: str = Field(default="", description="Conflict description")
+    suggested_action: SuggestedAction = Field(default=SuggestedAction.FLAG_FOR_HUMAN)
 
 
-class Warning(BaseModel):
-    """Non-critical warning."""
-    id: str
-    warning_type: str
-    message: str
+class ResolutionSummary(BaseModel):
+    """Summary of conflict resolutions."""
+    auto_fixable: int = Field(default=0)
+    ready_for_update: int = Field(default=0)
+    needs_human_review: int = Field(default=0)
+    total_conflicts: int = Field(default=0)
+
+
+class Neo4jValidation(BaseModel):
+    """Neo4j graph validation status."""
+    is_valid: bool = Field(default=True)
+    conflict_count: int = Field(default=0)
+    high_severity_count: int = Field(default=0)
 
 
 class ConsistencyReport(BaseModel):
-    """Result of consistency checker agent."""
+    """Result of consistency checker agent - Spring Boot compatible.
+    
+    Maps to Spring Boot's ConsistencyReport entity.
+    """
     overall_score: int = Field(default=100, ge=0, le=100, description="Overall consistency score")
-    status: str = Field(default="OK", description="OK, WARNING, or ERROR")
+    requires_reextraction: bool = Field(default=False, description="Whether re-extraction is needed")
     conflicts: list[Conflict] = Field(default_factory=list)
-    warnings: list[Warning] = Field(default_factory=list)
-    checked_rules: list[str] = Field(default_factory=list, description="Rules that were checked")
+    warnings: list[str] = Field(default_factory=list, description="Warning messages")
+    resolution_summary: ResolutionSummary = Field(default_factory=ResolutionSummary)
+    neo4j_validation: Neo4jValidation = Field(default_factory=Neo4jValidation)

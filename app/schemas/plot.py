@@ -1,62 +1,84 @@
-"""Plot integration schemas."""
+"""Plot integration schemas - Updated for Spring Boot compatibility.
+
+Provides structured output for:
+- Narrative beats with visual prompts
+- Tension curve analysis
+- Three-act structure mapping
+- Foreshadowing tracking
+"""
 from enum import Enum
-from typing import Optional
+from typing import Optional, Any
 from pydantic import BaseModel, Field
 
 
-class ConnectionStrength(str, Enum):
-    """Foreshadowing connection strength."""
-    WEAK = "weak"
-    MODERATE = "moderate"
-    STRONG = "strong"
+class BeatType(str, Enum):
+    """Narrative beat type classification."""
+    SETUP = "SETUP"
+    INCITING_INCIDENT = "INCITING_INCIDENT"
+    RISING_ACTION = "RISING_ACTION"
+    MIDPOINT = "MIDPOINT"
+    COMPLICATION = "COMPLICATION"
+    CRISIS = "CRISIS"
+    CLIMAX = "CLIMAX"
+    FALLING_ACTION = "FALLING_ACTION"
+    RESOLUTION = "RESOLUTION"
 
 
-class ForeshadowingStatus(str, Enum):
-    """Foreshadowing resolution status."""
-    UNRESOLVED = "unresolved"
-    RESOLVED = "resolved"
-    ABANDONED = "abandoned"
+class NarrativeBeat(BaseModel):
+    """Individual narrative beat for multimedia generation."""
+    beat_id: int = Field(..., description="Beat sequence number")
+    text: str = Field(..., description="Beat description text")
+    beat_type: BeatType = Field(default=BeatType.SETUP)
+    event_ref: Optional[str] = Field(None, description="Reference to Event ID")
+    visual_prompt: str = Field(default="", description="Visual prompt for image generation")
 
 
-class ForeshadowLink(BaseModel):
-    """Link between foreshadowing setup and payoff."""
-    foreshadow_id: str
-    setup_chapter: int
-    setup_content: str
-    payoff_chapter: Optional[int] = None
-    payoff_content: Optional[str] = None
-    connection_strength: ConnectionStrength = Field(default=ConnectionStrength.MODERATE)
-    status: ForeshadowingStatus = Field(default=ForeshadowingStatus.UNRESOLVED)
+class ThreeActSection(BaseModel):
+    """Section of three-act structure."""
+    act: str = Field(..., description="Act name: setup, confrontation, resolution")
+    event_ids: list[str] = Field(default_factory=list, description="Event IDs in this act")
+    purpose: str = Field(default="", description="Purpose of this act section")
+
+
+class Foreshadowing(BaseModel):
+    """Foreshadowing element for narrative tracking."""
+    foreshadow_id: str = Field(..., description="Unique foreshadowing ID (F001, F002...)")
+    source_event: Optional[str] = Field(None, description="Source event ID")
+    hint_text: str = Field(..., description="The foreshadowing hint text")
+    predicted_outcome: Optional[str] = Field(None, description="Predicted narrative outcome")
+    confidence: int = Field(default=5, ge=1, le=10, description="Confidence level 1-10")
+    target_event: Optional[str] = Field(None, description="Target payoff event ID if resolved")
 
 
 class PlotSummary(BaseModel):
-    """Summary of plot at various levels."""
-    overall_summary: str = Field(default="")
-    chapter_summaries: list[dict] = Field(default_factory=list)
-    major_plot_points: list[str] = Field(default_factory=list)
+    """Summary of plot narrative."""
+    narrative: str = Field(default="", description="Overall narrative description")
+    central_conflict: str = Field(default="", description="Central conflict type")
 
 
-class StoryArc(BaseModel):
-    """Story arc definition."""
-    arc_id: str
-    arc_name: str
-    arc_type: str  # "character", "theme", "plot"
-    subject: str  # character name or theme
-    status: str  # "rising", "climax", "falling", "resolved"
-    key_events: list[str] = Field(default_factory=list)
-
-
-class TensionPoint(BaseModel):
-    """Tension curve data point."""
-    chapter: int
-    scene: Optional[str] = None
-    tension_level: int = Field(ge=1, le=10)
-    description: str = Field(default="")
+class MultimediaSummary(BaseModel):
+    """Summary of multimedia-related content."""
+    beat_count: int = Field(default=0)
+    tension_curve_length: int = Field(default=0)
+    has_visual_prompts: bool = Field(default=False)
 
 
 class PlotIntegrationResult(BaseModel):
-    """Result of plot integrator agent."""
-    foreshadowing_links: list[ForeshadowLink] = Field(default_factory=list)
+    """Result of plot integrator agent - Spring Boot compatible.
+    
+    Maps to Spring Boot's PlotIntegration entity.
+    """
+    # Summary
     plot_summary: PlotSummary = Field(default_factory=PlotSummary)
-    story_arcs: list[StoryArc] = Field(default_factory=list)
-    tension_curve: list[TensionPoint] = Field(default_factory=list)
+    overall_tension: float = Field(default=5.0, ge=0, le=10, description="Overall tension level")
+    
+    # Narrative structure
+    narrative_beats: list[NarrativeBeat] = Field(default_factory=list)
+    tension_curve: list[float] = Field(default_factory=list, description="Tension values per scene")
+    three_act_structure: list[ThreeActSection] = Field(default_factory=list)
+    
+    # Foreshadowing
+    foreshadowing: list[Foreshadowing] = Field(default_factory=list)
+    
+    # Metadata
+    multimedia_summary: MultimediaSummary = Field(default_factory=MultimediaSummary)

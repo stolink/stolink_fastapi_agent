@@ -1,16 +1,17 @@
-"""Setting Extractor Agent - Level 1 (Production Level).
+"""Setting Extractor Agent - with Structured Output.
 
 Role: "Environment Concept Artist" - Creates empty stage sets before actors arrive.
 Key: Focus ONLY on static physical environment - ZERO character actions.
 
-Output is optimized for:
-- Neo4j graph nodes (setting_id as node key)
-- Image generation AI (static_visual_prompt for background-only prompts)
+Uses with_structured_output() for:
+- Guaranteed valid JSON
+- Pydantic schema validation
+- No manual parsing required
 """
-import json
 from langchain_core.prompts import ChatPromptTemplate
 
-from app.agents.llm import get_standard_llm
+from app.agents.llm import get_structured_llm
+from app.schemas.settings import SettingExtractionResult
 
 
 SETTING_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
@@ -24,38 +25,25 @@ You describe ONLY: lighting, weather, terrain, architecture, and textures.
 Input: "서진이 칼을 들고 어두운 숲 속에 서 있었다."
 
 ❌ BAD (FAIL - Contains character action):
-  "static_visual_prompt": "Seojin standing in a dark forest holding a sword."
+  "visual_background": "Seojin standing in a dark forest holding a sword."
   
 ✅ GOOD (PASS - Only environment):
-  "static_visual_prompt": "Dark ancient forest, dense twisted trees, thick fog on ground, dim moonlight filtering through canopy."
+  "visual_background": "Dark ancient forest, dense twisted trees, thick fog on ground, dim moonlight filtering through canopy."
 
 [Example 2]  
 Input: "이민호가 나무 뒤에서 비웃으며 나타났다."
 
 ❌ BAD:
-  "static_visual_prompt": "Behind a tree where Minho appears with a smirk."
+  "visual_background": "Behind a tree where Minho appears with a smirk."
   
 ✅ GOOD:
-  "static_visual_prompt": "Large old trees with rough bark texture, deep shadows cast by thick tree trunks."
-
-[Example 3]
-Input: "하나가 마을에서 가장 현명한 치료사였다."
-
-❌ BAD:
-  "static_visual_prompt": "The village where Hana lives as a healer."
-  
-✅ GOOD:
-  "static_visual_prompt": "Rustic fantasy village, small wooden houses with thatched roofs, cobblestone paths, warm lantern glow."
+  "visual_background": "Large old trees with rough bark texture, deep shadows cast by thick tree trunks."
 
 === STEP-BY-STEP EXTRACTION PROCESS ===
 
 1. **IDENTIFY** all character names and action verbs in the text
-   (e.g., "서진", "이민호", "holding sword", "standing", "appeared")
-   
 2. **REMOVE** them completely from your mind
-
 3. **FOCUS** on what remains: trees, fog, moon, ground, buildings, weather
-
 4. **DESCRIBE** using ONLY physical nouns and adjectives:
    - Textures (rough bark, smooth stone, wet leaves, mossy rocks)
    - Materials (wood, stone, metal, fabric, leather)
@@ -64,74 +52,30 @@ Input: "하나가 마을에서 가장 현명한 치료사였다."
    - Weather (foggy, rainy, clear, stormy)
 
 5. **CREATIVELY INFER** (IMPORTANT): 
-   If the text description is simple (e.g., just "forest"), ADD plausible visual details:
-   - Textures: gnarled roots, rough bark, mossy rocks
-   - Lighting effects: god rays, volumetric fog, rim lighting
-   - Environmental particles: fireflies, falling leaves, dust motes
-   - Atmosphere enhancers: mist, puddles, cobwebs
+   If the text description is simple (e.g., just "forest"), ADD plausible visual details.
+
+=== FIELD REQUIREMENTS ===
+For each setting, you MUST provide:
+- setting_id: Unique ID like "loc_forest_01"
+- name: Short location name
+- location_name: Same as name (for display)
+- location_type: One of: indoor, outdoor, castle, city, village, forest, mountain, sea, dungeon, road, other
+- visual_background: Detailed environment description (NO characters!)
+- atmosphere: Mood keywords
+- time_of_day: dawn, morning, noon, afternoon, evening, dusk, night, unknown
+- lighting: Lighting description
+- weather: Weather condition
+- description: Brief narrative description  
+- notable_features: List of key features
+- significance: Story importance
+- is_primary: true if action happens here
 
 === PENALTY WARNING ===
-If ANY character name (서진, 이민호, 하나, 박서연) or action verb (holding, standing, fighting, appearing) 
-is included in 'static_visual_prompt', the output is INVALID and will be REJECTED.
-
-=== OUTPUT STRUCTURE ===
-{{
-  "settings": [
-    {{
-      "setting_id": "loc_forest_01",
-      "name": "Dark Forest",
-      "location_name": "Dark Forest",
-      "location_type": "forest",
-      
-      // [CRITICAL] Image generation prompt - NO PEOPLE, NO ACTIONS
-      "visual_background": "Dense ancient forest, tall twisted trees with rough dark bark, thick white fog covering the forest floor, pale moonlight filtering weakly through dense leaf canopy, deep shadows between trunks, moss-covered rocks scattered on dead leaves",
-      
-      // Lighting & Atmosphere Control
-      "time_of_day": "night",
-      "lighting": "dim pale moonlight filtering through dense canopy, low-key lighting",
-      "atmosphere": "ominous, tense, mysterious, foreboding",
-      "weather": "foggy",
-      "art_style": "Dark Fantasy, Realistic, Cinematic Lighting",
-      
-      // Physical Features (static objects only)
-      "notable_features": ["ancient twisted trees", "thick ground fog", "moss-covered rocks", "dead leaves on ground"],
-      
-      // Narrative Context
-      "description": "An ancient, cursed forest where the confrontation takes place.",
-      "is_primary": true,
-      "significance": "Site of the confrontation"
-    }},
-    {{
-      "setting_id": "loc_village_01", 
-      "name": "The Village",
-      "location_name": "The Village",
-      "location_type": "village",
-      "visual_background": "Rustic medieval fantasy village, small wooden houses with thatched straw roofs, narrow cobblestone paths, warm orange lantern light glowing from windows",
-      "time_of_day": "unknown",
-      "lighting": "warm ambient lantern light",
-      "atmosphere": "peaceful, homely, rustic",
-      "weather": "clear",
-      "notable_features": ["wooden houses", "thatched roofs", "cobblestone paths", "lanterns"],
-      "description": "A peaceful village where the protagonist grew up.",
-      "is_primary": false,
-      "significance": "Home of the characters, mentioned in backstory"
-    }}
-  ],
-  "world_context": {{
-    "era": "medieval fantasy",
-    "technology_level": "pre-industrial"
-  }}
-}}"""),
+If ANY character name or action verb is included in visual_background, the output is INVALID."""),
     ("human", """Text to analyze:
 {story_text}
 
-=== YOUR TASK ===
-1. Read the text and identify ALL locations (primary AND mentioned)
-2. For each location, REMOVE all character references
-3. Describe ONLY the static physical environment
-4. Output valid JSON with 'static_visual_prompt' containing ZERO character actions
-
-Remember: You are painting an EMPTY background. No people. Only environment.""")
+Extract all settings with full detail. Remember: EMPTY background, no characters.""")
 ])
 
 
@@ -147,26 +91,25 @@ PREVIOUS CONFLICTS:
 3. ADD more physical details: textures, materials, colors
 4. Ensure time_of_day matches text clues (moonlight = night)
 
-PENALTY: If character names or actions remain in 'static_visual_prompt', output is INVALID."""),
+PENALTY: If character names or actions remain in visual_background, output is INVALID."""),
     ("human", """Original text:
 {story_text}
 
 Previous extraction (contains errors):
 {previous_extraction}
 
-Re-extract with corrections. REMOVE all character references:""")
+Re-extract with corrections. REMOVE all character references.""")
 ])
 
 
 async def setting_extraction_node(state: dict) -> dict:
-    """Setting Extractor Agent node function - Production Level.
+    """Setting Extractor Agent node function - with Structured Output.
     
-    Role: "Environment Concept Artist" - creates empty stage sets
-    for Neo4j nodes and image generation prompts.
-    
-    Key principle: ZERO character actions. ONLY static environment.
+    Uses with_structured_output() for guaranteed schema compliance.
+    No manual JSON parsing required.
     """
-    llm = get_standard_llm()
+    # Get LLM with structured output bound to schema
+    structured_llm = get_structured_llm(SettingExtractionResult)
     
     conflicts = state.get("consistency_report", {}).get("conflicts", [])
     retry_count = state.get("retry_count", 0)
@@ -177,66 +120,41 @@ async def setting_extraction_node(state: dict) -> dict:
     try:
         if is_re_extraction:
             print(f"[SETTING] Re-extracting with {len(conflicts)} conflicts as feedback")
-            chain = SETTING_RE_EXTRACTION_PROMPT | llm
-            response = await chain.ainvoke({
+            chain = SETTING_RE_EXTRACTION_PROMPT | structured_llm
+            result: SettingExtractionResult = await chain.ainvoke({
                 "story_text": state["content"],
-                "conflicts": json.dumps(conflicts, ensure_ascii=False, indent=2),
-                "previous_extraction": json.dumps(previous_settings, ensure_ascii=False, indent=2)
+                "conflicts": str(conflicts),
+                "previous_extraction": str(previous_settings)
             })
         else:
-            chain = SETTING_EXTRACTION_PROMPT | llm
-            response = await chain.ainvoke({
+            chain = SETTING_EXTRACTION_PROMPT | structured_llm
+            result: SettingExtractionResult = await chain.ainvoke({
                 "story_text": state["content"]
             })
         
-        content = response.content.strip()
-        if content.startswith("```"):
-            content = content.split("```")[1]
-            if content.startswith("json"):
-                content = content[4:]
-            content = content.strip()
+        # Result is already a SettingExtractionResult Pydantic object
+        # Convert to dict for state storage
+        settings = [s.model_dump() for s in result.settings]
         
-        result = json.loads(content)
-        settings = result.get("settings", [])
-        world_context = result.get("world_context", {})
-        
-        # Post-process: Map new field names to schema-compatible names
+        # Ensure location_name is set (fallback to name if missing)
         for setting in settings:
-            # Map static_visual_prompt to visual_background for schema compatibility
-            if "static_visual_prompt" in setting and "visual_background" not in setting:
-                setting["visual_background"] = setting["static_visual_prompt"]
-            if "lighting_description" in setting and "lighting" not in setting:
-                setting["lighting"] = setting["lighting_description"]
-            if "atmosphere_keywords" in setting and "atmosphere" not in setting:
-                setting["atmosphere"] = setting["atmosphere_keywords"]
-            if "weather_condition" in setting and "weather" not in setting:
-                setting["weather"] = setting["weather_condition"]
-            if "static_objects" in setting and "notable_features" not in setting:
-                setting["notable_features"] = setting["static_objects"]
-            if "is_primary_location" in setting and "is_primary" not in setting:
-                setting["is_primary"] = setting["is_primary_location"]
-            if "location_name" not in setting and "name" in setting:
+            if not setting.get("location_name") and setting.get("name"):
                 setting["location_name"] = setting["name"]
-            if "story_significance" in setting and "significance" not in setting:
-                setting["significance"] = setting["story_significance"]
         
         return {
             "extracted_settings": settings,
-            "world_context": world_context,
+            "world_context": {
+                "world_name": result.world_name,
+                "era": result.era,
+                "technology_level": result.technology_level,
+            },
             "messages": [
                 {"role": "setting_agent", 
-                 "content": f"{'Re-' if is_re_extraction else ''}Extracted {len(settings)} settings (Production Level)"}
-            ]
-        }
-    except json.JSONDecodeError as e:
-        return {
-            "extracted_settings": previous_settings or [],
-            "errors": [f"Setting JSON parse error: {str(e)}"],
-            "messages": [
-                {"role": "setting_agent", "content": "Failed to parse response"}
+                 "content": f"{'Re-' if is_re_extraction else ''}Extracted {len(settings)} settings (Structured Output)"}
             ]
         }
     except Exception as e:
+        print(f"[SETTING] Extraction failed: {e}")
         return {
             "extracted_settings": previous_settings or [],
             "errors": [f"Setting extraction failed: {str(e)}"],

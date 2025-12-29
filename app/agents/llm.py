@@ -1,7 +1,17 @@
-"""AWS Bedrock LLM configuration and model instances."""
+"""AWS Bedrock LLM configuration with Structured Output support.
+
+Uses ChatBedrockConverse for:
+- Tool Calling based structured output
+- Pydantic v2 schema binding
+- Guaranteed JSON format compliance
+"""
 import boto3
-from langchain_aws import ChatBedrock
+from typing import Type, TypeVar
+from pydantic import BaseModel
+from langchain_aws import ChatBedrockConverse
 from app.config import settings
+
+T = TypeVar('T', bound=BaseModel)
 
 
 def get_bedrock_client():
@@ -18,7 +28,7 @@ def get_bedrock_llm(
     tier: str = "standard",
     temperature: float = 0.0,
     max_tokens: int = 4096
-) -> ChatBedrock:
+) -> ChatBedrockConverse:
     """Get Bedrock LLM instance by tier.
     
     Args:
@@ -27,63 +37,91 @@ def get_bedrock_llm(
         max_tokens: Maximum tokens to generate
         
     Returns:
-        ChatBedrock instance configured for the specified tier
+        ChatBedrockConverse instance configured for the specified tier
         
     Tiers:
-        - basic: Amazon Nova Micro (routing, simple classification)
-        - standard: Amazon Nova Lite (extraction, summarization)
-        - advanced: Claude 3.5 Haiku (complex reasoning, analysis)
+        - basic: Claude 3 Haiku (routing, simple classification)
+        - standard: Claude 3 Haiku (extraction, summarization)
+        - advanced: Claude 3 Haiku (complex reasoning, analysis)
     """
     model_configs = {
         "basic": {
-            # Claude 3 Haiku - used for all tiers until Nova models are confirmed available
             "model_id": "anthropic.claude-3-haiku-20240307-v1:0",
-            "model_kwargs": {"temperature": temperature, "max_tokens": max_tokens}
         },
         "standard": {
             "model_id": "anthropic.claude-3-haiku-20240307-v1:0",
-            "model_kwargs": {"temperature": temperature, "max_tokens": max_tokens}
         },
         "advanced": {
             "model_id": "anthropic.claude-3-haiku-20240307-v1:0",
-            "model_kwargs": {"temperature": temperature, "max_tokens": max_tokens}
         }
     }
     
     config = model_configs.get(tier, model_configs["standard"])
     
-    return ChatBedrock(
+    return ChatBedrockConverse(
         client=get_bedrock_client(),
-        model_id=config["model_id"],
-        model_kwargs=config["model_kwargs"],
+        model=config["model_id"],
+        temperature=temperature,
+        max_tokens=max_tokens,
     )
 
 
-# Pre-configured model instances
-# Use these in agents for consistent configuration
-BASIC_LLM = None  # Lazy initialization
+def get_structured_llm(
+    schema: Type[T],
+    tier: str = "standard",
+    temperature: float = 0.0,
+    max_tokens: int = 4096
+) -> ChatBedrockConverse:
+    """Get LLM with structured output bound to a Pydantic schema.
+    
+    This uses Tool Calling to guarantee the output matches the schema.
+    No manual JSON parsing required.
+    
+    Args:
+        schema: Pydantic BaseModel class to bind
+        tier: Model tier
+        temperature: Sampling temperature
+        max_tokens: Maximum tokens
+        
+    Returns:
+        LLM instance that returns schema instances directly
+        
+    Example:
+        >>> from app.schemas.settings import SettingExtractionResult
+        >>> llm = get_structured_llm(SettingExtractionResult)
+        >>> result = await llm.ainvoke("Extract settings from: ...")
+        >>> # result is a SettingExtractionResult instance
+        >>> result.settings[0].location_name
+        'Dark Forest'
+    """
+    base_llm = get_bedrock_llm(tier, temperature, max_tokens)
+    return base_llm.with_structured_output(schema)
+
+
+# Pre-configured model instances (lazy initialization)
+BASIC_LLM = None
 STANDARD_LLM = None
 ADVANCED_LLM = None
 
 
-def get_basic_llm() -> ChatBedrock:
-    """Get Basic tier LLM (Nova Micro)."""
+def get_basic_llm() -> ChatBedrockConverse:
+    """Get Basic tier LLM (Claude 3 Haiku)."""
     global BASIC_LLM
     if BASIC_LLM is None:
         BASIC_LLM = get_bedrock_llm("basic")
     return BASIC_LLM
 
 
-def get_standard_llm() -> ChatBedrock:
-    """Get Standard tier LLM (Nova Lite)."""
+def get_standard_llm() -> ChatBedrockConverse:
+    """Get Standard tier LLM (Claude 3 Haiku)."""
     global STANDARD_LLM
     if STANDARD_LLM is None:
         STANDARD_LLM = get_bedrock_llm("standard")
     return STANDARD_LLM
 
 
-def get_advanced_llm() -> ChatBedrock:
-    """Get Advanced tier LLM (Claude 3.5 Haiku)."""
+def get_advanced_llm() -> ChatBedrockConverse:
+    """Get Advanced tier LLM (Claude 3 Haiku)."""
     global ADVANCED_LLM
     if ADVANCED_LLM is None:
         ADVANCED_LLM = get_bedrock_llm("advanced")

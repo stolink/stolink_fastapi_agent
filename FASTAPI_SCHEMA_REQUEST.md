@@ -128,6 +128,93 @@ Spring Boot 백엔드에서 AI 분석 결과를 파싱하여 저장하는 로직
 }
 ```
 
+### Plot Integration (신규 추가)
+```json
+{
+  "plot_summary": {
+    "narrative": "Arin faces her fears in the forest.",
+    "central_conflict": "Man vs Self"
+  },
+  "overall_tension": 7.5,
+  "narrative_beats": [
+    {
+      "beat_id": 1,
+      "text": "Arin enters the forest",
+      "beat_type": "SETUP",
+      "event_ref": "E001",
+      "visual_prompt": "A woman walking into a dark forest"
+    }
+  ],
+  "tension_curve": [5, 6, 7.5],
+  "three_act_structure": [
+    {
+      "act": "setup",
+      "event_ids": ["E001", "E002"],
+      "purpose": "Establish the setting and characters"
+    }
+  ],
+  "foreshadowing": [
+    {
+      "foreshadow_id": "F001",
+      "source_event": "E002",
+      "hint_text": "A rustle in the bushes",
+      "predicted_outcome": "Possible ambush",
+      "confidence": 8,
+      "target_event": null
+    }
+  ],
+  "multimedia_summary": {
+    "beat_count": 2,
+    "tension_curve_length": 3,
+    "has_visual_prompts": true
+  }
+}
+```
+
+### Consistency Report (신규 추가)
+```json
+{
+  "overall_score": 95,
+  "requires_reextraction": false,
+  "conflicts": [],
+  "warnings": ["Minor timeout issue"],
+  "resolution_summary": {
+    "auto_fixable": 0,
+    "ready_for_update": 0,
+    "needs_human_review": 0,
+    "total_conflicts": 0
+  },
+  "neo4j_validation": {
+    "is_valid": true,
+    "conflict_count": 0,
+    "high_severity_count": 0
+  }
+}
+```
+
+### Validation (신규 추가)
+```json
+{
+  "is_valid": true,
+  "quality_score": 98,
+  "action": "approve",
+  "action_description": "Ready for callback to Spring Boot",
+  "average_completeness": 99.5,
+  "error_count": 0,
+  "warning_count": 0,
+  "execution_time_ms": 0.05,
+  "data_completeness": {
+    "extracted_characters": 100,
+    "extracted_events": 100,
+    "extracted_settings": 100
+  },
+  "validation_details": {
+    "errors": [],
+    "warnings": []
+  }
+}
+```
+
 ---
 
 ## 🔧 현재 Spring Boot 저장 현황
@@ -141,3 +228,31 @@ Spring Boot 백엔드에서 AI 분석 결과를 파싱하여 저장하는 로직
 | Dialogues | PostgreSQL | ✅ 구현 완료 |
 | Emotions | Neo4j (Character 업데이트) | ✅ 구현 완료 |
 | Job 상태 관리 | PostgreSQL | ✅ 구현 완료 |
+| **Plot Integration** | PostgreSQL | ✅ **신규 추가** |
+| **Consistency Report** | PostgreSQL | ✅ **신규 추가** |
+| **Validation Result** | PostgreSQL | ✅ **신규 추가** |
+| **Foreshadowing** | PostgreSQL | ✅ **신규 추가** |
+
+---
+
+## 📁 신규 추가된 엔티티
+
+| 엔티티 | 테이블명 | 설명 |
+|--------|----------|------|
+| `PlotIntegration` | `plot_integrations` | 플롯 통합 데이터 (narrative_beats, tension_curve 등) |
+| `ConsistencyReport` | `consistency_reports` | 일관성 보고서 (conflicts, warnings, overall_score) |
+| `ValidationResult` | `validation_results` | 검증 결과 (quality_score, action, data_completeness) |
+| `Foreshadowing` | `foreshadowing` | 복선 데이터 (기존 엔티티 활용, plot_integration.foreshadowing에서 추출) |
+
+---
+
+## ⚠️ 중요: Foreshadowing 필드 요구사항
+
+`plot_integration.foreshadowing` 배열의 각 항목에 **반드시** 다음 필드가 포함되어야 합니다:
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| `foreshadow_id` | string | ✅ | 복선 고유 ID (예: "F001") |
+| `hint_text` | string | ✅ | 복선 힌트 텍스트 |
+| `predicted_outcome` | string | ❌ | 예상 결과 |
+| `confidence` | integer | ❌ | 신뢰도 (1-10, 7 이상이면 MAJOR로 분류) |
