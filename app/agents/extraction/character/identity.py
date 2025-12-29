@@ -102,6 +102,14 @@ Output ALL text in the SAME language as the input.
 If the story is in Korean, all values must be in Korean.
 Do NOT translate (e.g., "암흑회" not "Dark Order").
 
+### CRITICAL: NAME EXTRACTION RULE ###
+When a character is introduced as "베라(Vera)" or "리안(Lian)", extract ONLY the Korean name.
+The English in parentheses is just a transliteration hint - DO NOT create separate characters.
+❌ BAD: Extract both "Vera" and "베라" as different characters
+✅ GOOD: Extract only "베라" (use Korean name)
+❌ BAD: "name": "Lian"
+✅ GOOD: "name": "리안"
+
 ### EXTRACTION FOCUS ###
 For each character, extract:
 - name: Character's name as it appears in text (REQUIRED)
@@ -113,6 +121,11 @@ For each character, extract:
   * This is IMPORTANT for character visualization (armor, weapons, attire)
 - faction: Organization, group, or affiliation
 - role: Main story role (protagonist/antagonist/supporting/mentor/sidekick/other)
+  * IMPORTANT: Detect antagonist from context clues:
+    - Attacks/threatens the protagonist → likely antagonist
+    - Commands others to harm → likely antagonist  
+    - Uses hostile language (경멸, 살기, 위협) → likely antagonist
+    - Example: "베라의 눈빛이 살기로 번뜩였다" → role: "antagonist"
 - aliases: Any nicknames or titles
 - status: alive/deceased/unknown
 - backstory: Background information using FALLBACK POLICY:

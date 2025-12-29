@@ -217,19 +217,30 @@ APPEARANCE_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
 Output ALL text in the SAME language as the input.
 If the story is in Korean, all values must be in Korean.
 
+### CRITICAL: NAME EXTRACTION RULE ###
+When a character is introduced as "베라(Vera)" or "리안(Lian)", use ONLY the Korean name.
+The English in parentheses is just a transliteration hint - DO NOT use it.
+❌ BAD: "name": "Vera", "name": "Lian", "name": "Tio"
+✅ GOOD: "name": "베라", "name": "리안", "name": "티오"
+
 ### EXTRACTION FOCUS ###
 Extract ONLY visual appearance details for image generation:
 - physique: Body type (muscular, slender, average)
 - skin_tone: Skin color if mentioned
-- eyes: Eye color, shape, characteristics
+- eyes: Eye color, shape, characteristics, AND any eye coverings (e.g., "black eyepatch on right eye", "검은 안대")
 - nose: Nose description
 - mouth: Mouth/lips description
 - hair_style: Long, short, braided, etc.
 - hair_color: Hair color
 - attire: Clothing, armor, weapons held
 - expression: Default facial expression
-- scars_tattoos: Visible marks on body
+- scars_tattoos: Visible marks, eyepatches, face masks, bandages - ANY notable face/body features
 - cyberware: Cybernetic parts (if sci-fi)
+
+### IMPORTANT: FACE ACCESSORIES ###
+Face accessories like eyepatches, masks, bandages should be captured:
+- "오른쪽 눈에는 검은 안대" → eyes: "wearing black eyepatch on right eye"
+- "얼굴에 흉터" → scars_tattoos: ["facial scar"]
 
 ### RULES ###
 1. Focus ONLY on visual/physical traits

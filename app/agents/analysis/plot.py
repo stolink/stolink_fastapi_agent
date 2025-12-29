@@ -153,6 +153,36 @@ async def plot_integration_node(state: dict) -> dict:
     print(f"[PLOT] Analyzing {len(events)} events for narrative structure")
     print(f"[PLOT] Available event_ids: {available_event_ids}")
     
+    # === GUARD: Return minimal result if no events ===
+    if not events:
+        print("[PLOT] No events available - returning minimal result without event_refs")
+        
+        # Extract character names for basic narrative
+        char_names = [c.get("name") or (c.get("profile", {}) or {}).get("name") for c in characters if c.get("name") or (c.get("profile", {}) or {}).get("name")]
+        
+        return {
+            "plot_integration": {
+                "plot_summary": {
+                    "narrative": f"Characters present: {', '.join(char_names[:5]) if char_names else 'Unknown'}. No detailed events extracted.",
+                    "central_conflict": "Unable to determine without event data"
+                },
+                "overall_tension": 5.0,
+                "narrative_beats": [],  # NO hallucinated event_refs
+                "tension_curve": [],
+                "three_act_structure": [],
+                "foreshadowing": [],
+                "multimedia_summary": {
+                    "beat_count": 0,
+                    "tension_curve_length": 0,
+                    "has_visual_prompts": False
+                }
+            },
+            "messages": [
+                {"role": "plot_agent", "content": "No events available - skipped plot analysis to prevent hallucination"}
+            ]
+        }
+    
+    
     try:
         # Get structured LLM
         structured_llm = get_structured_llm(PlotIntegrationResult)
