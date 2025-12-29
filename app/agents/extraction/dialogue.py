@@ -118,6 +118,9 @@ Analyze dialogues for THREE purposes:
 Available Characters (from Character Agent) - MUST use EXACT names:
 {available_characters}
 
+Character Personalities (CONTEXT):
+{available_personalities}
+
 RULES:
 1. key_dialogues.participants: ONLY use names from the list above
 2. speech_patterns.character_name: ONLY use names from the list above
@@ -125,7 +128,9 @@ RULES:
 
 PENALTY WARNING:
 If you use a name NOT in the Available Characters list (e.g., "the protagonist", "Minho" instead of "이민호"),
-the output will be REJECTED because it breaks database referential integrity.""")
+the output will be REJECTED because it breaks database referential integrity.
+
+TIP: Use "Character Personalities" to analyze "speech_characteristics" better (e.g., A "Rude" character likely has "Aggressive" speech).""")
 ])
 
 
@@ -143,10 +148,26 @@ async def dialogue_analysis_node(state: dict) -> dict:
     # Support both legacy (c["name"]) and FullCharacter (c["profile"]["name"]) formats
     characters = state.get("extracted_characters", [])
     available_characters = []
+    available_personalities = [] # Format: "Name: [Trait1, Trait2]"
+    
     for c in characters:
         name = c.get("name") or (c.get("profile", {}) or {}).get("name")
         if name:
             available_characters.append(name)
+            
+            # Extract Personality
+            pers = c.get("personality", {}) or c.get("char_personality", {})
+            traits = []
+            if isinstance(pers, dict):
+                traits = pers.get("core_traits", [])
+                if not traits and "traits" in pers:
+                    traits = pers["traits"]
+            
+            if traits:
+                clean_traits = [t if isinstance(t, str) else str(t) for t in traits]
+                available_personalities.append(f"{name}: [{', '.join(clean_traits[:5])}]")
+    
+    pers_str = "\n".join(available_personalities) if available_personalities else "None"
     
     print(f"[DIALOGUE] Available characters: {available_characters}")
     
@@ -169,7 +190,8 @@ async def dialogue_analysis_node(state: dict) -> dict:
         chain = DIALOGUE_ANALYSIS_PROMPT | llm
         response = await chain.ainvoke({
             "story_text": state["content"],
-            "available_characters": json.dumps(available_characters, ensure_ascii=False)
+            "available_characters": json.dumps(available_characters, ensure_ascii=False),
+            "available_personalities": pers_str
         })
         
         content = response.content.strip()

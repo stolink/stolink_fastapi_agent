@@ -83,6 +83,7 @@ class DatabaseQueryService:
             SELECT 
                 c.id, c.name, c.role, c.description, c.traits,
                 c.visual_traits, c.personality_traits, c.status,
+                c.inventory, c.stats,
                 c.first_appearance, c.created_at
             FROM characters c
             WHERE c.project_id = $1 AND c.name = $2
@@ -116,7 +117,8 @@ class DatabaseQueryService:
         query = """
             SELECT 
                 c.id, c.name, c.role, c.description, c.traits,
-                c.visual_traits, c.personality_traits, c.status
+                c.visual_traits, c.personality_traits, c.status,
+                c.inventory, c.stats
             FROM characters c
             WHERE c.project_id = $1
             ORDER BY c.created_at
