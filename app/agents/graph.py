@@ -12,7 +12,9 @@ import operator
 
 from langgraph.graph import StateGraph, START, END
 
-from app.agents.extraction.character import character_extraction_node
+# Character Team (Hierarchical Multi-Agent System) - Direct graph access
+from app.agents.extraction.character.supervisor import character_team_graph
+from app.agents.extraction.character.state import CharacterTeamState
 from app.agents.extraction.event import event_extraction_node
 from app.agents.extraction.setting import setting_extraction_node
 from app.agents.extraction.dialogue import dialogue_analysis_node
@@ -135,9 +137,25 @@ async def extraction_node(state: dict) -> dict:
     print(f"[EXTRACTION] Starting, content length: {len(state.get('content', ''))}")
     
     # === Phase 1: Master Data Extraction (병렬) ===
-    print("[EXTRACTION] Phase 1: Master Data (Character + Setting) - 병렬 실행")
+    print("[EXTRACTION] Phase 1: Master Data (Character Team + Setting) - 병렬 실행")
+    
+    # Prepare CharacterTeamState for hierarchical character extraction
+    async def run_character_team():
+        team_state: CharacterTeamState = {
+            "content": state.get("content", ""),
+            "retry_count": state.get("retry_count", 0),
+            "completed_agents": [],
+            "errors": [],
+            "messages": [],
+        }
+        result = await character_team_graph.ainvoke(team_state)
+        return {
+            "extracted_characters": result.get("extracted_characters", []),
+            "messages": result.get("messages", []),
+        }
+    
     phase1_tasks = [
-        asyncio.create_task(character_extraction_node(state)),
+        asyncio.create_task(run_character_team()),  # Hierarchical Character Team (Direct)
         asyncio.create_task(setting_extraction_node(state)),
     ]
     phase1_results = await asyncio.gather(*phase1_tasks, return_exceptions=True)

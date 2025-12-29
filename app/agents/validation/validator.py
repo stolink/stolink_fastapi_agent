@@ -39,7 +39,8 @@ VALIDATION_RULES = {
         "min_count": 1,
         "penalty_missing": 20,
         "penalty_empty": 15,
-        "required_fields": ["name", "role"]
+        "required_fields": ["profile.name", "role"],  # Support nested paths
+        "nested_paths": True
     },
     "extracted_events": {
         "required": True,
@@ -93,28 +94,57 @@ def create_validation_error(field: str, code: str, message: str, value=None) -> 
     return error
 
 
-def validate_required_fields(data: dict | list, fields: list, source: str) -> list:
-    """Check if required fields exist in data. Returns structured errors."""
+def get_nested_value(data: dict, path: str):
+    """Get value from nested dict using dot notation (e.g., 'profile.name')."""
+    keys = path.split(".")
+    value = data
+    for key in keys:
+        if isinstance(value, dict):
+            value = value.get(key)
+        else:
+            return None
+    return value
+
+
+def validate_required_fields(data: dict | list, fields: list, source: str, nested_paths: bool = False) -> list:
+    """Check if required fields exist in data. Returns structured errors.
+    
+    Args:
+        data: Data to validate (dict or list)
+        fields: Required field names (can include dot notation like 'profile.name')
+        source: Source name for error messages
+        nested_paths: If True, support dot notation for nested fields
+    """
     errors = []
     if isinstance(data, list):
         for idx, item in enumerate(data):
             for field in fields:
-                if not item.get(field):
+                if nested_paths and "." in field:
+                    value = get_nested_value(item, field)
+                else:
+                    value = item.get(field)
+                
+                if not value:
                     errors.append(create_validation_error(
                         field=f"{source}[{idx}].{field}",
                         code=ValidationErrorCode.MISSING_FIELD,
                         message=f"Required field '{field}' is missing",
-                        value=item.get(field)
+                        value=value
                     ))
     elif isinstance(data, dict):
         for field in fields:
-            if field not in data or data.get(field) is None:
+            if nested_paths and "." in field:
+                value = get_nested_value(data, field)
+            else:
+                value = data.get(field)
+            
+            if value is None:
                 errors.append(create_validation_error(
                     field=f"{source}.{field}",
                     code=ValidationErrorCode.MISSING_FIELD,
                     message=f"Required field '{field}' is missing"
                 ))
-    return errors[:5]  # Limit to 5 errors per source
+    return errors[:5]
 
 
 def validate_referential_integrity(state: dict) -> list:
@@ -273,8 +303,11 @@ async def validator_node(state: dict) -> dict:
             ))
             details["status"] = "empty"
         else:
-            # Validate required fields
-            field_errors = validate_required_fields(data, rules.get("required_fields", []), key)
+            # Validate required fields (support nested paths if specified)
+            nested_paths = rules.get("nested_paths", False)
+            field_errors = validate_required_fields(
+                data, rules.get("required_fields", []), key, nested_paths=nested_paths
+            )
             if field_errors:
                 details["errors"] = field_errors[:3]
                 quality_score -= len(field_errors) * 2

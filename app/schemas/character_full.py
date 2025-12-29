@@ -152,21 +152,26 @@ class InventoryItem(BaseModel):
 # F. Relations & World Context (세계관/관계)
 # =============================================================================
 class CharacterRelations(BaseModel):
-    """Character relationships and world knowledge."""
-    relations: list[CharacterRelationship] = Field(
+    """Character relationships and world knowledge.
+    
+    Naming convention:
+    - graph: Relationship list (not "relations" to avoid relations.relations duplication)
+    - event_refs: Event ID references (optimized for payload size)
+    """
+    graph: list[CharacterRelationship] = Field(
         default_factory=list, 
         description="List of relationships with other characters"
     )
-    known_events: list[str] = Field(
+    event_refs: list[str] = Field(
         default_factory=list, 
-        description="Event IDs the character knows about"
+        description="Event IDs the character knows about (e.g., ['E001', 'E045'])"
     )
     location_context: Optional[str] = Field(
         None, 
         description="Current location context/description"
     )
     
-    @field_validator('relations', 'known_events', mode='before')
+    @field_validator('graph', 'event_refs', mode='before')
     @classmethod
     def list_none_to_empty(cls, v):
         return none_to_list(v)

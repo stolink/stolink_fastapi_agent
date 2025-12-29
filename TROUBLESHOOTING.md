@@ -20,6 +20,10 @@
 10. [JSON 파싱 오류 - Structured Output 도입](#10-json-파싱-오류-및-스키마-불일치---structured-output-도입)
 11. [Job 상태 업데이트 API 연동](#11-job-상태-업데이트-api-연동)
 12. [Character Agent - FullCharacter 스키마 확장](#12-character-agent---fullcharacter-스키마-확장)
+13. [FullCharacter 스키마 적용 - 전체 에이전트 호환성](#13-fullcharacter-스키마-적용---전체-에이전트-호환성)
+14. [Multi-Agent - JSON 파싱 오류 및 AWS Throttling](#14-multi-agent---json-파싱-오류-및-aws-throttling)
+15. [Character Agent - Hierarchical Multi-Agent System 리팩토링](#15-character-agent---hierarchical-multi-agent-system-리팩토링)
+16. [Appearance Agent - Production Level 업그레이드](#16-appearance-agent---production-level-업그레이드)
 
 ---
 
@@ -1309,6 +1313,347 @@ async def retry_with_backoff(func, *args, **kwargs):
 - ✅ 빈 LLM 응답 시 JSON 파싱 시도 안함
 - ✅ JSON 오류가 에러가 아닌 빈 결과로 처리 → 파이프라인 계속 진행
 - ✅ ThrottlingException 시 지수 백오프 재시도 가능
+
+---
+
+
+## 15. Character Agent - Hierarchical Multi-Agent System 리팩토링
+
+### 📅 날짜
+2025-12-29
+
+### 🔴 문제 (Problem)
+
+1. **단일 에이전트 과부하**: 기존 `character.py`가 `FullCharacter` 스키마의 13개 컴포넌트(~87개 필드)를 한 번에 추출
+2. **성격 vs 감정 혼동**: 일시적 감정(`두려움`)이 영구적 성격 결함(`flaws`)으로 분류됨
+3. **언어 불일치**: 한국어 입력에서 영어 번역 출력 (`암흑회` → `Dark Order`)
+4. **Validator 경로 오류**: `profile.name` 대신 최상위 `name`을 찾아 VAL_003 오류 발생
+5. **비대칭 관계 미지원**: 배신 관계에서 양방향 모두 같은 유형으로 추출
+
+**complex.json 예시**:
+```json
+{
+  "status": "WARNING",  // COMPLETED이어야 함
+  "extracted_characters": [{
+    "personality": {
+      "flaws": ["두려움"]  // 이것은 current_mood.emotion이어야 함
+    },
+    "profile": {
+      "faction": "Dark Order"  // "암흑회"이어야 함
+    }
+  }]
+}
+```
+
+### 🟡 원인 분석 (Root Cause)
+
+1. **LLM 컨텍스트 한계**: 87개 필드를 단일 호출로 추출 → 정확도 저하
+2. **프롬프트 불명확**: 성격(영구) vs 감정(일시) 구분 지시 없음
+3. **언어 지시 누락**: 출력 언어 규칙이 프롬프트에 없음
+4. **Validator 로직 버그**: 중첩 필드 경로(`profile.name`)를 지원하지 않음
+
+### 🟢 해결책 (Solution)
+
+#### 1. Hierarchical Multi-Agent System 아키텍처
+
+```mermaid
+flowchart TB
+    subgraph "Main Level"
+        MS[Main Supervisor]
+        CT[Character Team]
+        EA[Event Agent]
+        SA[Setting Agent]
+    end
+    
+    subgraph "Character Team (Sub-Level)"
+        CS[Character Supervisor]
+        ID[Identity Agent]
+        APP[Appearance Agent]
+        PER[Personality Agent]
+        REL[Relations Agent]
+        DM[Dialogue/Mood Agent]
+        ST[Stats Agent]
+        AGG[Aggregator]
+    end
+    
+    MS --> CT & EA & SA
+    CT --> CS
+    CS --> ID & APP & PER & REL & DM & ST
+    ID & APP & PER & REL & DM & ST --> AGG
+    AGG --> CT
+```
+
+**핵심 개념**:
+- Main Supervisor 입장에서 Character Team은 **하나의 에이전트**처럼 보임 (캡슐화)
+- 내부적으로 Character Supervisor가 6개 서브 에이전트를 관리
+
+#### 2. 서브 에이전트 역할 분리
+
+| 에이전트 | 책임 | 주요 필드 |
+|----------|------|-----------|
+| **Identity** | 기본 정보 | name, age, role, faction, backstory |
+| **Appearance** | 외형 (이미지 생성용) | hair, physique, attire, scars |
+| **Personality** | 영구 성격 특성 | core_traits, flaws, values |
+| **Relations** | 캐릭터 간 관계 | relationships, known_events |
+| **Dialogue/Mood** | 대화 스타일 + 일시 감정 | tone, catchphrases, current_mood |
+| **Stats** | 게임 데이터 (optional) | level, HP, skills |
+
+#### 3. 성격 vs 감정 분리 (Personality Agent)
+
+```python
+PERSONALITY_EXTRACTION_PROMPT = """
+### CRITICAL DISTINCTION ###
+✅ core_traits (PERSISTENT): brave, cunning, loyal
+✅ flaws (PERSISTENT): impulsive, arrogant, vengeful
+❌ NOT personality: fearful (in scary moment), anxious (before battle)
+
+Example: "단호했지만 약간의 두려움이 섞여 있었다"
+- core_traits: ["단호함"] ✅
+- flaws: [] (두려움 is situational, NOT a flaw)
+"""
+```
+
+#### 4. 언어 일관성 (모든 서브 에이전트)
+
+```python
+### LANGUAGE CONSISTENCY RULE ###
+Output ALL text in the SAME language as the input.
+If the story is in Korean, all values must be in Korean.
+Do NOT translate (e.g., "암흑회" not "Dark Order").
+```
+
+#### 5. 비대칭 관계 지원 (Relations Agent)
+
+```python
+### RELATIONSHIP ASYMMETRY ###
+If A betrayed B:
+- A → B: type="BETRAYER"
+- B → A: type="FORMER_ALLY"
+Create SEPARATE entries for each direction.
+```
+
+#### 6. Validator 중첩 경로 수정
+
+```python
+# validator.py - 변경 전
+"required_fields": ["name", "role"]
+
+# validator.py - 변경 후
+"required_fields": ["profile.name", "role"],
+"nested_paths": True
+
+def get_nested_value(data: dict, path: str):
+    """Get value from nested dict using dot notation."""
+    keys = path.split(".")
+    value = data
+    for key in keys:
+        value = value.get(key) if isinstance(value, dict) else None
+    return value
+```
+
+#### 7. 폴백 전략 (Team Entry Point)
+
+```python
+async def character_team_node(state: dict) -> dict:
+    try:
+        # Hierarchical 시스템 실행
+        result = await character_team_graph.ainvoke(team_state)
+        return result
+    except Exception as e:
+        # 실패 시 레거시 단일 에이전트로 폴백
+        print(f"[CHARACTER_TEAM] Fallback to legacy: {e}")
+        return await legacy_character_extraction(state)
+```
+
+### 📁 수정된 파일
+
+#### 신규 파일 (11개)
+| 파일 | 설명 |
+|------|------|
+| `app/agents/extraction/character/__init__.py` | 패키지 초기화 |
+| `app/agents/extraction/character/state.py` | CharacterTeamState 정의 |
+| `app/agents/extraction/character/identity.py` | Identity Agent |
+| `app/agents/extraction/character/appearance.py` | Appearance Agent |
+| `app/agents/extraction/character/personality.py` | Personality Agent |
+| `app/agents/extraction/character/relations.py` | Relations Agent |
+| `app/agents/extraction/character/dialogue_mood.py` | Dialogue/Mood Agent |
+| `app/agents/extraction/character/stats.py` | Stats Agent |
+| `app/agents/extraction/character/aggregator.py` | 결과 병합 |
+| `app/agents/extraction/character/supervisor.py` | 내부 라우팅 |
+| `app/agents/extraction/character/team.py` | 진입점 + 폴백 |
+
+#### 수정된 파일
+| 파일 | 수정 내용 |
+|------|----------|
+| `app/agents/graph.py` | `character_team_node` import로 변경 |
+| `app/agents/validation/validator.py` | 중첩 경로 검증 (`profile.name`) |
+| `app/agents/extraction/character.py` → `character_legacy.py` | 폴백용으로 이름 변경 |
+
+#### 테스트 파일
+| 파일 | 설명 |
+|------|------|
+| `tests/test_agents/test_character_team.ipynb` | 개별 에이전트 + 통합 테스트 |
+
+### ✅ 결과
+
+1. **성능 향상**: 87개 필드 → 6개 에이전트로 분산 (각 ~15개 필드)
+2. **정확도 향상**: 
+   - `두려움`이 `current_mood.emotion`에 올바르게 추출
+   - `암흑회`가 한국어로 유지
+   - 비대칭 관계 (BETRAYER/FORMER_ALLY) 지원
+3. **Validator 오류 해결**: `profile.name` 중첩 경로 검증 성공
+4. **안정성**: 폴백 전략으로 실패 시에도 결과 반환
+
+### 💡 향후 개선 사항
+
+1. **병렬 실행**: 현재 순차 실행 → asyncio.gather로 6개 에이전트 동시 실행
+2. **캐싱**: 동일 텍스트에 대한 서브 에이전트 결과 캐싱
+3. **다른 도메인 확장**: Event, Setting에도 동일한 Hierarchical 패턴 적용 가능
+
+---
+
+## 16. Appearance Agent - Production Level 업그레이드
+
+### 📅 날짜
+2025-12-29
+
+### 🔴 문제 (Problem)
+
+Appearance Agent 출력에 `null` 값이 많이 포함되어 다음 시스템에서 문제 발생:
+
+```json
+"skin_tone": null,
+"nose": null,
+"mouth": null,
+"expression": null
+```
+
+| 시스템 | 문제 |
+|--------|------|
+| **Image Gen AI** | 프롬프트에 null 포함 시 일관성 없는 결과 |
+| **Game Engine (C++/C#)** | NullReferenceException 발생 |
+| **Shader/UI** | 색상 파싱 불가 |
+
+### 🟡 원인 분석 (Root Cause)
+
+1. **Null 처리 부재**: 원본 텍스트에 묘사 없으면 null 그대로 반환
+2. **색상 비정규화**: "검은", "은빛" 같은 자연어 → 렌더링 엔진에서 파싱 불가
+3. **프롬프트 분산**: 개별 필드 조합 로직이 백엔드에서 추가 필요
+4. **스타일 미지정**: 화풍/장르 정보 없이 이미지 생성 시 일관성 상실
+
+### 🟢 해결책 (Solution)
+
+4가지 Production 기능 추가:
+
+#### 1. Null Fallback Strategy
+
+```python
+ROLE_DEFAULTS = {
+    "protagonist": {"physique": "athletic", "skin_tone": "fair", "expression": "determined"},
+    "antagonist": {"physique": "imposing", "skin_tone": "pale", "expression": "cold"},
+    "default": {"physique": "average", "skin_tone": "unspecified", "expression": "neutral"},
+}
+
+# null 대신 "unspecified" 또는 role-based default 사용
+if not result.get("physique"):
+    result["physique"] = defaults.get("physique", "average")
+```
+
+#### 2. Color Normalization
+
+자연어 색상 → 구조화된 데이터 (Hex + Category)
+
+```python
+COLOR_MAP = {
+    "검은": {"en": "black", "hex": "#000000", "category": "BLACK"},
+    "은빛": {"en": "silver", "hex": "#C0C0C0", "category": "SILVER"},
+    "회색": {"en": "gray", "hex": "#808080", "category": "GRAY"},
+    # ... 20+ 색상
+}
+```
+
+출력:
+```json
+"hair_color_normalized": {
+  "description": "검은",
+  "hex_code": "#000000",
+  "category": "BLACK"
+}
+```
+
+#### 3. Prompt Aggregation
+
+Image AI에 바로 사용 가능한 통합 프롬프트 생성:
+
+```python
+def generate_visual_prompt(data: dict, style: str) -> str:
+    parts = [
+        data.get("physique"),
+        f"{data.get('hair_color')} hair",
+        f"{data.get('eyes')} eyes",
+        # ... 모든 시각적 요소 결합
+    ]
+    return ", ".join(parts) + f", {style}"
+```
+
+출력:
+```json
+"full_visual_prompt": "athletic, fair skin, 검은 hair, 긴 머리, sharp eyes, silver sword, fantasy illustration"
+```
+
+#### 4. Style Context
+
+화풍/장르 메타데이터 추가:
+
+```json
+"style_context": {
+  "art_style": "fantasy illustration",
+  "rendering_engine": "Unreal Engine 5"
+}
+```
+
+### 📁 수정된 파일
+
+| 파일 | 수정 내용 |
+|------|----------|
+| `app/agents/extraction/character/appearance.py` | COLOR_MAP, ROLE_DEFAULTS, post_process_appearance() 추가 |
+| `app/agents/extraction/character/aggregator.py` | 새 필드 (hair_color_normalized, full_visual_prompt, style_context) 반영 |
+| `tests/test_agents/test_character_appearance.ipynb` | Production 필드 검증 테스트 추가 |
+
+### ✅ 결과
+
+**Before:**
+```json
+{
+  "hair_color": "검은",
+  "skin_tone": null,
+  "expression": null
+}
+```
+
+**After:**
+```json
+{
+  "hair_color": "검은",
+  "hair_color_normalized": {
+    "description": "검은",
+    "hex_code": "#000000",
+    "category": "BLACK"
+  },
+  "skin_tone": "fair",
+  "expression": "determined",
+  "full_visual_prompt": "athletic, fair skin, 검은 hair, sharp eyes, fantasy illustration",
+  "style_context": {
+    "art_style": "fantasy illustration",
+    "rendering_engine": "Unreal Engine 5"
+  }
+}
+```
+
+1. **Null 제거**: 모든 주요 필드에 fallback 값 적용
+2. **렌더링 호환**: Hex 색상 코드로 Shader/UI 직접 연동 가능
+3. **Image AI 연동**: `full_visual_prompt`를 DALL-E 3/Stable Diffusion에 바로 전달
+4. **일관성**: `style_context`로 생성물 톤 앤 매너 고정
 
 ---
 
