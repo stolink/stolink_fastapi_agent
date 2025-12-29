@@ -6,7 +6,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: stolink-ai-backend
+    container_name: stolink-fastapi-agent
     environment:
       # AWS Bedrock
       AWS_ACCESS_KEY_ID: ${AWS_BEDROCK_ACCESS_KEY_ID}
@@ -38,7 +38,13 @@ services:
     ports:
       - "8000:8000"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
