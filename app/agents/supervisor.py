@@ -93,7 +93,7 @@ def get_phase_status(state: dict) -> dict:
 
 def should_retry_extraction(state: dict) -> tuple[bool, str]:
     """Check if extraction should be retried based on validation/consistency."""
-    retry_count = state.get("extraction_retry_count", 0)
+    retry_count = state.get("retry_count", 0)
     trace_id = state.get("trace_id", "unknown")
     
     if retry_count >= MAX_EXTRACTION_RETRIES:
@@ -113,7 +113,7 @@ def should_retry_extraction(state: dict) -> tuple[bool, str]:
     return False, "no_retry_needed"
 
 
-def supervisor_router(state: dict) -> Literal["parallel_extraction", "parallel_analysis", "validation", "human_review", "__end__"]:
+def supervisor_router(state: dict) -> Literal["extraction", "analysis", "validation", "__end__"]:
     """Supervisor routing logic - Production Level."""
     extraction_done = state.get("extraction_done", False)
     analysis_done = state.get("analysis_done", False)
@@ -122,29 +122,29 @@ def supervisor_router(state: dict) -> Literal["parallel_extraction", "parallel_a
     trace_id = state.get("trace_id", "unknown")
     
     phase_status = get_phase_status(state)
-    retry_count = state.get("extraction_retry_count", 0)
+    retry_count = state.get("retry_count", 0)
     
     print(f"[{trace_id}] Phase Status:")
     print(f"  - Extraction: done={extraction_done}, chars={phase_status['extraction']['characters']}, events={phase_status['extraction']['events']}")
     print(f"  - Analysis: done={analysis_done}, rels={phase_status['analysis']['relationships']}, consistency={phase_status['analysis']['consistency_score']}")
     print(f"  - Validation: done={validation_done}, score={phase_status['validation']['quality_score']}, action={phase_status['validation']['action']}")
-    print(f"  - Retries: extraction={retry_count}/{MAX_EXTRACTION_RETRIES}, Errors: {len(errors)}")
+    print(f"  - Retries: {retry_count}/{MAX_EXTRACTION_RETRIES}, Errors: {len(errors)}")
     
     if len(errors) > 5:
         print(f"[{trace_id}] -> __end__ (too many errors)")
         return "__end__"
     
     if state.get("force_fail"):
-        print(f"[{trace_id}] -> human_review (force fail)")
-        return "human_review"
+        print(f"[{trace_id}] -> __end__ (force fail / human review needed)")
+        return "__end__"
     
     if not extraction_done:
-        print(f"[{trace_id}] -> parallel_extraction (initial)")
-        return "parallel_extraction"
+        print(f"[{trace_id}] -> extraction")
+        return "extraction"
     
     if not analysis_done:
-        print(f"[{trace_id}] -> parallel_analysis")
-        return "parallel_analysis"
+        print(f"[{trace_id}] -> analysis")
+        return "analysis"
     
     if not validation_done:
         print(f"[{trace_id}] -> validation")
@@ -152,11 +152,11 @@ def supervisor_router(state: dict) -> Literal["parallel_extraction", "parallel_a
     
     should_retry, reason = should_retry_extraction(state)
     if should_retry:
-        print(f"[{trace_id}] -> parallel_extraction (retry: {reason})")
-        return "parallel_extraction"
+        print(f"[{trace_id}] -> extraction (retry: {reason})")
+        return "extraction"
     elif reason == "max_retries_exceeded":
-        print(f"[{trace_id}] -> human_review (max retries exceeded)")
-        return "human_review"
+        print(f"[{trace_id}] -> __end__ (max retries exceeded)")
+        return "__end__"
     
     print(f"[{trace_id}] -> __end__ (all done)")
     return "__end__"
@@ -174,14 +174,13 @@ async def supervisor_node(state: dict) -> dict:
     
     next_action = supervisor_router(state)
     
-    if next_action == "parallel_extraction" and state.get("extraction_done"):
-        retry_count = state.get("extraction_retry_count", 0) + 1
-        updates["extraction_retry_count"] = retry_count
+    if next_action == "extraction" and state.get("extraction_done"):
+        retry_count = state.get("retry_count", 0) + 1
+        updates["retry_count"] = retry_count
         updates["extraction_done"] = False
         print(f"[{trace_id}] Resetting extraction for retry #{retry_count}")
     
-    if next_action == "human_review":
-        updates["force_fail"] = True
+    if state.get("force_fail") and next_action == "__end__":
         updates["force_fail_reason"] = "max_retries_exceeded"
     
     supervisor_state = get_supervisor_state({**state, **updates})

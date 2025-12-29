@@ -158,6 +158,12 @@ PERSONALITY_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
 Output ALL text in the SAME language as the input.
 If the story is in Korean, all values must be in Korean.
 
+### CRITICAL: NAME EXTRACTION RULE ###
+When a character is introduced as "베라(Vera)" or "리안(Lian)", use ONLY the Korean name.
+The English in parentheses is just a transliteration hint - DO NOT use it.
+❌ BAD: "name": "Vera", "name": "Lian", "name": "Tio"
+✅ GOOD: "name": "베라", "name": "리안", "name": "티오"
+
 ### CRITICAL DISTINCTION ###
 ⚠️ PERMANENT personality traits vs TEMPORARY emotional states:
 

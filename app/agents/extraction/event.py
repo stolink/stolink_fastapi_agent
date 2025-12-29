@@ -86,6 +86,9 @@ it will be REJECTED because that's Setting Agent's job."""),
 Available Characters (from Character Agent) - MUST use EXACT names:
 {available_characters}
 
+Available Inventory (VISUAL CONTEXT):
+{available_inventory}
+
 Available Locations (from Setting Agent) - MUST use EXACT names:
 {available_settings}
 
@@ -93,6 +96,7 @@ RULES:
 1. participants: ONLY use names from "Available Characters" list above
 2. location_ref: ONLY use names from "Available Locations" list above
 3. visual_scene: Action and composition ONLY - NO background descriptions
+   - TIP: Use "Available Inventory" to describe held items precisely (e.g., "Silver Sword" instead of "sword")
 4. description: MUST provide detailed description for each event
 
 If a character or location is not in the list, use the closest match or exclude it.""")
@@ -120,6 +124,7 @@ If visual_scene contains "forest", "trees", "moon", "fog" - it will be REJECTED.
 {story_text}
 
 Available Characters: {available_characters}
+Available Inventory: {available_inventory}
 Available Locations: {available_settings}
 
 Previous extraction (contains errors):
@@ -148,14 +153,37 @@ async def event_extraction_node(state: dict) -> dict:
     settings = state.get("extracted_settings", [])
     
     available_characters = []
+    available_inventory = [] # Format: "Name: [Item1, Item2]"
+    
     for c in characters:
+        # Extract Name
         name = c.get("name") or (c.get("profile", {}) or {}).get("name")
         if name:
             available_characters.append(name)
+            
+            # Extract Inventory if available
+            # Check various paths: c['inventory'], c['char_inventory'], or flat fields
+            inv = c.get("inventory", {}) or c.get("char_inventory", {})
+            items = []
+            if isinstance(inv, dict):
+                # Try 'equipped_items' or 'bag_items'
+                items.extend(inv.get("equipped_items", []))
+                items.extend(inv.get("bag_items", []))
+                # Or generic 'items' list
+                if not items and "items" in inv:
+                    items = inv["items"]
+            
+            if items:
+                # Cleanup simple strings
+                clean_items = [i if isinstance(i, str) else str(i) for i in items]
+                available_inventory.append(f"{name}: [{', '.join(clean_items)}]")
+    
+    inv_str = "\n".join(available_inventory) if available_inventory else "None"
     
     available_settings = [s.get("location_name") or s.get("name", "") for s in settings if s.get("location_name") or s.get("name")]
     
     print(f"[EVENT] Available characters: {available_characters}")
+    print(f"[EVENT] Available inventory: {inv_str}")
     print(f"[EVENT] Available settings: {available_settings}")
     
     is_re_extraction = retry_count > 0 and conflicts and previous_events
@@ -167,6 +195,7 @@ async def event_extraction_node(state: dict) -> dict:
             result: EventExtractionResult = await chain.ainvoke({
                 "story_text": state["content"],
                 "available_characters": str(available_characters),
+                "available_inventory": inv_str,
                 "available_settings": str(available_settings),
                 "conflicts": str(conflicts),
                 "previous_extraction": str(previous_events)
@@ -176,6 +205,7 @@ async def event_extraction_node(state: dict) -> dict:
             result: EventExtractionResult = await chain.ainvoke({
                 "story_text": state["content"],
                 "available_characters": str(available_characters),
+                "available_inventory": inv_str,
                 "available_settings": str(available_settings)
             })
         

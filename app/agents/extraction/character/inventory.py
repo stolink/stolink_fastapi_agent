@@ -192,6 +192,10 @@ INVENTORY_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
 
 ### LANGUAGE CONSISTENCY RULE ###
 Output ALL text in the SAME language as the input.
+If the story is in Korean, ALL item names must be in Korean:
+❌ BAD: "Dagger", "Storm Staff", "Red Velvet Coat"  
+✅ GOOD: "단검", "폭풍의 지팡이", "붉은 벨벳 코트"
+Do NOT translate Korean item names to English.
 
 ### ITEM TYPES ###
 - WEAPON: Swords, bows, staffs, daggers
@@ -214,7 +218,14 @@ Output ALL text in the SAME language as the input.
 2. If no items → has_inventory_data=false, equipped_items=[], bag_items=[]
 3. Do NOT extract body parts, clothing descriptions without item context
 4. "검은 갑옷을 입고 있었다" → YES, this is armor
-5. "검은 머리카락을 휘날리며" → NO, this is NOT an item"""),
+5. "검은 머리카락을 휘날리며" → NO, this is NOT an item
+
+### CRITICAL: NO DUPLICATION RULE ###
+⚠️ An item can ONLY be in ONE place:
+- If character is HOLDING/WEARING/USING an item → equipped_items ONLY
+- If item is IN A BAG/POCKET/STORED → bag_items ONLY  
+❌ BAD: Same item in both equipped_items AND bag_items
+✅ GOOD: Each item appears in exactly one list"""),
     ("human", """Story text:
 {story_text}
 

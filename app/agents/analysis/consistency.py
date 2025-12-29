@@ -45,6 +45,13 @@ Your job is to find ALL inconsistencies and contradictions across story elements
 4. **SETTING_CONFLICT** (MEDIUM)
    - Location descriptions contradict each other
 
+5. **INVENTORY_CONFLICT** (MEDIUM-HIGH)
+   - Character uses item they don't have
+   - Character appearance contradicts equipped items
+
+6. **STATS_CONFLICT** (MEDIUM)
+   - Action contradicts character stats (e.g., weak character lifting heavy object)
+
 === SUGGESTED_ACTION VALUES ===
 - AUTO_FIX: Can be fixed automatically by the system
 - FLAG_FOR_HUMAN: Needs human review before resolution
