@@ -110,7 +110,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: stolink-ai-backend
+    container_name: stolink-fastapi-agent
     environment:
       # AWS Bedrock
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}

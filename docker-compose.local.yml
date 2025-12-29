@@ -33,14 +33,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: stolink-ai-backend
+    container_name: stolink-fastapi-agent
     environment:
       # AWS Bedrock
       AWS_ACCESS_KEY_ID: ${AWS_BEDROCK_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_BEDROCK_SECRET_ACCESS_KEY}
       AWS_REGION: us-east-1
-      # Gemini
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
       # RabbitMQ (Spring의 AI Agent용 RabbitMQ에 연결)
       RABBITMQ_HOST: stolink-rabbitmq-agent
       RABBITMQ_PORT: 5672
