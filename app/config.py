@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     rabbitmq_port: int = 5672
     rabbitmq_user: str = "guest"
     rabbitmq_password: str = "guest"
+    rabbitmq_vhost: str = "stolink"
     rabbitmq_analysis_queue: str = "stolink.analysis.queue"
     
     # Spring Backend
@@ -47,7 +48,7 @@ class Settings(BaseSettings):
     @property
     def rabbitmq_url(self) -> str:
         """RabbitMQ connection URL."""
-        return f"amqp://{self.rabbitmq_user}:{self.rabbitmq_password}@{self.rabbitmq_host}:{self.rabbitmq_port}/"
+        return f"amqp://{self.rabbitmq_user}:{self.rabbitmq_password}@{self.rabbitmq_host}:{self.rabbitmq_port}/{self.rabbitmq_vhost}"
     
     @property
     def postgres_url(self) -> str:
