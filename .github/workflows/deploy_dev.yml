@@ -97,7 +97,7 @@ jobs:
               "RABBITMQ_AGENT_USER=${{ secrets.RABBITMQ_AGENT_USER }}",
               "RABBITMQ_AGENT_PASSWORD=${{ secrets.RABBITMQ_AGENT_PASSWORD }}",
               "RABBITMQ_AGENT_VHOST=${{ vars.RABBITMQ_AGENT_VHOST }}",
-              "SPRING_CALLBACK_URL=http://${{ secrets.ALB_DNS_NAME }}/api/internal/ai",
+              "SPRING_CALLBACK_URL=http://${{ secrets.ALB_DNS_NAME }}",
               "POSTGRESQL_URL=${{ secrets.POSTGRESQL_URL }}",
               "POSTGRESQL_PORT=${{ vars.POSTGRESQL_PORT }}",
               "POSTGRESQL_DATABASE=${{ vars.POSTGRESQL_DATABASE }}",
