@@ -138,7 +138,8 @@ async def plot_integration_node(state: dict) -> dict:
         
         result: PlotIntegrationResult = await chain.ainvoke({
             "events": str(events),
-            "characters": str([c.get("name", "") for c in characters]),
+            # Support both legacy (c["name"]) and FullCharacter (c["profile"]["name"]) formats
+            "characters": str([c.get("name") or (c.get("profile", {}) or {}).get("name") for c in characters if c.get("name") or (c.get("profile", {}) or {}).get("name")]),
             "relationships": str(relationships) if relationships else "[]"
         })
         

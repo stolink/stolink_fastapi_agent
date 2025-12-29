@@ -143,11 +143,17 @@ async def event_extraction_node(state: dict) -> dict:
     previous_events = state.get("extracted_events", [])
     
     # Get available characters and settings for reference matching
+    # Support both legacy (c["name"]) and FullCharacter (c["profile"]["name"]) formats
     characters = state.get("extracted_characters", [])
     settings = state.get("extracted_settings", [])
     
-    available_characters = [c.get("name", "") for c in characters if c.get("name")]
-    available_settings = [s.get("name", "") for s in settings if s.get("name")]
+    available_characters = []
+    for c in characters:
+        name = c.get("name") or (c.get("profile", {}) or {}).get("name")
+        if name:
+            available_characters.append(name)
+    
+    available_settings = [s.get("location_name") or s.get("name", "") for s in settings if s.get("location_name") or s.get("name")]
     
     print(f"[EVENT] Available characters: {available_characters}")
     print(f"[EVENT] Available settings: {available_settings}")

@@ -121,8 +121,13 @@ def validate_referential_integrity(state: dict) -> list:
     """Validate that relationships reference valid characters. Returns structured errors."""
     errors = []
     
+    # Support both legacy (c["name"]) and FullCharacter (c["profile"]["name"]) formats
     characters = state.get("extracted_characters") or []
-    character_names = {c.get("name", "") for c in characters if c.get("name")}
+    character_names = set()
+    for c in characters:
+        name = c.get("name") or (c.get("profile", {}) or {}).get("name")
+        if name:
+            character_names.add(name)
     
     # Check relationship_graph
     rel_graph = state.get("relationship_graph") or {}

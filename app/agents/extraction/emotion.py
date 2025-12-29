@@ -109,10 +109,28 @@ async def emotion_tracking_node(state: dict) -> dict:
     llm = get_standard_llm()
     
     # Get available characters for reference matching
+    # Support both legacy (c["name"]) and FullCharacter (c["profile"]["name"]) formats
     characters = state.get("extracted_characters", [])
-    available_characters = [c.get("name", "") for c in characters if c.get("name")]
+    available_characters = []
+    for c in characters:
+        name = c.get("name") or (c.get("profile", {}) or {}).get("name")
+        if name:
+            available_characters.append(name)
     
     print(f"[EMOTION] Available characters: {available_characters}")
+    
+    # If no characters available, return empty result
+    if not available_characters:
+        print("[EMOTION] No characters available, returning empty result")
+        return {
+            "tracked_emotions": {
+                "emotion_states": [],
+                "neo4j_updates": []
+            },
+            "messages": [
+                {"role": "emotion_agent", "content": "No characters available for emotion tracking"}
+            ]
+        }
     
     try:
         chain = EMOTION_TRACKING_PROMPT | llm
@@ -122,6 +140,20 @@ async def emotion_tracking_node(state: dict) -> dict:
         })
         
         content = response.content.strip()
+        
+        # Handle empty response
+        if not content:
+            print("[EMOTION] Empty response from LLM")
+            return {
+                "tracked_emotions": {
+                    "emotion_states": [],
+                    "neo4j_updates": []
+                },
+                "messages": [
+                    {"role": "emotion_agent", "content": "No emotions found in text"}
+                ]
+            }
+        
         if content.startswith("```"):
             content = content.split("```")[1]
             if content.startswith("json"):
@@ -155,16 +187,33 @@ async def emotion_tracking_node(state: dict) -> dict:
             ]
         }
     except json.JSONDecodeError as e:
+        print(f"[EMOTION] JSON parse error: {e}")
         return {
-            "tracked_emotions": {},
-            "errors": [f"Emotion JSON parse error: {str(e)}"],
+            "tracked_emotions": {
+                "emotion_states": [],
+                "neo4j_updates": []
+            },
             "messages": [
-                {"role": "emotion_agent", "content": "Failed to parse response"}
+                {"role": "emotion_agent", "content": "Failed to parse response, returning empty result"}
             ]
         }
     except Exception as e:
+        error_str = str(e)
+        print(f"[EMOTION] Tracking failed: {error_str}")
+        
+        if "ThrottlingException" in error_str:
+            return {
+                "tracked_emotions": {},
+                "errors": [f"Emotion tracking failed: {error_str}"],
+                "partial_failure": True
+            }
+        
         return {
-            "tracked_emotions": {},
-            "errors": [f"Emotion tracking failed: {str(e)}"],
-            "partial_failure": True
+            "tracked_emotions": {
+                "emotion_states": [],
+                "neo4j_updates": []
+            },
+            "messages": [
+                {"role": "emotion_agent", "content": f"Tracking failed: {error_str[:50]}"}
+            ]
         }

@@ -90,6 +90,61 @@ class CallbackClient:
         except httpx.RequestError as e:
             logger.error("Callback request error", job_id=job_id, error=str(e))
             return False
+    
+    async def update_job_status(
+        self,
+        job_id: str,
+        status: str,
+        message: str = None
+    ) -> bool:
+        """Update job status in Spring Boot.
+        
+        Args:
+            job_id: Job identifier
+            status: New status (ANALYZING, VALIDATING, FAILED, etc.)
+            message: Optional status message
+            
+        Returns:
+            True if update was successful
+        """
+        url = f"{settings.spring_callback_url}/api/internal/ai/jobs/{job_id}/status"
+        
+        payload = {"status": status}
+        if message:
+            payload["message"] = message
+        
+        logger.info("Updating job status", job_id=job_id, status=status, message=message)
+        
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"}
+                )
+                
+                if response.status_code == 200:
+                    logger.info(
+                        "Job status updated",
+                        job_id=job_id,
+                        status=status
+                    )
+                    return True
+                else:
+                    logger.warning(
+                        "Job status update failed",
+                        job_id=job_id,
+                        status_code=response.status_code,
+                        response=response.text
+                    )
+                    return False
+                    
+        except httpx.TimeoutException:
+            logger.warning("Job status update timeout", job_id=job_id)
+            return False
+        except httpx.RequestError as e:
+            logger.warning("Job status update error", job_id=job_id, error=str(e))
+            return False
 
 
 # Global callback client instance

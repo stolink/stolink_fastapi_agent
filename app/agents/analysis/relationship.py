@@ -172,10 +172,28 @@ async def relationship_analysis_node(state: dict) -> dict:
     llm = get_advanced_llm()
     
     # Get available characters for reference matching
+    # Support both legacy (c["name"]) and FullCharacter (c["profile"]["name"]) formats
     characters = state.get("extracted_characters", [])
-    available_characters = [c.get("name", "") for c in characters if c.get("name")]
+    available_characters = []
+    for c in characters:
+        name = c.get("name") or (c.get("profile", {}) or {}).get("name")
+        if name:
+            available_characters.append(name)
     
     print(f"[RELATIONSHIP] Available characters: {available_characters}")
+    
+    # If no characters available, return empty result
+    if not available_characters or len(available_characters) < 2:
+        print("[RELATIONSHIP] Not enough characters for relationship analysis")
+        return {
+            "relationship_graph": {
+                "relationships": [],
+                "neo4j_edges": []
+            },
+            "messages": [
+                {"role": "relationship_agent", "content": "Not enough characters for relationship analysis"}
+            ]
+        }
     
     conflicts = state.get("consistency_report", {}).get("conflicts", [])
     previous = state.get("relationship_graph", {})
@@ -201,6 +219,20 @@ async def relationship_analysis_node(state: dict) -> dict:
             })
         
         content = response.content.strip()
+        
+        # Handle empty response
+        if not content:
+            print("[RELATIONSHIP] Empty response from LLM")
+            return {
+                "relationship_graph": {
+                    "relationships": [],
+                    "neo4j_edges": []
+                },
+                "messages": [
+                    {"role": "relationship_agent", "content": "No relationships found in text"}
+                ]
+            }
+        
         if content.startswith("```"):
             content = content.split("```")[1]
             if content.startswith("json"):
@@ -237,16 +269,33 @@ async def relationship_analysis_node(state: dict) -> dict:
             ]
         }
     except json.JSONDecodeError as e:
+        print(f"[RELATIONSHIP] JSON parse error: {e}")
         return {
-            "relationship_graph": previous or {"relationships": []},
-            "errors": [f"Relationship JSON parse error: {str(e)}"],
+            "relationship_graph": {
+                "relationships": [],
+                "neo4j_edges": []
+            },
             "messages": [
-                {"role": "relationship_agent", "content": "Failed to parse response"}
+                {"role": "relationship_agent", "content": "Failed to parse response, returning empty result"}
             ]
         }
     except Exception as e:
+        error_str = str(e)
+        print(f"[RELATIONSHIP] Analysis failed: {error_str}")
+        
+        if "ThrottlingException" in error_str:
+            return {
+                "relationship_graph": previous or {"relationships": []},
+                "errors": [f"Relationship analysis failed: {error_str}"],
+                "partial_failure": True
+            }
+        
         return {
-            "relationship_graph": previous or {"relationships": []},
-            "errors": [f"Relationship analysis failed: {str(e)}"],
-            "partial_failure": True
+            "relationship_graph": {
+                "relationships": [],
+                "neo4j_edges": []
+            },
+            "messages": [
+                {"role": "relationship_agent", "content": f"Analysis failed: {error_str[:50]}"}
+            ]
         }

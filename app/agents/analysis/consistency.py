@@ -84,7 +84,8 @@ def detect_trait_contradictions(characters: list) -> list[Conflict]:
     conflicts = []
     
     for char in characters:
-        name = char.get("name", "Unknown")
+        # Support both legacy (c["name"]) and FullCharacter (c["profile"]["name"]) formats
+        name = char.get("name") or (char.get("profile", {}) or {}).get("name") or "Unknown"
         
         traits = char.get("traits", [])
         if not traits and isinstance(char.get("personality"), dict):
@@ -147,7 +148,12 @@ async def consistency_check_node(state: dict) -> dict:
     dialogues = state.get("analyzed_dialogues", {})
     emotions = state.get("tracked_emotions", {})
     
-    available_names = {c.get("name", "") for c in characters if c.get("name")}
+    # Support both legacy (c["name"]) and FullCharacter (c["profile"]["name"]) formats
+    available_names = set()
+    for c in characters:
+        name = c.get("name") or (c.get("profile", {}) or {}).get("name")
+        if name:
+            available_names.add(name)
     
     print(f"[CONSISTENCY] Validating: {len(characters)} chars, {len(events)} events, {len(relationships)} rels")
     

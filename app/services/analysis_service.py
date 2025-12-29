@@ -154,6 +154,13 @@ async def run_analysis(
             setting_refs=len(initial_state.get("existing_settings", []))
         )
         
+        # Update job status to ANALYZING
+        await callback_client.update_job_status(
+            job_id=job_id,
+            status="ANALYZING",
+            message="Starting multi-agent pipeline"
+        )
+        
         # Run the LangGraph pipeline
         final_state = await run_analysis_pipeline(
             content=initial_state["content"],
@@ -165,6 +172,13 @@ async def run_analysis(
             existing_events=initial_state.get("existing_events"),
             existing_relationships=initial_state.get("existing_relationships"),
             trace_id=trace_id,
+        )
+        
+        # Update job status to VALIDATING
+        await callback_client.update_job_status(
+            job_id=job_id,
+            status="VALIDATING",
+            message="Running validation and quality checks"
         )
         
         # Determine status based on validation result
@@ -227,6 +241,13 @@ async def run_analysis(
         
     except Exception as e:
         bound_logger.error("Analysis failed", error=str(e))
+        
+        # Update job status to FAILED
+        await callback_client.update_job_status(
+            job_id=job_id,
+            status="FAILED",
+            message=str(e)[:200]  # Truncate error message
+        )
         
         # Send failure callback
         await callback_client.send_analysis_callback(

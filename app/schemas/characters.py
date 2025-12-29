@@ -4,10 +4,17 @@ Enhanced for:
 - Neo4j graph database integration (explicit relationships)
 - Image generation AI (visual vs personality traits separation)
 - Scene-aware emotion tracking (current mood/sentiment)
+
+All list fields handle None by converting to empty lists.
 """
 from enum import Enum
-from typing import Optional, Literal
-from pydantic import BaseModel, Field
+from typing import Any, Optional, Literal
+from pydantic import BaseModel, Field, field_validator
+
+
+def none_to_list(v: Any) -> list:
+    """Convert None to empty list."""
+    return v if v is not None else []
 
 
 class CharacterRole(str, Enum):
@@ -31,6 +38,9 @@ class RelationshipType(str, Enum):
     RIVAL = "RIVAL"
     ALLY = "ALLY"
     BETRAYER = "BETRAYER"
+    FORMER_ALLY = "FORMER_ALLY"
+    FORMER_ENEMY = "FORMER_ENEMY"
+    NEUTRAL = "NEUTRAL"
     UNKNOWN = "UNKNOWN"
 
 
@@ -57,6 +67,11 @@ class VisualTraits(BaseModel):
     )
     age_group: Optional[str] = Field(None, description="Age category: child/teen/young_adult/adult/elderly")
     gender: Optional[str] = Field(None, description="Gender: male/female/unknown")
+    
+    @field_validator('appearance', 'attire', mode='before')
+    @classmethod
+    def list_none_to_empty(cls, v):
+        return none_to_list(v)
 
 
 class PersonalityTraits(BaseModel):
@@ -76,12 +91,17 @@ class PersonalityTraits(BaseModel):
         max_length=3,
         description="Core values (e.g., 'loyalty', 'justice', 'family')"
     )
+    
+    @field_validator('core_traits', 'flaws', 'values', mode='before')
+    @classmethod
+    def list_none_to_empty(cls, v):
+        return none_to_list(v)
 
 
 class CurrentMood(BaseModel):
     """Scene-specific emotional state for TTS/expression generation."""
-    emotion: str = Field(..., description="Primary emotion (e.g., 'tense', 'angry', 'hopeful')")
-    intensity: int = Field(default=5, ge=1, le=10, description="Emotion intensity 1-10")
+    emotion: Optional[str] = Field(None, description="Primary emotion (e.g., 'tense', 'angry', 'hopeful')")
+    intensity: Optional[int] = Field(5, ge=1, le=10, description="Emotion intensity 1-10")
     trigger: Optional[str] = Field(None, description="What caused this emotion")
 
 
@@ -130,6 +150,11 @@ class CharacterExtraction(BaseModel):
     
     # === Extraction Metadata ===
     trait_changes: Optional[str] = Field(None, description="Changes made during re-extraction")
+    
+    @field_validator('aliases', 'traits', 'relationships', mode='before')
+    @classmethod
+    def list_none_to_empty(cls, v):
+        return none_to_list(v)
 
 
 class CharacterExtractionResult(BaseModel):
@@ -137,3 +162,8 @@ class CharacterExtractionResult(BaseModel):
     characters: list[CharacterExtraction] = Field(default_factory=list)
     extraction_confidence: float = Field(default=0.0, ge=0, le=1, description="Extraction confidence score")
     scene_context: Optional[str] = Field(None, description="Scene context for mood extraction")
+    
+    @field_validator('characters', mode='before')
+    @classmethod
+    def characters_none_to_list(cls, v):
+        return none_to_list(v)

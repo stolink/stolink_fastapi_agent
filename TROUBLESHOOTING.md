@@ -1,6 +1,6 @@
 # StoLink AI Backend - Troubleshooting Guide
 
-> **Last Updated**: 2025-12-28
+> **Last Updated**: 2025-12-29
 
 이 문서는 개발 과정에서 발생한 주요 문제와 해결책을 기록합니다.
 
@@ -17,6 +17,9 @@
 7. [Validator Agent - Production Level 업그레이드](#7-validator-agent---production-level-업그레이드)
 8. [Supervisor Agent - Production Level 업그레이드](#8-supervisor-agent---production-level-업그레이드)
 9. [Message Schema - 하이브리드 아키텍처 업그레이드](#9-message-schema---하이브리드-아키텍처-업그레이드)
+10. [JSON 파싱 오류 - Structured Output 도입](#10-json-파싱-오류-및-스키마-불일치---structured-output-도입)
+11. [Job 상태 업데이트 API 연동](#11-job-상태-업데이트-api-연동)
+12. [Character Agent - FullCharacter 스키마 확장](#12-character-agent---fullcharacter-스키마-확장)
 
 ---
 
@@ -895,6 +898,420 @@ await callback_client.send_analysis_callback(
 - `app/services/analysis_service.py`
 
 ---
+
+## 10. JSON 파싱 오류 및 스키마 불일치 - Structured Output 도입
+
+### 📅 날짜
+2025-12-29
+
+### 🔴 문제 (Problem)
+1. LLM이 JSON 대신 Markdown 코드 블록(` ```json ... ``` `)으로 감싸서 응답
+2. `key=value` 형식(Python repr)이 JSON 대신 출력되는 경우 발생
+3. Spring Boot에서 파싱 실패하는 필드 존재 (`location_name`, `description` 누락)
+
+**에러 로그**:
+```
+Setting JSON parse error: Expecting property name enclosed in double quotes
+Character JSON parse error: Invalid control character at: line 45 column 3
+```
+
+### 🟡 원인 분석 (Root Cause)
+1. 수동 `json.loads()` 파싱의 불안정성
+2. 프롬프트 지시만으로는 JSON 형식 보장 불가
+3. LLM이 간헐적으로 필수 필드 누락
+
+### 🟢 해결책 (Solution)
+
+#### 1. `ChatBedrockConverse` + `with_structured_output()` 도입
+```python
+# llm.py
+from langchain_aws import ChatBedrockConverse
+
+def get_structured_llm(schema: Type[BaseModel]) -> ChatBedrockConverse:
+    base_llm = get_bedrock_llm()
+    return base_llm.with_structured_output(schema)
+```
+
+#### 2. 에이전트 리팩토링
+```python
+# Before (수동 파싱)
+response = await chain.ainvoke({"story_text": text})
+content = response.content.strip()
+if content.startswith("```"):
+    content = content.split("```")[1]
+result = json.loads(content)  # 에러 가능!
+
+# After (Structured Output)
+structured_llm = get_structured_llm(SettingExtractionResult)
+chain = PROMPT | structured_llm
+result = await chain.ainvoke({"story_text": text})
+# result는 이미 Pydantic 객체 - 파싱 불필요!
+```
+
+#### 3. 스키마 업데이트
+| 스키마 | 추가/변경 필드 |
+|--------|----------------|
+| `SettingExtraction` | `location_name` 추가 |
+| `EventExtraction` | `description` 필수화 |
+| `PlotIntegrationResult` | `foreshadow_id`, `hint_text` 필수화 |
+| `ConsistencyReport` | `resolution_summary`, `neo4j_validation` 추가 |
+| `ValidationResult` | 신규 생성 |
+
+### 📁 수정된 파일
+- `app/agents/llm.py` - `ChatBedrockConverse` + `get_structured_llm()` 추가
+- `app/agents/extraction/character.py` - Structured Output 적용
+- `app/agents/extraction/event.py` - Structured Output 적용
+- `app/agents/extraction/setting.py` - Structured Output 적용
+- `app/agents/analysis/plot.py` - Structured Output 적용
+- `app/agents/analysis/consistency.py` - Structured Output 적용
+- `app/schemas/plot.py` - Spring Boot 호환 구조로 재작성
+- `app/schemas/consistency.py` - `ResolutionSummary`, `Neo4jValidation` 추가
+- `app/schemas/validation.py` - 신규 생성
+- `app/schemas/callback.py` - `FullAnalysisResult` 업데이트
+
+### ✅ 결과
+| 항목 | 전 | 후 |
+|------|---|---|
+| JSON 파싱 에러 | 간헐적 발생 | 발생 없음 |
+| Markdown 블록 제거 | 필요 | 불필요 |
+| 타입 검증 | 없음 | Pydantic 자동 검증 |
+| 필수 필드 누락 | 발생 가능 | 스키마에서 강제 |
+
+---
+
+## 11. Job 상태 업데이트 API 연동
+
+### 📅 날짜
+2025-12-29
+
+### 🔴 문제 (Problem)
+사용자에게 분석 작업의 세밀한 진행 상태를 제공할 수 없었음. 기존에는 PENDING → COMPLETED/FAILED만 표시.
+
+### 🟡 원인 분석 (Root Cause)
+FastAPI에서 Spring Boot로 중간 상태를 업데이트하는 API가 없었음.
+
+### 🟢 해결책 (Solution)
+
+#### 1. Spring Boot 팀에서 제공한 API 스펙
+```http
+POST /api/internal/ai/jobs/{jobId}/status
+Content-Type: application/json
+
+{
+  "status": "ANALYZING",
+  "message": "Character Agent 실행 중"
+}
+```
+
+#### 2. CallbackClient에 `update_job_status()` 메서드 추가
+```python
+async def update_job_status(
+    self,
+    job_id: str,
+    status: str,
+    message: str = None
+) -> bool:
+    url = f"{settings.spring_callback_url}/api/internal/ai/jobs/{job_id}/status"
+    payload = {"status": status}
+    if message:
+        payload["message"] = message
+    # ... HTTP POST 요청
+```
+
+#### 3. AnalysisService에 상태 업데이트 통합
+| 시점 | 상태 | 메시지 |
+|------|------|--------|
+| 파이프라인 시작 시 | `ANALYZING` | "Starting multi-agent pipeline" |
+| Validator 시작 시 | `VALIDATING` | "Running validation and quality checks" |
+| 예외 발생 시 | `FAILED` | 에러 메시지 (200자 제한) |
+
+### 📁 수정된 파일
+- `app/services/callback_client.py` - `update_job_status()` 메서드 추가
+- `app/services/analysis_service.py` - 상태 업데이트 호출 통합
+
+### ✅ 결과
+```
+PENDING → PROCESSING → ANALYZING → VALIDATING → COMPLETED
+                                            ↘ FAILED
+```
+
+사용자에게 더 세밀한 진행 상태 제공 가능.
+
+---
+
+## 12. Character Agent - FullCharacter 스키마 확장
+
+### 📅 날짜
+2025-12-29
+
+### 🔴 문제 (Problem)
+
+#### 문제 1: 기존 스키마 필드 부족
+- 기존 `CharacterExtraction` 스키마가 기본 정보만 포함 (name, role, visual, personality)
+- 게임/롤플레이에 필요한 상세 필드 부족 (age, race, faction, mbti, dialogue tone 등)
+
+#### 문제 2: RelationshipType Enum 오류
+LLM이 `FORMER_ALLY`를 출력했으나 Enum에 정의되지 않음:
+```
+Input should be 'FRIEND', 'ENEMY', ... or 'UNKNOWN'
+input_value='FORMER_ALLY'
+```
+
+#### 문제 3: LLM이 List 필드에 null 반환
+LLM이 `null`을 반환하면 Pydantic `default_factory=list`가 무시되어 검증 오류 발생:
+```
+Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+```
+영향받은 필드: `personality.flaws`, `personality.values`, `dialogue.catchphrases`, `relations.known_events` 등
+
+#### 문제 4: CurrentMood 필수 필드 오류
+`CurrentMood.emotion`이 필수 필드(`str = Field(...)`)로 정의되어 LLM이 null 반환 시 오류:
+```
+Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
+```
+
+### 🟡 원인 분석 (Root Cause)
+1. 초기 스키마가 기본 스토리 분석만 고려
+2. `RelationshipType` Enum에 `FORMER_ALLY`, `FORMER_ENEMY` 누락
+3. Pydantic v2에서 `default_factory`는 필드가 **없을 때**만 적용, LLM이 **null을 명시적으로 반환**하면 무시됨
+4. `CurrentMood` 필드가 Optional이 아닌 필수로 정의됨
+
+### 🟢 해결책 (Solution)
+
+#### 1. 포괄적 스키마 생성 (`character_full.py`)
+| 클래스 | 용도 |
+|--------|------|
+| `CharacterProfile` | 기본 정보 (name, age, gender, race, faction, mbti, backstory) |
+| `CharacterAppearance` | 외형 정보 (physique, hair_color, attire, scars_tattoos) |
+| `CharacterStats` | 능력치 (str, dex, int, level, skills) |
+| `DialogueConfig` | AI 대화 설정 (tone, catchphrases, forbidden_topics) |
+| `CombatConfig` | 전투 설정 (elemental_resist, attack_range) |
+| **`FullCharacter`** | 위 모든 클래스를 통합한 완전한 캐릭터 모델 |
+
+#### 2. RelationshipType Enum 확장
+```python
+class RelationshipType(str, Enum):
+    FRIEND = "FRIEND"
+    ENEMY = "ENEMY"
+    # ... 기존 값들 ...
+    FORMER_ALLY = "FORMER_ALLY"   # 추가
+    FORMER_ENEMY = "FORMER_ENEMY" # 추가
+    NEUTRAL = "NEUTRAL"           # 추가
+    UNKNOWN = "UNKNOWN"
+```
+
+#### 3. field_validator로 null→빈 리스트 변환
+```python
+from pydantic import field_validator
+
+def none_to_list(v):
+    return v if v is not None else []
+
+class DialogueConfig(BaseModel):
+    catchphrases: list[str] = Field(default_factory=list)
+    forbidden_topics: list[str] = Field(default_factory=list)
+    
+    @field_validator('catchphrases', 'forbidden_topics', mode='before')
+    @classmethod
+    def list_none_to_empty(cls, v):
+        return none_to_list(v)
+```
+
+#### 4. CurrentMood 필수 필드 → Optional 변경
+```python
+# Before (오류 발생)
+emotion: str = Field(..., description="Primary emotion")
+
+# After (null 허용)
+emotion: Optional[str] = Field(None, description="Primary emotion")
+intensity: Optional[int] = Field(5, ge=1, le=10)
+```
+
+### 📁 수정된 파일
+- `app/schemas/character_full.py` - 11개 서브 클래스 + field_validator 추가
+- `app/schemas/characters.py` - RelationshipType 확장, field_validator 추가, CurrentMood Optional 변경
+- `app/agents/extraction/character.py` - 프롬프트 확장, FullCharacterExtractionResult 적용
+
+### ✅ 결과
+**새 출력 형식**:
+```json
+{
+  "profile": { "name": "아린", "age": 25, "gender": "female" },
+  "role": "protagonist",
+  "appearance": { "physique": "athletic", "hair_color": "black" },
+  "personality": { "core_traits": ["brave"], "flaws": [], "values": [] },
+  "dialogue": { "tone": "formal", "catchphrases": [] },
+  "relations": { "relations": [{ "target": "카엘", "type": "FORMER_ALLY" }] }
+}
+```
+
+**검증 오류 해결**:
+- ✅ `FORMER_ALLY` → RelationshipType Enum에 추가됨
+- ✅ `null` → 빈 리스트 `[]`로 자동 변환됨
+- ✅ `CurrentMood.emotion = null` → 허용됨
+
+### 💡 향후 개선 사항
+1. **Spring Boot 스키마 동기화**: `FullCharacter` 스키마를 Spring Boot DTO와 일치시키기
+2. **게임 전용 필드 분리**: 소설 분석 시 `stats`, `combat` 섹션 비활성화 옵션
+
+---
+
+## 13. Multi-Agent - FullCharacter 스키마 호환성 문제
+
+### 📅 날짜
+2025-12-29
+
+### 🔴 문제 (Problem)
+FullCharacter 스키마 적용 후 Dialogue, Emotion, Relationship 등 다른 Agent에서 JSON 파싱 오류 발생:
+```
+Dialogue JSON parse error: Expecting value: line 1 column 1 (char 0)
+Emotion JSON parse error: Expecting value: line 1 column 1 (char 0)
+Relationship JSON parse error: Expecting value: line 1 column 1 (char 0)
+```
+
+또한 캐릭터 이름이 추출되지 않음:
+```json
+{
+  "profile": { "name": null, "age": null },
+  "role": null
+}
+```
+
+### 🟡 원인 분석 (Root Cause)
+1. **스키마 경로 변경**: FullCharacter에서 캐릭터 이름이 `profile.name`에 저장됨
+2. **기존 Agent 코드 비호환**: 다른 Agent들이 `c.get("name")`으로 접근하여 `None` 반환
+3. **빈 캐릭터 리스트 전달**: `available_characters = []`가 LLM에 전달되어 부적절한 응답 생성
+
+```python
+# 기존 코드 (비호환)
+available_characters = [c.get("name", "") for c in characters if c.get("name")]
+# → FullCharacter에서는 profile.name이므로 빈 리스트 반환
+```
+
+### 🟢 해결책 (Solution)
+모든 Agent에서 legacy 스키마와 FullCharacter 스키마 모두 지원하도록 수정:
+
+```python
+# 수정된 코드 (호환)
+available_characters = []
+for c in characters:
+    name = c.get("name") or (c.get("profile", {}) or {}).get("name")
+    if name:
+        available_characters.append(name)
+```
+
+### 📁 수정된 파일
+| 파일 | 수정 위치 |
+|------|----------|
+| `app/agents/extraction/dialogue.py` | Line 142-150 |
+| `app/agents/extraction/emotion.py` | Line 111-120 |
+| `app/agents/analysis/relationship.py` | Line 174-183 |
+| `app/agents/extraction/event.py` | Line 145-159 |
+| `app/agents/analysis/plot.py` | Line 139-144 |
+| `app/agents/analysis/consistency.py` | Line 82-88, 147-157 |
+| `app/agents/validation/validator.py` | Line 120-130 |
+
+### ✅ 결과
+- ✅ 모든 Agent에서 `profile.name` 경로 지원
+- ✅ Dialogue/Emotion/Relationship Agent 정상 동작
+- ✅ JSON 파싱 오류 해결
+- ✅ 기존 legacy 스키마도 하위 호환 유지
+
+---
+
+
+## 14. Multi-Agent - JSON 파싱 오류 및 AWS Throttling
+
+### 📅 날짜
+2025-12-29
+
+### 🔴 문제 (Problem)
+1. **ThrottlingException**: AWS Bedrock API 요청 제한 초과
+```
+ThrottlingException: Too many requests, please wait before trying again.
+```
+
+2. **JSON 파싱 오류**: Dialogue, Emotion, Relationship Agent에서 빈 응답 파싱 실패
+```
+Dialogue JSON parse error: Expecting value: line 1 column 1 (char 0)
+Emotion JSON parse error: Expecting value: line 1 column 1 (char 0)
+Relationship JSON parse error: Expecting value: line 1 column 1 (char 0)
+```
+
+### 🟡 원인 분석 (Root Cause)
+1. **Throttling**: 병렬로 다수의 LLM 호출 → API 요청 제한 초과
+2. **빈 응답**: 캐릭터가 없거나 텍스트에 대화/감정/관계가 없을 때 LLM이 빈 응답 반환
+3. **파이프라인 중단**: JSON 파싱 오류가 에러로 전파되어 전체 파이프라인에 영향
+
+### 🟢 해결책 (Solution)
+
+#### 1. 빈 캐릭터 리스트 체크 추가
+```python
+if not available_characters:
+    print("[DIALOGUE] No characters available, returning empty result")
+    return {
+        "analyzed_dialogues": {
+            "key_dialogues": [],
+            "speech_patterns": [],
+            "dialogue_relationships": [],
+            "neo4j_edges": []
+        },
+        ...
+    }
+```
+
+#### 2. 빈 LLM 응답 처리
+```python
+content = response.content.strip()
+if not content:
+    print("[DIALOGUE] Empty response from LLM")
+    return {"analyzed_dialogues": {...}, ...}
+```
+
+#### 3. JSON 오류 시 빈 결과 반환 (파이프라인 중단 방지)
+```python
+except json.JSONDecodeError as e:
+    print(f"[DIALOGUE] JSON parse error: {e}")
+    return {
+        "analyzed_dialogues": {
+            "key_dialogues": [],
+            "speech_patterns": [],
+            ...
+        },
+        "messages": [{"role": "dialogue_agent", "content": "Failed to parse, returning empty"}]
+    }
+```
+
+#### 4. 지수 백오프 재시도 함수 (llm.py)
+```python
+async def retry_with_backoff(func, *args, **kwargs):
+    for attempt in range(MAX_RETRIES):
+        try:
+            return await func(*args, **kwargs)
+        except Exception as e:
+            if "ThrottlingException" in str(e):
+                delay = min(BASE_DELAY * (2 ** attempt), MAX_DELAY)
+                await asyncio.sleep(delay)
+            else:
+                raise e
+```
+
+### 📁 수정된 파일
+| 파일 | 수정 내용 |
+|------|----------|
+| `app/agents/llm.py` | `retry_with_backoff` 함수 추가 |
+| `app/agents/extraction/dialogue.py` | 빈 데이터/JSON 오류 처리 |
+| `app/agents/extraction/emotion.py` | 빈 데이터/JSON 오류 처리 |
+| `app/agents/analysis/relationship.py` | 빈 데이터/JSON 오류 처리, 캐릭터 2명 미만 스킵 |
+
+### ✅ 결과
+- ✅ 빈 캐릭터 리스트 시 LLM 호출 없이 빈 결과 반환
+- ✅ 빈 LLM 응답 시 JSON 파싱 시도 안함
+- ✅ JSON 오류가 에러가 아닌 빈 결과로 처리 → 파이프라인 계속 진행
+- ✅ ThrottlingException 시 지수 백오프 재시도 가능
+
+---
+
 
 ## 템플릿 (새 이슈 추가 시 사용)
 

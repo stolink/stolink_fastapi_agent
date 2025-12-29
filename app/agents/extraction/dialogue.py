@@ -140,10 +140,30 @@ async def dialogue_analysis_node(state: dict) -> dict:
     llm = get_standard_llm()
     
     # Get available characters for reference matching
+    # Support both legacy (c["name"]) and FullCharacter (c["profile"]["name"]) formats
     characters = state.get("extracted_characters", [])
-    available_characters = [c.get("name", "") for c in characters if c.get("name")]
+    available_characters = []
+    for c in characters:
+        name = c.get("name") or (c.get("profile", {}) or {}).get("name")
+        if name:
+            available_characters.append(name)
     
     print(f"[DIALOGUE] Available characters: {available_characters}")
+    
+    # If no characters available, return empty result
+    if not available_characters:
+        print("[DIALOGUE] No characters available, returning empty result")
+        return {
+            "analyzed_dialogues": {
+                "key_dialogues": [],
+                "speech_patterns": [],
+                "dialogue_relationships": [],
+                "neo4j_edges": []
+            },
+            "messages": [
+                {"role": "dialogue_agent", "content": "No characters available for dialogue analysis"}
+            ]
+        }
     
     try:
         chain = DIALOGUE_ANALYSIS_PROMPT | llm
@@ -153,6 +173,22 @@ async def dialogue_analysis_node(state: dict) -> dict:
         })
         
         content = response.content.strip()
+        
+        # Handle empty response
+        if not content:
+            print("[DIALOGUE] Empty response from LLM")
+            return {
+                "analyzed_dialogues": {
+                    "key_dialogues": [],
+                    "speech_patterns": [],
+                    "dialogue_relationships": [],
+                    "neo4j_edges": []
+                },
+                "messages": [
+                    {"role": "dialogue_agent", "content": "No dialogue found in text"}
+                ]
+            }
+        
         if content.startswith("```"):
             content = content.split("```")[1]
             if content.startswith("json"):
@@ -193,16 +229,38 @@ async def dialogue_analysis_node(state: dict) -> dict:
             ]
         }
     except json.JSONDecodeError as e:
+        print(f"[DIALOGUE] JSON parse error: {e}")
         return {
-            "analyzed_dialogues": {},
-            "errors": [f"Dialogue JSON parse error: {str(e)}"],
+            "analyzed_dialogues": {
+                "key_dialogues": [],
+                "speech_patterns": [],
+                "dialogue_relationships": [],
+                "neo4j_edges": []
+            },
             "messages": [
-                {"role": "dialogue_agent", "content": "Failed to parse response"}
+                {"role": "dialogue_agent", "content": "Failed to parse response, returning empty result"}
             ]
         }
     except Exception as e:
+        error_str = str(e)
+        print(f"[DIALOGUE] Analysis failed: {error_str}")
+        
+        # Return empty result instead of error for non-critical failures
+        if "ThrottlingException" in error_str:
+            return {
+                "analyzed_dialogues": {},
+                "errors": [f"Dialogue analysis failed: {error_str}"],
+                "partial_failure": True
+            }
+        
         return {
-            "analyzed_dialogues": {},
-            "errors": [f"Dialogue analysis failed: {str(e)}"],
-            "partial_failure": True
+            "analyzed_dialogues": {
+                "key_dialogues": [],
+                "speech_patterns": [],
+                "dialogue_relationships": [],
+                "neo4j_edges": []
+            },
+            "messages": [
+                {"role": "dialogue_agent", "content": f"Analysis failed: {error_str[:50]}"}
+            ]
         }

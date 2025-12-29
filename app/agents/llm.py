@@ -4,7 +4,10 @@ Uses ChatBedrockConverse for:
 - Tool Calling based structured output
 - Pydantic v2 schema binding
 - Guaranteed JSON format compliance
+- Exponential backoff retry for throttling
 """
+import asyncio
+import random
 import boto3
 from typing import Type, TypeVar
 from pydantic import BaseModel
@@ -12,6 +15,34 @@ from langchain_aws import ChatBedrockConverse
 from app.config import settings
 
 T = TypeVar('T', bound=BaseModel)
+
+# Retry configuration
+MAX_RETRIES = 5
+BASE_DELAY = 1.0  # seconds
+MAX_DELAY = 30.0  # seconds
+
+
+async def retry_with_backoff(func, *args, **kwargs):
+    """Execute function with exponential backoff retry.
+    
+    Handles ThrottlingException from AWS Bedrock.
+    """
+    last_exception = None
+    
+    for attempt in range(MAX_RETRIES):
+        try:
+            return await func(*args, **kwargs)
+        except Exception as e:
+            error_str = str(e)
+            if "ThrottlingException" in error_str or "Too many requests" in error_str:
+                last_exception = e
+                delay = min(BASE_DELAY * (2 ** attempt) + random.uniform(0, 1), MAX_DELAY)
+                print(f"[LLM] Throttled, retrying in {delay:.1f}s (attempt {attempt + 1}/{MAX_RETRIES})")
+                await asyncio.sleep(delay)
+            else:
+                raise e
+    
+    raise last_exception
 
 
 def get_bedrock_client():
