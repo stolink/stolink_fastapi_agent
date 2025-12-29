@@ -2,7 +2,7 @@ name: FastAPI Agent CI/CD (Dev)
 
 on:
   push:
-    branches: ["dev"]
+    branches: ["deploytest"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
