@@ -125,19 +125,22 @@ jobs:
           fi
 
           # Call Bedrock Claude API
+          set +e
           aws bedrock-runtime invoke-model \
             --model-id "anthropic.claude-3-5-haiku-20241022-v1:0" \
             --content-type "application/json" \
             --accept "application/json" \
             --body file://prompt.json \
             --region us-east-1 \
-            /dev/stdout > output.json 2>&1
+            output.json 2> error.log
+          EXIT_CODE=$?
+          set -e
 
-          if [ $? -eq 0 ] && [ -s output.json ]; then
+          if [ $EXIT_CODE -eq 0 ] && [ -s output.json ]; then
             REVIEW=$(cat output.json | jq -r '.content[0].text // "리뷰 생성 실패"')
             echo "$REVIEW" > review_result.txt
           else
-            echo "Bedrock API Error: $(cat output.json)" > review_result.txt
+            echo "Bedrock API Error: $(cat error.log 2>/dev/null || echo 'Unknown error')" > review_result.txt
           fi
 
       - name: Post review comment
