@@ -1,0 +1,155 @@
+name: AI Code Review
+
+on:
+  # 코멘트로 트리거 (/review) - 수동 실행
+  issue_comment:
+    types: [created]
+  # PR 생성 및 업데이트 시 자동 실행
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  ai_review:
+    if: |
+      (github.event_name == 'pull_request') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '/review'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR info
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" == "issue_comment" ]; then
+            echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+            BASE_BRANCH=$(gh pr view ${{ github.event.issue.number }} --json baseRefName --jq '.baseRefName')
+            echo "base_branch=$BASE_BRANCH" >> $GITHUB_OUTPUT
+          else
+            echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+            echo "base_branch=${{ github.event.pull_request.base.ref }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get changed files and diff
+        id: diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BASE_BRANCH="${{ steps.pr.outputs.base_branch }}"
+          git fetch origin $BASE_BRANCH
+
+          # 변경된 파일 목록 (Python, 설정 파일 포함)
+          FILES=$(git diff origin/$BASE_BRANCH...HEAD --name-only -- '*.py' '*.yml' '*.toml' '*.sql' | head -30)
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          # 실제 코드 변경 내용
+          DIFF=$(git diff origin/$BASE_BRANCH...HEAD -- '*.py' '*.yml' '*.toml' '*.sql' | head -500)
+          echo "$DIFF" > diff_content.txt
+
+      - name: Prepare prompt
+        id: prompt
+        run: |
+          DIFF_CONTENT=$(head -n 500 diff_content.txt)
+          FILES="${{ steps.diff.outputs.files }}"
+
+          # Extract coding_rules and ai_code_review section from CLAUDE.md
+          if [ -f "CLAUDE.md" ]; then
+            CODING_RULES=$(sed -n '/<coding_rules>/,/<\/coding_rules>/p' CLAUDE.md)
+            REVIEW_CONTEXT=$(sed -n '/<ai_code_review>/,/<\/ai_code_review>/p' CLAUDE.md | sed '1d;$d')
+          else
+            CODING_RULES="표준 Python/FastAPI 코딩 규칙을 따릅니다."
+            REVIEW_CONTEXT="StoLink AI Agent 프로젝트의 시니어 개발자로서 코드 리뷰를 수행합니다."
+          fi
+
+          # Create template file
+          cat << 'EOF' > prompt_template.txt
+          SYSTEM_CONTEXT_PLACEHOLDER
+
+          ## 프로젝트 코딩 규칙
+          CODING_RULES_PLACEHOLDER
+
+          ## 변경된 파일
+          FILES_PLACEHOLDER
+
+          ## 코드 변경 내용
+          ```diff
+          DIFF_PLACEHOLDER
+          ```
+
+          위 규칙과 프로젝트 컨텍스트를 바탕으로 변경된 코드를 리뷰해주세요.
+          항상 한국어로 응답하며, 출력 형식을 정확히 지켜주세요.
+          EOF
+
+          # Use jq to generate JSON safely (Bedrock format)
+          jq -n \
+            --rawfile template prompt_template.txt \
+            --arg context "$REVIEW_CONTEXT" \
+            --arg rules "$CODING_RULES" \
+            --arg files "$FILES" \
+            --arg diff "$DIFF_CONTENT" \
+            '{
+              anthropic_version: "bedrock-2023-05-31",
+              max_tokens: 4096,
+              messages: [{
+                role: "user",
+                content: ($template | sub("SYSTEM_CONTEXT_PLACEHOLDER"; $context) | sub("CODING_RULES_PLACEHOLDER"; $rules) | sub("FILES_PLACEHOLDER"; $files) | sub("DIFF_PLACEHOLDER"; $diff))
+              }]
+            }' > prompt.json
+
+      - name: Call AWS Bedrock Claude API
+        id: review
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_BEDROCK_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_BEDROCK_SECRET_ACCESS_KEY }}
+          AWS_REGION: us-east-1
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "API Error: AWS Bedrock credentials are missing in GitHub repository settings." > review_result.txt
+            exit 1
+          fi
+
+          # Install AWS CLI if not present
+          if ! command -v aws &> /dev/null; then
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip -q awscliv2.zip
+            sudo ./aws/install
+          fi
+
+          # Call Bedrock Claude API
+          RESPONSE=$(aws bedrock-runtime invoke-model \
+            --model-id "anthropic.claude-sonnet-4-5-20250929-v1:0" \
+            --content-type "application/json" \
+            --accept "application/json" \
+            --body file://prompt.json \
+            --region us-east-1 \
+            output.json 2>&1)
+
+          if [ $? -eq 0 ]; then
+            REVIEW=$(cat output.json | jq -r '.content[0].text // "리뷰 생성 실패"')
+            echo "$REVIEW" > review_result.txt
+          else
+            echo "Bedrock API Error: $RESPONSE" > review_result.txt
+          fi
+
+      - name: Post review comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const review = fs.readFileSync('review_result.txt', 'utf8');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ steps.pr.outputs.number }},
+              body: `## 🤖 AI 코드 리뷰 (Bedrock)\n\n${review}`
+            });
