@@ -9,9 +9,10 @@ on:
     types: [opened, synchronize]
 
 # 동시 실행 방지 - 같은 PR에서 여러 리뷰가 동시에 실행되지 않도록
+# cancel-in-progress: false로 설정하여 기존 리뷰가 완료될 때까지 대기
 concurrency:
   group: ai-review-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   ai_review:
@@ -51,22 +52,26 @@ jobs:
           BASE_BRANCH="${{ steps.pr.outputs.base_branch }}"
           git fetch origin $BASE_BRANCH
 
+          # 변경된 파일 수 (head 적용 전, 정수 보장)
+          FILES_COUNT=$(git diff origin/$BASE_BRANCH...HEAD --name-only -- '*.py' '*.yml' '*.toml' '*.sql' | wc -l | tr -d ' ')
+          FILES_COUNT=${FILES_COUNT:-0}
+          echo "files_count=$FILES_COUNT" >> $GITHUB_OUTPUT
+
           # 변경된 파일 목록 (최대 30개)
           FILES=$(git diff origin/$BASE_BRANCH...HEAD --name-only -- '*.py' '*.yml' '*.toml' '*.sql' | head -30)
-          FILES_COUNT=$(git diff origin/$BASE_BRANCH...HEAD --name-only -- '*.py' '*.yml' '*.toml' '*.sql' | wc -l)
           echo "files<<EOF" >> $GITHUB_OUTPUT
           echo "$FILES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
-          echo "files_count=$FILES_COUNT" >> $GITHUB_OUTPUT
 
-          # 변경 사항 통계
+          # 변경 사항 통계 (정수 보장)
           DIFF_STAT=$(git diff origin/$BASE_BRANCH...HEAD --stat | tail -1)
-          DIFF_LINES=$(git diff origin/$BASE_BRANCH...HEAD -- '*.py' '*.yml' '*.toml' '*.sql' | wc -l)
+          DIFF_LINES=$(git diff origin/$BASE_BRANCH...HEAD -- '*.py' '*.yml' '*.toml' '*.sql' | wc -l | tr -d ' ')
+          DIFF_LINES=${DIFF_LINES:-0}
           echo "diff_stat=$DIFF_STAT" >> $GITHUB_OUTPUT
           echo "diff_lines=$DIFF_LINES" >> $GITHUB_OUTPUT
 
-          # 빈 diff 체크
-          if [ "$DIFF_LINES" -eq 0 ] || [ -z "$FILES" ]; then
+          # 빈 diff 체크 (FILES_COUNT 사용 - head 적용 전 값)
+          if [ "$DIFF_LINES" -eq 0 ] || [ "$FILES_COUNT" -eq 0 ]; then
             echo "skip=true" >> $GITHUB_OUTPUT
           else
             echo "skip=false" >> $GITHUB_OUTPUT
