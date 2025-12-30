@@ -126,7 +126,7 @@ jobs:
 
           # Call Bedrock Claude API
           RESPONSE=$(aws bedrock-runtime invoke-model \
-            --model-id "anthropic.claude-sonnet-4-5-20250929-v1:0" \
+            --model-id "anthropic.claude-3-5-haiku-20241022-v1:0" \
             --content-type "application/json" \
             --accept "application/json" \
             --body file://prompt.json \
