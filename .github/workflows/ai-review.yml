@@ -77,9 +77,10 @@ jobs:
           Focus on: code quality, potential bugs, security issues, and best practices.
           EOF
 
-          # Create JSON with Python (handles unicode properly)
+          # Create JSON with Python and encode as base64
           python3 << 'PYEOF'
           import json
+          import base64
 
           with open('prompt_content.txt', 'r', encoding='utf-8') as f:
               content = f.read()
@@ -90,8 +91,9 @@ jobs:
               "messages": [{"role": "user", "content": content}]
           }
 
-          with open('prompt.json', 'w', encoding='utf-8') as f:
-              json.dump(payload, f, ensure_ascii=False)
+          json_bytes = json.dumps(payload, ensure_ascii=True).encode('utf-8')
+          with open('prompt_base64.txt', 'w') as f:
+              f.write(base64.b64encode(json_bytes).decode('ascii'))
           PYEOF
 
       - name: Call AWS Bedrock Claude API
@@ -113,13 +115,14 @@ jobs:
             sudo ./aws/install
           fi
 
-          # Call Bedrock Claude API
+          # Call Bedrock Claude API with base64 encoded body
+          BODY_BASE64=$(cat prompt_base64.txt)
           set +e
           aws bedrock-runtime invoke-model \
             --model-id "anthropic.claude-3-5-haiku-20241022-v1:0" \
             --content-type "application/json" \
             --accept "application/json" \
-            --body file://prompt.json \
+            --body "$BODY_BASE64" \
             --region us-east-1 \
             output.json 2> error.log
           EXIT_CODE=$?
