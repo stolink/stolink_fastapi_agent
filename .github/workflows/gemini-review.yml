@@ -1,12 +1,12 @@
 name: AI Code Review
 
-# on:
-#   # 코멘트로 트리거 (/review) - 수동 실행
-#   issue_comment:
-#     types: [created]
-#   # PR 생성 및 업데이트 시 자동 실행
-#   pull_request:
-#     types: [opened, synchronize]
+on:
+  # 코멘트로 트리거 (/review) - 수동 실행
+  issue_comment:
+    types: [created]
+  # PR 생성 및 업데이트 시 자동 실행
+  pull_request:
+    types: [opened, synchronize]
 
 # 동시 실행 방지 - 같은 PR에서 여러 리뷰가 동시에 실행되지 않도록
 # cancel-in-progress: false로 설정하여 기존 리뷰가 완료될 때까지 대기
@@ -85,24 +85,24 @@ jobs:
         run: |
           echo "리뷰할 코드 변경사항이 없습니다. (*.py, *.yml, *.toml, *.sql 파일 변경 없음)" > review_result.txt
 
-      - name: Prepare prompt and call Bedrock API
+      - name: Prepare prompt and call Gemini API
         id: review
         if: steps.diff.outputs.skip != 'true'
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_BEDROCK_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_BEDROCK_SECRET_ACCESS_KEY }}
-          AWS_REGION: us-east-1
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
-            echo "API Error: AWS Bedrock credentials are missing." > review_result.txt
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "API Error: GEMINI_API_KEY is missing." > review_result.txt
             exit 1
           fi
 
           # Python으로 안전하게 JSON 생성 및 API 호출
           python3 << 'PYEOF'
           import json
-          import subprocess
+          import urllib.request
+          import urllib.error
           import sys
+          import os
 
           # diff 내용 읽기 (안전한 방식)
           with open('diff_content.txt', 'r', encoding='utf-8', errors='replace') as f:
@@ -163,42 +163,41 @@ jobs:
           ### 개선 제안
           - (있다면 간결하게 1-3개만 제안)"""
 
+          # Gemini API 호출
+          api_key = os.environ.get('GEMINI_API_KEY')
+          url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key={api_key}"
+
           payload = {
-              "anthropic_version": "bedrock-2023-05-31",
-              "max_tokens": 4096,
-              "messages": [{"role": "user", "content": prompt}]
+              "contents": [{"parts": [{"text": prompt}]}],
+              "generationConfig": {
+                  "temperature": 0.7,
+                  "maxOutputTokens": 4096
+              }
           }
 
-          # JSON 파일로 저장
-          with open('payload.json', 'w', encoding='utf-8') as f:
-              json.dump(payload, f, ensure_ascii=False)
-
-          # AWS CLI 호출 (fileb:// 사용으로 바이너리 안전 전송)
-          result = subprocess.run([
-              'aws', 'bedrock-runtime', 'invoke-model',
-              '--model-id', 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
-              '--content-type', 'application/json',
-              '--accept', 'application/json',
-              '--body', 'fileb://payload.json',
-              '--region', 'us-east-1',
-              'output.json'
-          ], capture_output=True, text=True)
-
-          if result.returncode != 0:
-              with open('review_result.txt', 'w') as f:
-                  f.write(f"Bedrock API Error: {result.stderr}")
-              sys.exit(1)
-
-          # 응답 파싱
           try:
-              with open('output.json', 'r', encoding='utf-8') as f:
-                  response = json.load(f)
-              review = response.get('content', [{}])[0].get('text', '리뷰 생성 실패')
+              req = urllib.request.Request(
+                  url,
+                  data=json.dumps(payload).encode('utf-8'),
+                  headers={'Content-Type': 'application/json'},
+                  method='POST'
+              )
+              with urllib.request.urlopen(req, timeout=120) as response:
+                  result = json.loads(response.read().decode('utf-8'))
+
+              # Gemini 응답 파싱
+              review = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '리뷰 생성 실패')
               with open('review_result.txt', 'w', encoding='utf-8') as f:
                   f.write(review)
-          except (json.JSONDecodeError, KeyError, IndexError) as e:
+
+          except urllib.error.HTTPError as e:
+              error_body = e.read().decode('utf-8') if e.fp else str(e)
               with open('review_result.txt', 'w') as f:
-                  f.write(f"Response parsing error: {e}")
+                  f.write(f"Gemini API Error ({e.code}): {error_body}")
+              sys.exit(1)
+          except Exception as e:
+              with open('review_result.txt', 'w') as f:
+                  f.write(f"API Error: {e}")
               sys.exit(1)
           PYEOF
 
@@ -219,5 +218,5 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: ${{ steps.pr.outputs.number }},
-              body: `## 🤖 AI 코드 리뷰 (Bedrock)\n\n${review}`
+              body: `## 🤖 AI 코드 리뷰 (Gemini Flash)\n\n${review}`
             });
