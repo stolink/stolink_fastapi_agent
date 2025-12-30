@@ -45,58 +45,22 @@ jobs:
           BASE_BRANCH="${{ steps.pr.outputs.base_branch }}"
           git fetch origin $BASE_BRANCH
 
-          # 변경된 파일 목록 (Python, 설정 파일 포함)
+          # 변경된 파일 목록
           FILES=$(git diff origin/$BASE_BRANCH...HEAD --name-only -- '*.py' '*.yml' '*.toml' '*.sql' | head -30)
           echo "files<<EOF" >> $GITHUB_OUTPUT
           echo "$FILES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-          # 실제 코드 변경 내용
-          DIFF=$(git diff origin/$BASE_BRANCH...HEAD -- '*.py' '*.yml' '*.toml' '*.sql' | head -500)
-          echo "$DIFF" > diff_content.txt
+          # 변경 사항 통계
+          DIFF_STAT=$(git diff origin/$BASE_BRANCH...HEAD --stat | tail -1)
+          DIFF_LINES=$(git diff origin/$BASE_BRANCH...HEAD -- '*.py' '*.yml' '*.toml' '*.sql' | wc -l)
+          echo "diff_stat=$DIFF_STAT" >> $GITHUB_OUTPUT
+          echo "diff_lines=$DIFF_LINES" >> $GITHUB_OUTPUT
 
-      - name: Prepare prompt
-        id: prompt
-        run: |
-          DIFF_CONTENT=$(head -n 500 diff_content.txt)
-          FILES="${{ steps.diff.outputs.files }}"
+          # 실제 코드 변경 내용 (1500줄 제한 - Haiku 입력 토큰 충분)
+          git diff origin/$BASE_BRANCH...HEAD -- '*.py' '*.yml' '*.toml' '*.sql' | head -1500 > diff_content.txt
 
-          # Create prompt content directly
-          cat << EOF > prompt_content.txt
-          You are a senior developer reviewing code for the StoLink AI Agent project (Python/FastAPI).
-
-          ## Changed Files
-          $FILES
-
-          ## Code Changes
-          \`\`\`diff
-          $DIFF_CONTENT
-          \`\`\`
-
-          Please review the code changes above and provide feedback in Korean.
-          Focus on: code quality, potential bugs, security issues, and best practices.
-          EOF
-
-          # Create JSON with Python and encode as base64
-          python3 << 'PYEOF'
-          import json
-          import base64
-
-          with open('prompt_content.txt', 'r', encoding='utf-8') as f:
-              content = f.read()
-
-          payload = {
-              "anthropic_version": "bedrock-2023-05-31",
-              "max_tokens": 4096,
-              "messages": [{"role": "user", "content": content}]
-          }
-
-          json_bytes = json.dumps(payload, ensure_ascii=True).encode('utf-8')
-          with open('prompt_base64.txt', 'w') as f:
-              f.write(base64.b64encode(json_bytes).decode('ascii'))
-          PYEOF
-
-      - name: Call AWS Bedrock Claude API
+      - name: Prepare prompt and call Bedrock API
         id: review
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_BEDROCK_ACCESS_KEY_ID }}
@@ -104,43 +68,118 @@ jobs:
           AWS_REGION: us-east-1
         run: |
           if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
-            echo "API Error: AWS Bedrock credentials are missing in GitHub repository settings." > review_result.txt
+            echo "API Error: AWS Bedrock credentials are missing." > review_result.txt
             exit 1
           fi
 
-          # Install AWS CLI if not present
-          if ! command -v aws &> /dev/null; then
-            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-            unzip -q awscliv2.zip
-            sudo ./aws/install
-          fi
+          # Python으로 안전하게 JSON 생성 및 API 호출
+          python3 << 'PYEOF'
+          import json
+          import subprocess
+          import sys
 
-          # Call Bedrock Claude API with base64 encoded body
-          BODY_BASE64=$(cat prompt_base64.txt)
-          set +e
-          aws bedrock-runtime invoke-model \
-            --model-id "us.anthropic.claude-haiku-4-5-20251001-v1:0" \
-            --content-type "application/json" \
-            --accept "application/json" \
-            --body "$BODY_BASE64" \
-            --region us-east-1 \
-            output.json 2> error.log
-          EXIT_CODE=$?
-          set -e
+          # diff 내용 읽기 (안전한 방식)
+          with open('diff_content.txt', 'r', encoding='utf-8', errors='replace') as f:
+              diff_content = f.read()
 
-          if [ $EXIT_CODE -eq 0 ] && [ -s output.json ]; then
-            REVIEW=$(cat output.json | jq -r '.content[0].text // "리뷰 생성 실패"')
-            echo "$REVIEW" > review_result.txt
-          else
-            echo "Bedrock API Error: $(cat error.log 2>/dev/null || echo 'Unknown error')" > review_result.txt
-          fi
+          files = """${{ steps.diff.outputs.files }}"""
+          diff_stat = "${{ steps.diff.outputs.diff_stat }}"
+          diff_lines = "${{ steps.diff.outputs.diff_lines }}"
+
+          # 변경 사항이 너무 많으면 경고
+          truncated_notice = ""
+          if int(diff_lines) > 1500:
+              truncated_notice = f"\n\n**Note:** Changes truncated. Total lines: {diff_lines}, reviewing first 1500 lines."
+
+          prompt = f"""<task>
+StoLink AI Agent 프로젝트(Python/FastAPI)의 코드 변경사항을 리뷰해주세요.
+</task>
+
+<changes>
+{diff_stat}{truncated_notice}
+
+변경된 파일: {files}
+
+```diff
+{diff_content}
+```
+</changes>
+
+<instructions>
+- 한국어로 답변하세요
+- 아래 형식을 정확히 따르세요
+- 코드 예시나 개선안을 제시할 때는 간결하게 작성하세요
+- 문제가 없으면 "특이사항 없음"이라고 작성하세요
+</instructions>
+
+<output_format>
+### 요약
+(1-2문장으로 전체 변경사항 요약)
+
+### 코드 품질
+- (발견된 이슈 또는 "특이사항 없음")
+
+### 잠재적 버그
+- (발견된 이슈 또는 "특이사항 없음")
+
+### 보안
+- (발견된 이슈 또는 "특이사항 없음")
+
+### 개선 제안
+- (있다면 제안, 없으면 생략)
+</output_format>"""
+
+          payload = {
+              "anthropic_version": "bedrock-2023-05-31",
+              "max_tokens": 4096,
+              "messages": [{"role": "user", "content": prompt}]
+          }
+
+          # JSON 파일로 저장
+          with open('payload.json', 'w', encoding='utf-8') as f:
+              json.dump(payload, f, ensure_ascii=False)
+
+          # AWS CLI 호출 (fileb:// 사용으로 바이너리 안전 전송)
+          result = subprocess.run([
+              'aws', 'bedrock-runtime', 'invoke-model',
+              '--model-id', 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+              '--content-type', 'application/json',
+              '--accept', 'application/json',
+              '--body', 'fileb://payload.json',
+              '--region', 'us-east-1',
+              'output.json'
+          ], capture_output=True, text=True)
+
+          if result.returncode != 0:
+              with open('review_result.txt', 'w') as f:
+                  f.write(f"Bedrock API Error: {result.stderr}")
+              sys.exit(1)
+
+          # 응답 파싱
+          try:
+              with open('output.json', 'r', encoding='utf-8') as f:
+                  response = json.load(f)
+              review = response.get('content', [{}])[0].get('text', '리뷰 생성 실패')
+              with open('review_result.txt', 'w', encoding='utf-8') as f:
+                  f.write(review)
+          except (json.JSONDecodeError, KeyError, IndexError) as e:
+              with open('review_result.txt', 'w') as f:
+                  f.write(f"Response parsing error: {e}")
+              sys.exit(1)
+          PYEOF
 
       - name: Post review comment
+        if: always()
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const review = fs.readFileSync('review_result.txt', 'utf8');
+            let review = '리뷰 생성 중 오류가 발생했습니다.';
+            try {
+              review = fs.readFileSync('review_result.txt', 'utf8');
+            } catch (e) {
+              review = `파일 읽기 오류: ${e.message}`;
+            }
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
