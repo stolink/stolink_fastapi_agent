@@ -1,0 +1,189 @@
+name: AI Code Review
+
+on:
+  # 코멘트로 트리거 (/review) - 수동 실행
+  issue_comment:
+    types: [created]
+  # PR 생성 및 업데이트 시 자동 실행
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  ai_review:
+    if: |
+      (github.event_name == 'pull_request') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '/review'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR info
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" == "issue_comment" ]; then
+            echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+            BASE_BRANCH=$(gh pr view ${{ github.event.issue.number }} --json baseRefName --jq '.baseRefName')
+            echo "base_branch=$BASE_BRANCH" >> $GITHUB_OUTPUT
+          else
+            echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+            echo "base_branch=${{ github.event.pull_request.base.ref }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get changed files and diff
+        id: diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BASE_BRANCH="${{ steps.pr.outputs.base_branch }}"
+          git fetch origin $BASE_BRANCH
+
+          # 변경된 파일 목록
+          FILES=$(git diff origin/$BASE_BRANCH...HEAD --name-only -- '*.py' '*.yml' '*.toml' '*.sql' | head -30)
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          # 변경 사항 통계
+          DIFF_STAT=$(git diff origin/$BASE_BRANCH...HEAD --stat | tail -1)
+          DIFF_LINES=$(git diff origin/$BASE_BRANCH...HEAD -- '*.py' '*.yml' '*.toml' '*.sql' | wc -l)
+          echo "diff_stat=$DIFF_STAT" >> $GITHUB_OUTPUT
+          echo "diff_lines=$DIFF_LINES" >> $GITHUB_OUTPUT
+
+          # 실제 코드 변경 내용 (1500줄 제한 - Haiku 입력 토큰 충분)
+          git diff origin/$BASE_BRANCH...HEAD -- '*.py' '*.yml' '*.toml' '*.sql' | head -1500 > diff_content.txt
+
+      - name: Prepare prompt and call Bedrock API
+        id: review
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_BEDROCK_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_BEDROCK_SECRET_ACCESS_KEY }}
+          AWS_REGION: us-east-1
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "API Error: AWS Bedrock credentials are missing." > review_result.txt
+            exit 1
+          fi
+
+          # Python으로 안전하게 JSON 생성 및 API 호출
+          python3 << 'PYEOF'
+          import json
+          import subprocess
+          import sys
+
+          # diff 내용 읽기 (안전한 방식)
+          with open('diff_content.txt', 'r', encoding='utf-8', errors='replace') as f:
+              diff_content = f.read()
+
+          files = """${{ steps.diff.outputs.files }}"""
+          diff_stat = "${{ steps.diff.outputs.diff_stat }}"
+          diff_lines = "${{ steps.diff.outputs.diff_lines }}"
+
+          # 변경 사항이 너무 많으면 경고
+          truncated_notice = ""
+          if int(diff_lines) > 1500:
+              truncated_notice = f"\n\n**Note:** Changes truncated. Total lines: {diff_lines}, reviewing first 1500 lines."
+
+          prompt = f"""<task>
+StoLink AI Agent 프로젝트(Python/FastAPI)의 코드 변경사항을 리뷰해주세요.
+</task>
+
+<changes>
+{diff_stat}{truncated_notice}
+
+변경된 파일: {files}
+
+```diff
+{diff_content}
+```
+</changes>
+
+<instructions>
+- 한국어로 답변하세요
+- 아래 형식을 정확히 따르세요
+- 코드 예시나 개선안을 제시할 때는 간결하게 작성하세요
+- 문제가 없으면 "특이사항 없음"이라고 작성하세요
+</instructions>
+
+<output_format>
+### 요약
+(1-2문장으로 전체 변경사항 요약)
+
+### 코드 품질
+- (발견된 이슈 또는 "특이사항 없음")
+
+### 잠재적 버그
+- (발견된 이슈 또는 "특이사항 없음")
+
+### 보안
+- (발견된 이슈 또는 "특이사항 없음")
+
+### 개선 제안
+- (있다면 제안, 없으면 생략)
+</output_format>"""
+
+          payload = {
+              "anthropic_version": "bedrock-2023-05-31",
+              "max_tokens": 4096,
+              "messages": [{"role": "user", "content": prompt}]
+          }
+
+          # JSON 파일로 저장
+          with open('payload.json', 'w', encoding='utf-8') as f:
+              json.dump(payload, f, ensure_ascii=False)
+
+          # AWS CLI 호출 (fileb:// 사용으로 바이너리 안전 전송)
+          result = subprocess.run([
+              'aws', 'bedrock-runtime', 'invoke-model',
+              '--model-id', 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+              '--content-type', 'application/json',
+              '--accept', 'application/json',
+              '--body', 'fileb://payload.json',
+              '--region', 'us-east-1',
+              'output.json'
+          ], capture_output=True, text=True)
+
+          if result.returncode != 0:
+              with open('review_result.txt', 'w') as f:
+                  f.write(f"Bedrock API Error: {result.stderr}")
+              sys.exit(1)
+
+          # 응답 파싱
+          try:
+              with open('output.json', 'r', encoding='utf-8') as f:
+                  response = json.load(f)
+              review = response.get('content', [{}])[0].get('text', '리뷰 생성 실패')
+              with open('review_result.txt', 'w', encoding='utf-8') as f:
+                  f.write(review)
+          except (json.JSONDecodeError, KeyError, IndexError) as e:
+              with open('review_result.txt', 'w') as f:
+                  f.write(f"Response parsing error: {e}")
+              sys.exit(1)
+          PYEOF
+
+      - name: Post review comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let review = '리뷰 생성 중 오류가 발생했습니다.';
+            try {
+              review = fs.readFileSync('review_result.txt', 'utf8');
+            } catch (e) {
+              review = `파일 읽기 오류: ${e.message}`;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ steps.pr.outputs.number }},
+              body: `## 🤖 AI 코드 리뷰 (Bedrock)\n\n${review}`
+            });
