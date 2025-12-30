@@ -61,49 +61,38 @@ jobs:
           DIFF_CONTENT=$(head -n 500 diff_content.txt)
           FILES="${{ steps.diff.outputs.files }}"
 
-          # Extract coding_rules and ai_code_review section from CLAUDE.md
-          if [ -f "CLAUDE.md" ]; then
-            CODING_RULES=$(sed -n '/<coding_rules>/,/<\/coding_rules>/p' CLAUDE.md)
-            REVIEW_CONTEXT=$(sed -n '/<ai_code_review>/,/<\/ai_code_review>/p' CLAUDE.md | sed '1d;$d')
-          else
-            CODING_RULES="표준 Python/FastAPI 코딩 규칙을 따릅니다."
-            REVIEW_CONTEXT="StoLink AI Agent 프로젝트의 시니어 개발자로서 코드 리뷰를 수행합니다."
-          fi
+          # Create prompt content directly
+          cat << EOF > prompt_content.txt
+          You are a senior developer reviewing code for the StoLink AI Agent project (Python/FastAPI).
 
-          # Create template file
-          cat << 'EOF' > prompt_template.txt
-          SYSTEM_CONTEXT_PLACEHOLDER
+          ## Changed Files
+          $FILES
 
-          ## 프로젝트 코딩 규칙
-          CODING_RULES_PLACEHOLDER
+          ## Code Changes
+          \`\`\`diff
+          $DIFF_CONTENT
+          \`\`\`
 
-          ## 변경된 파일
-          FILES_PLACEHOLDER
-
-          ## 코드 변경 내용
-          ```diff
-          DIFF_PLACEHOLDER
-          ```
-
-          위 규칙과 프로젝트 컨텍스트를 바탕으로 변경된 코드를 리뷰해주세요.
-          항상 한국어로 응답하며, 출력 형식을 정확히 지켜주세요.
+          Please review the code changes above and provide feedback in Korean.
+          Focus on: code quality, potential bugs, security issues, and best practices.
           EOF
 
-          # Use jq to generate JSON safely (Bedrock format)
-          jq -n \
-            --rawfile template prompt_template.txt \
-            --arg context "$REVIEW_CONTEXT" \
-            --arg rules "$CODING_RULES" \
-            --arg files "$FILES" \
-            --arg diff "$DIFF_CONTENT" \
-            '{
-              anthropic_version: "bedrock-2023-05-31",
-              max_tokens: 4096,
-              messages: [{
-                role: "user",
-                content: ($template | sub("SYSTEM_CONTEXT_PLACEHOLDER"; $context) | sub("CODING_RULES_PLACEHOLDER"; $rules) | sub("FILES_PLACEHOLDER"; $files) | sub("DIFF_PLACEHOLDER"; $diff))
-              }]
-            }' > prompt.json
+          # Create JSON with Python (handles unicode properly)
+          python3 << 'PYEOF'
+          import json
+
+          with open('prompt_content.txt', 'r', encoding='utf-8') as f:
+              content = f.read()
+
+          payload = {
+              "anthropic_version": "bedrock-2023-05-31",
+              "max_tokens": 4096,
+              "messages": [{"role": "user", "content": content}]
+          }
+
+          with open('prompt.json', 'w', encoding='utf-8') as f:
+              json.dump(payload, f, ensure_ascii=False)
+          PYEOF
 
       - name: Call AWS Bedrock Claude API
         id: review
