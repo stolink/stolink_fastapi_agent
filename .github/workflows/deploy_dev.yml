@@ -90,7 +90,7 @@ jobs:
               "cd /home/ubuntu/stolink-fastapi-agent && sudo tee .env > /dev/null << EOF",
               "AWS_BEDROCK_ACCESS_KEY_ID=${{ secrets.AWS_BEDROCK_ACCESS_KEY_ID }}",
               "AWS_BEDROCK_SECRET_ACCESS_KEY=${{ secrets.AWS_BEDROCK_SECRET_ACCESS_KEY }}",
-              "AWS_REGION=us-east-1",
+              "AWS_REGION=${{ vars.AWS_REGION }}",
               "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}",
               "RABBITMQ_AGENT_HOST=${{ secrets.RABBITMQ_AGENT_HOST }}",
               "RABBITMQ_AGENT_PORT=${{ vars.RABBITMQ_AGENT_PORT }}",
