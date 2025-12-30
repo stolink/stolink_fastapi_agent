@@ -91,43 +91,22 @@ jobs:
           if int(diff_lines) > 1500:
               truncated_notice = f"\n\n**Note:** Changes truncated. Total lines: {diff_lines}, reviewing first 1500 lines."
 
-          prompt = f"""<task>
-StoLink AI Agent 프로젝트(Python/FastAPI)의 코드 변경사항을 리뷰해주세요.
-</task>
+          prompt = f"""You are a senior developer reviewing code for the StoLink AI Agent project (Python/FastAPI).
 
-<changes>
-{diff_stat}{truncated_notice}
+          ## Summary
+          {diff_stat}{truncated_notice}
 
-변경된 파일: {files}
+          ## Changed Files
+          {files}
 
-```diff
-{diff_content}
-```
-</changes>
+          ## Code Changes
+          ```diff
+          {diff_content}
+          ```
 
-<instructions>
-- 한국어로 답변하세요
-- 아래 형식을 정확히 따르세요
-- 코드 예시나 개선안을 제시할 때는 간결하게 작성하세요
-- 문제가 없으면 "특이사항 없음"이라고 작성하세요
-</instructions>
-
-<output_format>
-### 요약
-(1-2문장으로 전체 변경사항 요약)
-
-### 코드 품질
-- (발견된 이슈 또는 "특이사항 없음")
-
-### 잠재적 버그
-- (발견된 이슈 또는 "특이사항 없음")
-
-### 보안
-- (발견된 이슈 또는 "특이사항 없음")
-
-### 개선 제안
-- (있다면 제안, 없으면 생략)
-</output_format>"""
+          Please review the code changes above and provide feedback in Korean.
+          Focus on: code quality, potential bugs, security issues, and best practices.
+          Format your response with clear sections and bullet points."""
 
           payload = {
               "anthropic_version": "bedrock-2023-05-31",
