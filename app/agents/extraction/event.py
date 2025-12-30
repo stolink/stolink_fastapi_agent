@@ -23,11 +23,11 @@ Your job is to break down the story into SCENES and describe the COMPOSITION for
 [Example 1: visual_scene should NOT include background]
 Input: "서진이 어두운 숲에서 검을 쥐고 있었다."
 
-❌ BAD (FAIL - Contains background description):
-  "visual_scene": "A man holding a sword in a dark forest with tall trees and fog."
+❌ BAD (FAIL - Vague):
+  "visual_scene": "A man in a forest."
   
-✅ GOOD (PASS - Only action and composition):
-  "visual_scene": "A tall man with dark hair gripping a sword, tense posture, alert expression, medium shot"
+✅ GOOD (PASS - Action focus):
+  "visual_scene": "A tall man with dark hair gripping a sword, tense posture, alert expression, medium shot. Background is dark."
 
 [Example 2: Use participant names as EXACT references]
 ❌ BAD:
@@ -70,18 +70,19 @@ For each event, you MUST provide:
 - participants: List of exact character names
 - location_ref: Short setting name
 - prev_event_id: Previous event ID or null
-- visual_scene: Character action/pose description (NO BACKGROUND!)
+- visual_scene: Character action/pose description (Focus on action)
 - camera_angle: medium shot, close-up, wide shot, low angle, bird's eye, etc.
 - importance: 1-10
 - is_foreshadowing: true/false
 
-=== PENALTY WARNING ===
-If visual_scene contains background descriptions like "dark forest", "trees", "fog", "moonlight",
-it will be REJECTED because that's Setting Agent's job."""),
+=== NOTE ON BACKGROUNDS ===
+While the Setting Agent handles the main environment, you SHOULD describe the immediate surroundings relevant to the action (e.g., "leaning against a rough stone wall", "splashing through a puddle").
+
+Your goal is to capture the DRAMA and ACTION of the scene."""),
     ("human", """Text to analyze:
 {story_text}
 
-=== STRICT CONSTRAINT: USE ONLY THESE NAMES ===
+=== GUIDELINE: USE THESE NAMES ===
 
 Available Characters (from Character Agent) - MUST use EXACT names:
 {available_characters}
@@ -95,7 +96,7 @@ Available Locations (from Setting Agent) - MUST use EXACT names:
 RULES:
 1. participants: ONLY use names from "Available Characters" list above
 2. location_ref: ONLY use names from "Available Locations" list above
-3. visual_scene: Action and composition ONLY - NO background descriptions
+3. visual_scene: Action and composition focus.
    - TIP: Use "Available Inventory" to describe held items precisely (e.g., "Silver Sword" instead of "sword")
 4. description: MUST provide detailed description for each event
 
@@ -118,8 +119,8 @@ PREVIOUS CONFLICTS:
 6. Ensure ALL events have a description field
 7. Maintain timeline integrity (prev_event_id chain)
 
-=== PENALTY ===
-If visual_scene contains "forest", "trees", "moon", "fog" - it will be REJECTED."""),
+=== GUIDELINE ===
+Focus on the action. Background details are allowed if they support the action."""),
     ("human", """Original text:
 {story_text}
 
@@ -141,7 +142,7 @@ async def event_extraction_node(state: dict) -> dict:
     No manual JSON parsing required.
     """
     # Get LLM with structured output bound to schema
-    structured_llm = get_structured_llm(EventExtractionResult)
+    structured_llm = get_structured_llm(EventExtractionResult, tier="standard")
     
     conflicts = state.get("consistency_report", {}).get("conflicts", [])
     retry_count = state.get("retry_count", 0)

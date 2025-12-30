@@ -175,6 +175,15 @@ Not all stories have game data. Only extract if the text explicitly mentions:
 - Attack, defense, damage values
 - Ranks, titles with numerical significance
 
+### LANGUAGE CONSISTENCY RULE ###
+Output ALL text in the SAME language as the input.
+
+### CRITICAL: NAME EXTRACTION RULE ###
+When a character is introduced as "베라(Vera)" or "리안(Lian)", use ONLY the Korean name.
+The English in parentheses is just a transliteration hint - DO NOT use it.
+❌ BAD: "name": "Vera", "name": "Lian", "name": "Tio"
+✅ GOOD: "name": "베라", "name": "리안", "name": "티오"
+
 ### EXTRACTION FOCUS ###
 If game data exists:
 
@@ -215,7 +224,8 @@ Combat values go to total_attack/total_defense with source="extracted".""")
 # === Node Function ===
 async def stats_extraction_node(state: dict) -> dict:
     """Stats Agent - Extracts game-related numerical data."""
-    structured_llm = get_structured_llm(CharacterGameStatsResult)
+    # Use basic tier - formulaic stat generation
+    structured_llm = get_structured_llm(CharacterGameStatsResult, tier="basic")
     chain = STATS_EXTRACTION_PROMPT | structured_llm
     
     try:

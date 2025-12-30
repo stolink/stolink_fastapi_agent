@@ -41,8 +41,8 @@ Input: "이민호가 나무 뒤에서 비웃으며 나타났다."
 
 === STEP-BY-STEP EXTRACTION PROCESS ===
 
-1. **IDENTIFY** all character names and action verbs in the text
-2. **REMOVE** them completely from your mind
+1. **IDENTIFY** the physical location (forest, room, street)
+2. **DESCRIBE** the scene as if it were an empty stage set
 3. **FOCUS** on what remains: trees, fog, moon, ground, buildings, weather
 4. **DESCRIBE** using ONLY physical nouns and adjectives:
    - Textures (rough bark, smooth stone, wet leaves, mossy rocks)
@@ -70,12 +70,14 @@ For each setting, you MUST provide:
 - significance: Story importance
 - is_primary: true if action happens here
 
-=== PENALTY WARNING ===
-If ANY character name or action verb is included in visual_background, the output is INVALID."""),
+=== PENALTY WARNING -> GUIDELINE ===
+Focus purely on the visual environment. If character names or actions are mentioned, rephrase to focus on the effect they have on the environment (e.g., "footsteps on snow" -> "snowy path with footprints").
+
+Your goal is valid JSON output of the environment description."""),
     ("human", """Text to analyze:
 {story_text}
 
-Extract all settings with full detail. Remember: EMPTY background, no characters.""")
+Extract all settings with full detail. Focus on the physical world.""")
 ])
 
 
@@ -91,14 +93,14 @@ PREVIOUS CONFLICTS:
 3. ADD more physical details: textures, materials, colors
 4. Ensure time_of_day matches text clues (moonlight = night)
 
-PENALTY: If character names or actions remain in visual_background, output is INVALID."""),
+94. NOTE: Character names in visual_background should be avoided where possible, but context is improved if you focus on the static environment."""),
     ("human", """Original text:
 {story_text}
 
 Previous extraction (contains errors):
 {previous_extraction}
 
-Re-extract with corrections. REMOVE all character references.""")
+Re-extract with corrections. Focus on environment detail.""")
 ])
 
 
@@ -109,7 +111,7 @@ async def setting_extraction_node(state: dict) -> dict:
     No manual JSON parsing required.
     """
     # Get LLM with structured output bound to schema
-    structured_llm = get_structured_llm(SettingExtractionResult)
+    structured_llm = get_structured_llm(SettingExtractionResult, tier="standard")
     
     conflicts = state.get("consistency_report", {}).get("conflicts", [])
     retry_count = state.get("retry_count", 0)

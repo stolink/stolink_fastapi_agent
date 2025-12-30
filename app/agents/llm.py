@@ -70,20 +70,20 @@ def get_bedrock_llm(
     Returns:
         ChatBedrockConverse instance configured for the specified tier
         
-    Tiers:
-        - basic: Claude 3 Haiku (routing, simple classification)
-        - standard: Claude 3 Haiku (extraction, summarization)
-        - advanced: Claude 3 Haiku (complex reasoning, analysis)
+    Tiers (Cost vs Performance):
+        - basic: Claude 3 Haiku - Fast, cheap. For routing, simple classification.
+        - standard: Claude 3.5 Sonnet - Balanced. For extraction, summarization.
+        - advanced: Claude 3.5 Sonnet v2 - Best reasoning. For complex analysis, role inference.
     """
     model_configs = {
         "basic": {
             "model_id": "anthropic.claude-3-haiku-20240307-v1:0",
         },
         "standard": {
-            "model_id": "anthropic.claude-3-haiku-20240307-v1:0",
+            "model_id": "us.anthropic.claude-3-5-haiku-20241022-v1:0",
         },
         "advanced": {
-            "model_id": "anthropic.claude-3-haiku-20240307-v1:0",
+            "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
         }
     }
     

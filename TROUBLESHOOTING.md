@@ -1,6 +1,6 @@
 # StoLink AI Backend - Troubleshooting Guide
 
-> **Last Updated**: 2025-12-29
+> **Last Updated**: 2025-12-30
 
 이 문서는 개발 과정에서 발생한 주요 문제와 해결책을 기록합니다.
 
@@ -24,6 +24,7 @@
 14. [Multi-Agent - JSON 파싱 오류 및 AWS Throttling](#14-multi-agent---json-파싱-오류-및-aws-throttling)
 15. [Character Agent - Hierarchical Multi-Agent System 리팩토링](#15-character-agent---hierarchical-multi-agent-system-리팩토링)
 16. [Appearance Agent - Production Level 업그레이드](#16-appearance-agent---production-level-업그레이드)
+17. [Story Extraction - 한글/영문 캐릭터 중복 및 추출 품질 개선](#17-story-extraction---한글영문-캐릭터-중복-및-추출-품질-개선)
 
 ---
 
@@ -1658,6 +1659,339 @@ def generate_visual_prompt(data: dict, style: str) -> str:
 ---
 
 
+## 17. Story Extraction - 한글/영문 캐릭터 중복 및 추출 품질 개선
+
+### 📅 날짜
+2025-12-30
+
+### 🔴 문제 (Problem)
+
+1. **한글/영문 캐릭터 중복**: "베라(Vera)"가 "베라"와 "Vera" 두 캐릭터로 분리 추출
+2. **이벤트 추출 실패**: JSON string 반환 시 list_type 유효성 검사 오류
+3. **인벤토리 중복**: `equipped_items`와 `bag_items`에 동일 아이템 중복
+4. **안대/액세서리 누락**: 베라의 검은 안대가 appearance에서 누락
+5. **Role 오류**: 적대적 행동하는 베라가 "other"로 추출 (antagonist여야 함)
+6. **Plot 할루시네이션**: 이벤트가 없을 때 가상의 event_ref (E001-E009) 생성
+7. **existing_characters 미반영**: 페이로드의 기존 캐릭터 ID가 무시됨
+
+### 🟡 원인 분석 (Root Cause)
+
+1. 모든 sub-agent가 독립적으로 캐릭터 추출 → 한글/영문 혼용 발생
+2. LLM이 JSON 배열 대신 문자열 반환 → Pydantic 유효성 검사 실패
+3. 프롬프트에 equipped/bag 분리 규칙 없음
+4. 프롬프트에 안대, 마스크 등 face accessory 추출 지시 없음
+5. antagonist 판별 컨텍스트 클루 없음
+6. Plot Agent가 빈 이벤트 배열에도 narrative_beats 생성 시도
+7. Aggregator가 context의 existing_characters를 참조하지 않음
+
+### 🟢 해결책 (Solution)
+
+#### 1. 모든 캐릭터 Sub-Agent에 한글 이름 규칙 추가
+```
+### CRITICAL: NAME EXTRACTION RULE ###
+When a character is introduced as "베라(Vera)", use ONLY the Korean name.
+❌ BAD: "name": "Vera"
+✅ GOOD: "name": "베라"
+```
+
+#### 2. EventExtractionResult에 JSON string parser 추가 (`events.py`)
+```python
+@field_validator('events', mode='before')
+def parse_events_string(cls, v):
+    if isinstance(v, str):
+        return json.loads(cleaned_string)
+    return v
+```
+
+#### 3. Inventory 중복 방지 규칙 추가 (`inventory.py`)
+```
+### CRITICAL: NO DUPLICATION RULE ###
+An item can ONLY be in ONE place:
+- HOLDING/WEARING → equipped_items ONLY
+- IN A BAG/STORED → bag_items ONLY
+```
+
+#### 4. Face Accessory 추출 규칙 추가 (`appearance.py`)
+```
+### IMPORTANT: FACE ACCESSORIES ###
+- "오른쪽 눈에는 검은 안대" → eyes: "wearing black eyepatch on right eye"
+- "얼굴에 흉터" → scars_tattoos: ["facial scar"]
+```
+
+#### 5. Antagonist 판별 규칙 추가 (`identity.py`)
+```
+- Attacks/threatens the protagonist → antagonist
+- Commands others to harm → antagonist
+- "눈빛이 살기로 번뜩였다" → role: "antagonist"
+```
+
+#### 6. Plot Agent 빈 이벤트 가드 추가 (`plot.py`)
+```python
+if not events:
+    return {
+        "plot_integration": {
+            "narrative_beats": [],  # NO hallucinated event_refs
+            "tension_curve": [],
+            ...
+        }
+    }
+```
+
+#### 7. Aggregator에 existing_characters 병합 로직 추가
+```python
+existing_characters = context.get("existing_characters") or []
+for ec in existing_characters:
+    existing_lookup[ec["name"]] = ec  # ID 재사용
+
+char_id = existing_lookup.get(name, {}).get("id") or f"char-{name}-{n}"
+```
+
+### 📁 수정된 파일
+
+| 파일 | 수정 내용 |
+|------|----------|
+| `app/schemas/events.py` | JSON string→list parser validator |
+| `app/agents/extraction/character/identity.py` | 한글 이름 규칙 + antagonist 판별 |
+| `app/agents/extraction/character/appearance.py` | 한글 이름 + face accessory + category 소문자 |
+| `app/agents/extraction/character/personality.py` | 한글 이름 규칙 |
+| `app/agents/extraction/character/dialogue_mood.py` | 한글 이름 규칙 |
+| `app/agents/extraction/character/relations.py` | 한글 이름 규칙 + 할루시네이션 방지 |
+| `app/agents/extraction/character/inventory.py` | 한글 아이템명 + 중복 방지 규칙 |
+| `app/agents/extraction/character/stats.py` | 한글 이름 규칙 |
+| `app/agents/analysis/plot.py` | 빈 이벤트 가드 |
+| `app/agents/extraction/character/aggregator.py` | existing_characters ID 재사용 + category 소문자 |
+
+### ✅ 결과
+
+| 문제 | Before | After |
+|------|--------|-------|
+| 캐릭터 수 | 6개 (중복) | 3개 |
+| 이벤트 추출 | 실패 (list_type) | 성공 (E001-E005) |
+| 인벤토리 | 중복 발생 | 분리됨 |
+| 안대 | 누락 | 추출됨 |
+| Role | "other" | "antagonist" |
+| Plot event_refs | 할루시네이션 | 빈 배열 |
+| existing ID | 무시됨 | 재사용됨 |
+| category 대소문자 | "UNSPECIFIED" | "unspecified" |
+| 관계 history | 할루시네이션 | 명시적 데이터만 |
+
+#### 11. 동적 이름 중복 제거 (`aggregator.py`) - 2024-12-30
+
+**문제**: 프롬프트 규칙에도 불구하고 sub-agent들이 한글/영어 이름을 혼용하여 같은 인물이 2개로 추출됨
+- `identity.py` → "베라", `stats.py` → "Vera" → 2개 캐릭터 생성
+
+**해결책 1**: 스토리 패턴 기반 동적 매핑
+```python
+def extract_name_pairs_from_text(story_text: str) -> dict:
+    """스토리에서 "베라(Vera)" 패턴 자동 추출"""
+    pattern = r'([\uAC00-\uD7AF]+)\s*\(\s*([A-Za-z]+)\s*\)'
+    # {"Vera": "베라", "Lian": "리안", ...}
+```
+
+**해결책 2**: 음역(Romanization) 기반 매칭 (패턴 없을 때 폴백)
+```python
+KOREAN_TO_ROMANIZATION = {
+    "리": ["ri", "li", "ree", "lee"],
+    "안": ["an", "ahn"],
+    "베": ["be", "ve", "bae"],
+    "티": ["ti", "tee"],
+    "오": ["o", "oh"],
+    # ... +40개 음절
+}
+
+def find_romanization_match(korean_names, english_names) -> dict:
+    """'리안' → ['rian', 'lian', ...] 생성 후 'Lian'과 매칭"""
+```
+
+**작동 원리**:
+1. 스토리에서 `한글(영문)` 패턴 감지 → 동적 매핑
+2. 패턴 없는 영문 이름은 음역 매칭으로 한글 이름과 연결
+3. 모든 이름 정규화 후 같은 인물 데이터 병합
+
+**결과**: "리안"만 나오고 "리안(Lian)" 패턴 없어도 "Lian" 자동 병합
+
+---
+
+#### 12. 추출 정확도 개선 (`inventory.py`, `dialogue_mood.py`, `identity.py`) - 2024-12-30
+
+**문제**: 스토리와 추출 결과 간 불일치 발생
+- 리안의 단검이 `equipped_items`에 누락
+- 베라의 "황금빛 두루마리"가 `quest_items`에 누락  
+- "쥐새끼처럼 빠르네"가 베라가 아닌 리안의 `catchphrases`에 잘못 귀속
+- 티오가 "앳된 얼굴의 소년"으로 묘사되었으나 `age` 추론 안됨
+
+**해결책**:
+
+1. **inventory.py - QUEST 아이템 및 무기 추출 강화**
+```python
+### CRITICAL: QUEST ITEMS ###
+- 황금빛 두루마리 → QUEST item (베라 소유)
+- 영원의 성배 → QUEST item (if possessed)
+
+### WEAPON EXTRACTION ###
+단검을 잡다/들다/뽑다 → WEAPON equipped_items
+Example: "리안은 이를 악물며 단검을 고쳐 잡았다" → 리안 has 단검
+```
+
+2. **dialogue_mood.py - catchphrase 화자 귀속 규칙**
+```python
+### CRITICAL: CATCHPHRASE ATTRIBUTION ###
+⚠️ A catchphrase belongs to the SPEAKER, NOT the target!
+Example: 베라 said "여전히 쥐새끼처럼 빠르네, 리안."
+❌ BAD: 리안.catchphrases = ["쥐새끼처럼 빠르다"]  
+✅ GOOD: 베라.catchphrases = ["쥐새끼처럼 빠르네"]
+```
+
+3. **identity.py - 나이 추론 규칙**
+```python
+- age: Exact age or estimate if mentioned
+  * "앳된 얼굴의 소년" → age inference: young/teen
+  * "소년" → infer age as teen (10-19)
+  * "노인" → infer age as elderly (60+)
+```
+
+**수정된 파일**:
+- `app/agents/extraction/character/inventory.py`
+- `app/agents/extraction/character/dialogue_mood.py`
+- `app/agents/extraction/character/identity.py`
+
+---
+
+#### 13. Character Team Recursion Limit 무한 루프 (`graph.py`, `identity.py`) - 2024-12-30
+
+**문제**: `Recursion limit of 25 reached without hitting a stop condition`
+- Character Agent가 무한 루프에 빠져 `characters: []` 반환
+- Event Agent는 성공하지만 참조할 캐릭터가 없음
+
+**원인 분석**:
+1. `identity.py` 예외 발생 시 `completed_agents`에 "identity" 미추가
+2. Supervisor가 계속 `identity` 단계로 라우팅 → 무한 루프
+
+**해결책**:
+1. `identity.py` - 예외 시에도 `completed_agents`에 "identity" 추가
+2. `graph.py` - `recursion_limit=50` 설정
+
+**수정된 파일**: `app/agents/graph.py`, `app/agents/extraction/character/identity.py`
+
+---
+
+#### 14. age_group 및 role 추론 개선 (`aggregator.py`) - 2024-12-30
+
+**문제**: 
+- 티오가 "앳된 얼굴의 소년"으로 묘사되었으나 `visual.age_group: null`
+- 모든 캐릭터의 `role: "other"` (protagonist/antagonist 구분 안됨)
+
+**원인 분석**:
+1. aggregator에서 `age_group`이 항상 `None`으로 하드코딩됨
+2. role 추론이 Identity Agent 결과에만 의존 → 실패 시 "other" 폴백
+
+**해결책**:
+
+1. **age_group 추론 함수 추가**
+```python
+AGE_GROUP_KEYWORDS = {
+    "teen": ["소년", "소녀", "앳된", "teenager"],
+    "child": ["아이", "어린이"],
+    "elderly": ["노인", "할아버지"]
+}
+
+def infer_age_group(appearance_data, story_text):
+    search_text = f"{visual_prompt} {story_text}".lower()
+    for age_group, keywords in AGE_GROUP_KEYWORDS.items():
+        if any(kw in search_text for kw in keywords):
+            return age_group
+    return None
+```
+
+2. **role 추론 컨텍스트 기반 강화**
+```python
+def infer_role_from_context(name, relations_data, story_text):
+    # ENEMY 관계 + 공격 키워드 → antagonist
+    # 피해/도망 키워드 → protagonist
+```
+
+**수정된 파일**: `app/agents/extraction/character/aggregator.py`
+
+---
+
+#### 15. 캐릭터 추출 정확도 버그 수정 (`aggregator.py`, `dialogue_mood.py`) - 2024-12-30
+
+**문제**:
+1. **role 반전**: 리안(protagonist)이 "antagonist"로, 티오(supporting)이 "protagonist"로 추출
+2. **age_group 오류**: 모든 캐릭터가 "child"로 추출됨
+3. **catchphrase 귀속 오류**: 베라가 한 말이 리안에게 귀속됨
+4. **appearance 혼동**: 베라의 검은 안대가 리안에게도 적용됨
+
+**원인 분석**:
+1. `infer_role_from_context`가 전체 스토리에서 키워드 검색 → 모든 캐릭터에 동일 role 적용
+2. `infer_age_group`이 전체 스토리에서 "아이" 키워드 먼저 발견 → 모두 "child"
+3. LLM이 대사 대상을 화자로 잘못 귀속
+4. appearance 데이터가 캐릭터 간 혼합됨 (별도 수정 필요)
+
+**해결책**:
+
+1. **캐릭터별 문맥 추출 함수 추가**
+```python
+def get_character_context(name: str, story_text: str, window: int = 100) -> str:
+    # 캐릭터 이름 주변 ±window 문자만 추출
+```
+
+2. **age_group 우선순위 검색**
+```python
+priority_order = ["teen", "elderly", "adult", "child"]  # child가 마지막
+```
+
+3. **role 추론 개선** - 스코어 기반
+```python
+antagonist_score, protagonist_score = 0, 0
+# 키워드 카운트 후 비교
+```
+
+4. **catchphrase 화자 검증**
+```python
+def validate_catchphrase_speaker(phrase, speaker_name, story_text):
+    # 스토리에서 실제 화자인지 확인
+```
+
+**수정된 파일**: `app/agents/extraction/character/aggregator.py`, `app/agents/extraction/character/dialogue_mood.py`
+
+---
+
+#### 16. Role 및 Catchphrase 추론 로직 2차 개선 (`aggregator.py`, `dialogue_mood.py`) - 2024-12-30
+
+**문제**:
+1. **Role 추론 실패**: 베라(antagonist)가 "protagonist"로, 리안(protagonist)이 "other"로 추론됨
+2. **Catchphrase 귀속 실패**: "쥐새끼처럼 빠르네, 리안" → 리안에게 잘못 귀속 (베라가 말함)
+
+**원인 분석**:
+1. **Role**: 관계 설명에서 `name.lower() in desc` 조건이 피해자도 공격자로 인식
+2. **Catchphrase**: 대사 내에서 언급된 이름을 화자로 오인 (리안은 대사 대상)
+
+**해결책**:
+
+1. **Role 추론 개선** - 위치 기반 공격자/피해자 판단
+```python
+# 이름 위치 < 공격 단어 위치 → 공격자
+name_pos = desc.find(name.lower())
+attack_pos = min([desc.find(kw) for kw in ["공격", "죽이", "위협"]])
+if name_pos < attack_pos:
+    antagonist_score += 3  # Attacker
+```
+
+2. **Catchphrase 검증 개선** - 화자 vs 대상 구분
+```python
+# 대사 앞(attribution)에 이름 있으면 화자
+# 대사 안에만 이름 있으면 대상 (거부)
+speaker_in_attribution = speaker_name in context_before
+speaker_only_in_dialogue = speaker_name in phrase_context and not speaker_in_attribution
+if speaker_only_in_dialogue:
+    return False  # Target, not speaker
+```
+
+**수정된 파일**: `app/agents/extraction/character/aggregator.py`, `app/agents/extraction/character/dialogue_mood.py`
+
+---
+
 ## 템플릿 (새 이슈 추가 시 사용)
 
 ```markdown
@@ -1673,6 +2007,84 @@ YYYY-MM-DD
 [원인]
 
 ### 🟢 해결책 (Solution)
+[해결 방법]
+
+### 📁 수정된 파일
+- [파일 목록]
+
+### ✅ 결과
+[결과]
+---
+
+#### 18. Role 추론 미적용 및 Catchphrase 검증 우회 버그 수정 - 2024-12-30
+
+**문제**:
+1. **Role 추론 미적용**: `infer_role_from_context` 함수가 정의되어 있었지만, LLM이 `protagonist`를 반환하면 **추론 자체가 실행되지 않았음**.
+2. **Catchphrase 검증 우회**: 대사가 story_text에서 찾아지지 않으면 `True` (통과)를 반환하여 **잘못된 귀속이 그대로 유지됨**.
+
+**원인 분석**:
+```python
+# 기존 코드 (aggregator.py)
+if extracted_role == "other" or not extracted_role:
+    inferred_role = infer_role_from_context(...)  # protagonist일 때 실행 안됨!
+```
+```python
+# 기존 코드 (dialogue_mood.py)
+if phrase_pos == -1:
+    return True  # 찾지 못하면 무조건 통과!
+```
+
+**해결책**:
+1. **Role 추론**: LLM 결과와 관계없이 **항상** `infer_role_from_context` 실행. 관계 데이터 기반 분석이 더 신뢰도 높음.
+```python
+# 수정된 코드
+inferred_role = infer_role_from_context(name, rel_data, story_text)
+if inferred_role:
+    final_role = inferred_role  # 추론 결과 우선
+```
+
+2. **Catchphrase 검증**: 대사를 찾지 못하면 **거부**(False)로 변경. 3단계 검색 전략 도입.
+```python
+# 수정된 코드
+if phrase_pos == -1:
+    return False  # 검증 불가 시 거부
+```
+
+**수정된 파일**: `aggregator.py`, `dialogue_mood.py`
+
+---
+
+#### 19. Multi-Tier 모델 전략 도입 - 2024-12-30
+
+**문제**: Claude 3 Haiku 모델만 사용하여 복잡한 추론(Role, 관계 분석)에서 정확도 부족.
+
+**해결책**: 에이전트별 중요도에 따라 3개 tier 모델 할당.
+
+| Tier | 모델 | 에이전트 |
+|------|------|----------|
+| basic | Claude 3 Haiku | inventory, stats |
+| standard | Claude 3.5 Sonnet | personality, appearance |
+| advanced | Claude 3.5 Sonnet v2 | identity, relations, dialogue_mood |
+
+**수정된 파일**: `llm.py`, 모든 character extraction 에이전트
+
+---
+
+## 템플릿 (새 이슈 추가 시 사용)
+
+```markdown
+## N. [에이전트명] - [문제 요약]
+
+### 📅 날짜
+[YYYY-MM-DD]
+
+### 🔍 문제
+[문제 설명]
+
+### 💡 원인 분석
+[원인]
+
+### ✅ 해결 방법
 [해결 방법]
 
 ### 📁 수정된 파일

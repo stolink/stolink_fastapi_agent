@@ -198,13 +198,23 @@ If the story is in Korean, ALL item names must be in Korean:
 Do NOT translate Korean item names to English.
 
 ### ITEM TYPES ###
-- WEAPON: Swords, bows, staffs, daggers
+- WEAPON: Swords, bows, staffs, daggers (단검, 검, 지팡이, 활)
 - ARMOR: Helmets, chestplates, gauntlets, boots
-- ACCESSORY: Rings, necklaces, cloaks
-- CONSUMABLE: Potions, food, scrolls
-- QUEST: Key items for story progression
+- ACCESSORY: Rings, necklaces, cloaks, pocket watches (회중시계)
+- CONSUMABLE: Potions, food
+- QUEST: Key story items, magical scrolls (황금빛 두루마리), ritual objects (영원의 성배)
 - MATERIAL: Crafting materials, ingredients
 - MISC: Other items
+
+### CRITICAL: QUEST ITEMS ###
+Important named items mentioned in the story should be QUEST items:
+- 황금빛 두루마리 → QUEST item (베라 소유)
+- 영원의 성배 → QUEST item (if possessed)
+- Named scrolls, artifacts, or MacGuffins → QUEST
+
+### WEAPON EXTRACTION ###
+단검을 잡다/들다/뽑다 → WEAPON equipped_items
+Example: "리안은 이를 악물며 단검을 고쳐 잡았다" → 리안 has 단검 in equipped_items
 
 ### RARITY INFERENCE ###
 - LEGENDARY: "전설의", "신화의", "legendary"
@@ -219,6 +229,11 @@ Do NOT translate Korean item names to English.
 3. Do NOT extract body parts, clothing descriptions without item context
 4. "검은 갑옷을 입고 있었다" → YES, this is armor
 5. "검은 머리카락을 휘날리며" → NO, this is NOT an item
+
+### OWNERSHIP INFERENCE RULES ###
+1. If a character USES an item (e.g., throws bag, drinks potion), they OWN it.
+2. Example: "Tio threw his bag full of explosives" → Tio has "bag" and "explosives" in inventory.
+3. Don't assign items to the target of an attack unless the text says they caught/took it.
 
 ### CRITICAL: NO DUPLICATION RULE ###
 ⚠️ An item can ONLY be in ONE place:
@@ -238,7 +253,8 @@ IMPORTANT:
 # === Node Function ===
 async def inventory_extraction_node(state: dict) -> dict:
     """Inventory Agent - Extracts items and equipment."""
-    structured_llm = get_structured_llm(CharacterInventoryResult)
+    # Use standard tier (Claude 3.5 Haiku) for better ownership inference
+    structured_llm = get_structured_llm(CharacterInventoryResult, tier="standard")
     chain = INVENTORY_EXTRACTION_PROMPT | structured_llm
     
     try:

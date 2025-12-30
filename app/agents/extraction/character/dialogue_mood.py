@@ -268,9 +268,16 @@ Include:
 ### DIALOGUE CONFIGURATION ###
 Extract speaking patterns for AI dialogue generation:
 - tone: How they speak (formal, casual, cold, warm)
-- catchphrases: Repeated phrases or expressions
+- catchphrases: Repeated phrases or expressions SPOKEN BY this character
 - forbidden_topics: What they refuse to discuss
 - secret_keys: Information only they know
+
+### CRITICAL: CATCHPHRASE ATTRIBUTION ###
+⚠️ A catchphrase belongs to the SPEAKER, NOT the target!
+Example: 베라 said \"여전히 쥐새끼처럼 빠르네, 리안.\"
+❌ BAD: 리안.catchphrases = [\"쥐새끼처럼 빠르다\"]  
+✅ GOOD: 베라.catchphrases = [\"쥐새끼처럼 빠르네\"]
+This phrase was SPOKEN BY 베라, so it goes in 베라's catchphrases, not 리안's.
 
 ### RULES ###
 1. Focus on dialogue style, not content
@@ -286,6 +293,84 @@ IMPORTANT: Every character MUST have current_mood.emotion filled (infer from con
 
 
 # === Production Post-Processing ===
+def validate_catchphrase_speaker(phrase: str, speaker_name: str, story_text: str) -> bool:
+    """Validate that the phrase was actually spoken by the claimed speaker.
+    
+    Strategy:
+    1. Find the phrase in the story
+    2. Look BEFORE the phrase for speaker attribution patterns
+    3. Check if the claimed speaker is the one speaking (not just mentioned in the dialogue)
+    
+    Returns: True if speaker attribution is valid
+    """
+    if not phrase or not speaker_name or not story_text:
+        return True  # Can't validate, assume valid
+    
+    import re
+    
+    # Normalize phrase for search
+    phrase_clean = phrase.strip().replace('"', '').replace("'", "")
+    
+    # Try multiple search strategies
+    phrase_pos = -1
+    
+    # Strategy 1: Direct match of first 15 chars
+    phrase_search = phrase_clean[:15] if len(phrase_clean) > 15 else phrase_clean
+    phrase_pos = story_text.find(phrase_search)
+    
+    # Strategy 2: Try key distinctive words (≥3 chars)
+    if phrase_pos == -1:
+        words = re.findall(r'[가-힣]{3,}', phrase_clean)
+        for word in words:
+            pos = story_text.find(word)
+            if pos != -1:
+                phrase_pos = pos
+                phrase_search = word
+                break
+    
+    # Strategy 3: Try even shorter match
+    if phrase_pos == -1:
+        for i in range(min(10, len(phrase_clean)), 3, -1):
+            phrase_pos = story_text.find(phrase_clean[:i])
+            if phrase_pos != -1:
+                phrase_search = phrase_clean[:i]
+                break
+    
+    if phrase_pos == -1:
+        # Cannot find phrase - be strict: reject if we can't validate
+        print(f"[DIALOGUE_MOOD] FAILED: Cannot find '{phrase_clean[:20]}...' in story - rejecting")
+        return False
+    
+    # Get context BEFORE the phrase (150 chars) - this is where speaker attribution would be
+    context_start = max(0, phrase_pos - 150)
+    context_before = story_text[context_start:phrase_pos]
+    
+    # Get context of the phrase itself (to check who is mentioned IN the dialogue)
+    phrase_context = story_text[phrase_pos:phrase_pos + len(phrase_clean) + 20]
+    
+    # === Key logic ===
+    # The SPEAKER's name should appear BEFORE the quote (attribution)
+    # The TARGET's name might appear IN the quote (being addressed)
+    
+    # Check if speaker_name is in context_before (speaker attribution)
+    speaker_in_attribution = speaker_name in context_before
+    
+    # Check if speaker_name appears ONLY inside the dialogue (as target)
+    speaker_only_in_dialogue = speaker_name in phrase_context and speaker_name not in context_before
+    
+    if speaker_only_in_dialogue:
+        # Speaker name only appears in dialogue = they are being ADDRESSED, not speaking
+        print(f"[DIALOGUE_MOOD] Catchphrase validation FAILED: '{phrase_search[:20]}' - '{speaker_name}' is ADDRESSED, not SPEAKER")
+        return False
+    
+    if not speaker_in_attribution:
+        # Speaker name not in attribution context
+        print(f"[DIALOGUE_MOOD] Catchphrase validation FAILED: '{phrase_search[:20]}' - '{speaker_name}' not found before phrase")
+        return False
+    
+    print(f"[DIALOGUE_MOOD] Catchphrase validation PASSED: '{phrase_search[:20]}' spoken by '{speaker_name}'")
+    return True
+
 def post_process_dialogue_mood(
     raw_data: dict,
     story_text: str = "",
@@ -296,6 +381,7 @@ def post_process_dialogue_mood(
     1. Voice Config generation for TTS
     2. Speech Samples extraction for few-shot LLM
     3. Non-verbal cues parsing for game engines
+    4. Catchphrase speaker validation
     """
     import re
     
@@ -304,6 +390,15 @@ def post_process_dialogue_mood(
     
     dialogue = data.get('dialogue', {})
     mood = data.get('current_mood', {})
+    
+    # 0. Validate catchphrase speaker attribution
+    if dialogue.get('catchphrases'):
+        validated_catchphrases = []
+        for phrase in dialogue['catchphrases']:
+            if validate_catchphrase_speaker(phrase, name, story_text):
+                validated_catchphrases.append(phrase)
+        dialogue['catchphrases'] = validated_catchphrases
+        data['dialogue'] = dialogue
     
     # 1. Generate voice config for TTS
     data['voice_config'] = generate_voice_config(
@@ -351,7 +446,8 @@ async def dialogue_mood_extraction_node(state: dict) -> dict:
     - speech_samples: Few-shot prompting examples
     - dialogue_components: Non-verbal cues separated
     """
-    structured_llm = get_structured_llm(CharacterDialogueMoodResult)
+    # Use advanced tier for accurate catchphrase attribution and mood analysis
+    structured_llm = get_structured_llm(CharacterDialogueMoodResult, tier="advanced")
     chain = DIALOGUE_MOOD_EXTRACTION_PROMPT | structured_llm
     
     story_text = state.get("content", "")

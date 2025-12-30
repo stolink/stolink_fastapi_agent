@@ -31,32 +31,39 @@ CONSISTENCY_CHECK_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """You are a "Story Consistency Expert" / "Conflict Detector".
 Your job is to find ALL inconsistencies and contradictions across story elements.
 
-=== CONFLICT TYPES ===
+=== EXCLUSION RULES (DO NOT FLAGG THESE) ===
+- Narrative Tension: Characters having different beliefs/memories (e.g., A thinks B is a traitor, B thinks they are loyal) is VALID story conflict, NOT an error.
+- Character Growth: Personality changing over time (e.g., coward -> brave) is VALID, NOT an error.
+- Lies/Deception: A character lying about their status is VALID.
+
+=== CONFLICT TYPES (ONLY FLAGG DATA ERRORS) ===
 
 1. **CHARACTER_TRAIT_CONFLICT** (HIGH)
-   - Opposite traits for same character (coward + brave)
+   - Impossible contradiction at the SAME moment (e.g., "dead" and "alive" simultaneously).
 
 2. **TIMELINE_CONFLICT** (MEDIUM-HIGH)
-   - Events happen in impossible order
+   - Events physically impossible (e.g., Character A dies in Event 1 but appears in Event 3).
+   - NOT for conflicting memories between characters.
 
 3. **RELATIONSHIP_CONFLICT** (MEDIUM)
-   - Conflicting relationship states
+   - Graph structure errors (e.g., A is "father" of B, but B is "spouse" of A).
+   - NOT for dynamic relationship changes (Friends -> Enemies is valid).
 
 4. **SETTING_CONFLICT** (MEDIUM)
-   - Location descriptions contradict each other
+   - Location descriptions physically contradict (e.g., "Underground" and "Sunny sky").
 
 5. **INVENTORY_CONFLICT** (MEDIUM-HIGH)
-   - Character uses item they don't have
-   - Character appearance contradicts equipped items
+   - Character uses item they NEVER acquired.
+   - Appearance says "holding sword", Inventory says "empty".
 
 6. **STATS_CONFLICT** (MEDIUM)
-   - Action contradicts character stats (e.g., weak character lifting heavy object)
+   - Level 1 character defeating Level 99 boss without explanation.
 
 === SUGGESTED_ACTION VALUES ===
-- AUTO_FIX: Can be fixed automatically by the system
-- FLAG_FOR_HUMAN: Needs human review before resolution
-- REEXTRACT: Needs re-extraction with corrected data
-- IGNORE: Minor issue, can be ignored
+- AUTO_FIX: Can be fixed automatically
+- FLAG_FOR_HUMAN: True data error needing review
+- REEXTRACT: Data is garbage/corrupted
+- IGNORE: Narrative conflict or minor issue (Use this for legitimate story tension)
 
 === SCORING ===
 - Start at 100

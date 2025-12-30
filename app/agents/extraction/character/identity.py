@@ -114,6 +114,9 @@ The English in parentheses is just a transliteration hint - DO NOT create separa
 For each character, extract:
 - name: Character's name as it appears in text (REQUIRED)
 - age: Exact age or estimate if mentioned
+  * "앳된 얼굴의 소년" → age inference: young/teen
+  * "소년" → infer age as teen (10-19)
+  * "노인" → infer age as elderly (60+)
 - gender: male/female/unknown
 - race: Race/species if mentioned
 - occupation: Job, class, or profession (e.g., "여전사", "기사", "마법사", "warrior", "knight")
@@ -149,7 +152,8 @@ IMPORTANT: Fill occupation and backstory using context clues - do not leave them
 # === Node Function ===
 async def identity_extraction_node(state: dict) -> dict:
     """Identity Agent - Extracts basic character information."""
-    structured_llm = get_structured_llm(CharacterIdentityResult)
+    # Use advanced tier for complex role/identity inference
+    structured_llm = get_structured_llm(CharacterIdentityResult, tier="standard")
     chain = IDENTITY_EXTRACTION_PROMPT | structured_llm
     
     try:
@@ -168,7 +172,11 @@ async def identity_extraction_node(state: dict) -> dict:
             "messages": [{"role": "identity_agent", "content": f"Extracted {len(identity_data)} character identities"}]
         }
     except Exception as e:
+        print(f"[IDENTITY] Exception: {e}")
         return {
             "char_identity": {},
+            # CRITICAL: Still mark as completed to prevent infinite loop
+            "completed_agents": (state.get("completed_agents") or []) + ["identity"],
             "errors": (state.get("errors") or []) + [f"Identity extraction failed: {str(e)}"]
         }
+

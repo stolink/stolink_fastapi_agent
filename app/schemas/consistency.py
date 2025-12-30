@@ -27,6 +27,8 @@ class ConflictType(str, Enum):
     PHYSICAL_CONFLICT = "PHYSICAL_CONFLICT"
     SETTING_CONFLICT = "SETTING_CONFLICT"
     CHARACTER_TRAIT_CONFLICT = "CHARACTER_TRAIT_CONFLICT"
+    INVENTORY_CONFLICT = "INVENTORY_CONFLICT"
+    STATS_CONFLICT = "STATS_CONFLICT"
 
 
 class SuggestedAction(str, Enum):
@@ -42,8 +44,8 @@ class Conflict(BaseModel):
     type: ConflictType = Field(..., description="Conflict type")
     severity: Severity = Field(default=Severity.MEDIUM)
     source: str = Field(default="extracted", description="Source of conflict")
-    existing: Optional[str] = Field(None, description="Existing value")
-    new: Optional[str] = Field(None, description="New conflicting value")
+    existing: Optional[str | list[str]] = Field(None, description="Existing value")
+    new: Optional[str | list[str]] = Field(None, description="New conflicting value")
     character: Optional[str] = Field(None, description="Affected character name")
     description: str = Field(default="", description="Conflict description")
     suggested_action: SuggestedAction = Field(default=SuggestedAction.FLAG_FOR_HUMAN)

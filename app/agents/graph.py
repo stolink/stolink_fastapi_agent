@@ -99,7 +99,11 @@ async def extraction_node(state: dict) -> dict:
             "errors": [],
             "messages": [],
         }
-        result = await character_team_graph.ainvoke(team_state)
+        # CRITICAL: Set recursion_limit to prevent infinite loops
+        result = await character_team_graph.ainvoke(
+            team_state,
+            config={"recursion_limit": 50}  # Default is 25, increase for safety
+        )
         return {
             "extracted_characters": result.get("extracted_characters", []),
             "messages": result.get("messages", []),

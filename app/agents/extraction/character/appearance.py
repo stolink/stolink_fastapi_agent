@@ -18,39 +18,39 @@ from app.agents.llm import get_structured_llm
 # === Color Mapping ===
 COLOR_MAP = {
     # Korean → English + Hex
-    "검은": {"en": "black", "hex": "#000000", "category": "BLACK"},
-    "검정": {"en": "black", "hex": "#000000", "category": "BLACK"},
-    "흰": {"en": "white", "hex": "#FFFFFF", "category": "WHITE"},
-    "하얀": {"en": "white", "hex": "#FFFFFF", "category": "WHITE"},
-    "금색": {"en": "gold", "hex": "#FFD700", "category": "BLONDE"},
-    "금발": {"en": "blonde", "hex": "#FAD02E", "category": "BLONDE"},
-    "갈색": {"en": "brown", "hex": "#8B4513", "category": "BROWN"},
-    "밤색": {"en": "brown", "hex": "#5C4033", "category": "BROWN"},
-    "빨간": {"en": "red", "hex": "#DC143C", "category": "RED"},
-    "붉은": {"en": "red", "hex": "#B22222", "category": "RED"},
-    "파란": {"en": "blue", "hex": "#1E90FF", "category": "BLUE"},
-    "푸른": {"en": "blue", "hex": "#4169E1", "category": "BLUE"},
-    "초록": {"en": "green", "hex": "#228B22", "category": "GREEN"},
-    "녹색": {"en": "green", "hex": "#2E8B57", "category": "GREEN"},
-    "회색": {"en": "gray", "hex": "#808080", "category": "GRAY"},
-    "은색": {"en": "silver", "hex": "#C0C0C0", "category": "SILVER"},
-    "은빛": {"en": "silver", "hex": "#C0C0C0", "category": "SILVER"},
-    "보라": {"en": "purple", "hex": "#800080", "category": "PURPLE"},
-    "자주": {"en": "purple", "hex": "#8B008B", "category": "PURPLE"},
-    "주황": {"en": "orange", "hex": "#FF8C00", "category": "ORANGE"},
-    "노란": {"en": "yellow", "hex": "#FFD700", "category": "YELLOW"},
-    "분홍": {"en": "pink", "hex": "#FF69B4", "category": "PINK"},
+    "검은": {"en": "black", "hex": "#000000", "category": "black"},
+    "검정": {"en": "black", "hex": "#000000", "category": "black"},
+    "흰": {"en": "white", "hex": "#FFFFFF", "category": "white"},
+    "하얀": {"en": "white", "hex": "#FFFFFF", "category": "white"},
+    "금색": {"en": "gold", "hex": "#FFD700", "category": "blonde"},
+    "금발": {"en": "blonde", "hex": "#FAD02E", "category": "blonde"},
+    "갈색": {"en": "brown", "hex": "#8B4513", "category": "brown"},
+    "밤색": {"en": "brown", "hex": "#5C4033", "category": "brown"},
+    "빨간": {"en": "red", "hex": "#DC143C", "category": "red"},
+    "붉은": {"en": "red", "hex": "#B22222", "category": "red"},
+    "파란": {"en": "blue", "hex": "#1E90FF", "category": "blue"},
+    "푸른": {"en": "blue", "hex": "#4169E1", "category": "blue"},
+    "초록": {"en": "green", "hex": "#228B22", "category": "green"},
+    "녹색": {"en": "green", "hex": "#2E8B57", "category": "green"},
+    "회색": {"en": "gray", "hex": "#808080", "category": "gray"},
+    "은색": {"en": "silver", "hex": "#C0C0C0", "category": "silver"},
+    "은빛": {"en": "silver", "hex": "#C0C0C0", "category": "silver"},
+    "보라": {"en": "purple", "hex": "#800080", "category": "purple"},
+    "자주": {"en": "purple", "hex": "#8B008B", "category": "purple"},
+    "주황": {"en": "orange", "hex": "#FF8C00", "category": "orange"},
+    "노란": {"en": "yellow", "hex": "#FFD700", "category": "yellow"},
+    "분홍": {"en": "pink", "hex": "#FF69B4", "category": "pink"},
     # English colors
-    "black": {"en": "black", "hex": "#000000", "category": "BLACK"},
-    "white": {"en": "white", "hex": "#FFFFFF", "category": "WHITE"},
-    "brown": {"en": "brown", "hex": "#8B4513", "category": "BROWN"},
-    "blonde": {"en": "blonde", "hex": "#FAD02E", "category": "BLONDE"},
-    "red": {"en": "red", "hex": "#DC143C", "category": "RED"},
-    "blue": {"en": "blue", "hex": "#1E90FF", "category": "BLUE"},
-    "green": {"en": "green", "hex": "#228B22", "category": "GREEN"},
-    "gray": {"en": "gray", "hex": "#808080", "category": "GRAY"},
-    "grey": {"en": "gray", "hex": "#808080", "category": "GRAY"},
-    "silver": {"en": "silver", "hex": "#C0C0C0", "category": "SILVER"},
+    "black": {"en": "black", "hex": "#000000", "category": "black"},
+    "white": {"en": "white", "hex": "#FFFFFF", "category": "white"},
+    "brown": {"en": "brown", "hex": "#8B4513", "category": "brown"},
+    "blonde": {"en": "blonde", "hex": "#FAD02E", "category": "blonde"},
+    "red": {"en": "red", "hex": "#DC143C", "category": "red"},
+    "blue": {"en": "blue", "hex": "#1E90FF", "category": "blue"},
+    "green": {"en": "green", "hex": "#228B22", "category": "green"},
+    "gray": {"en": "gray", "hex": "#808080", "category": "gray"},
+    "grey": {"en": "gray", "hex": "#808080", "category": "gray"},
+    "silver": {"en": "silver", "hex": "#C0C0C0", "category": "silver"},
 }
 
 # Role-based default appearances
@@ -81,7 +81,7 @@ ROLE_DEFAULTS = {
 def normalize_color(color_text: Optional[str]) -> dict:
     """Convert natural language color to structured data."""
     if not color_text:
-        return {"description": "unspecified", "hex_code": None, "category": "UNSPECIFIED"}
+        return {"description": "unspecified", "hex_code": None, "category": "unspecified"}
     
     color_lower = color_text.lower()
     
@@ -95,7 +95,7 @@ def normalize_color(color_text: Optional[str]) -> dict:
             }
     
     # No match - keep original description
-    return {"description": color_text, "hex_code": None, "category": "OTHER"}
+    return {"description": color_text, "hex_code": None, "category": "other"}
 
 
 def apply_fallback_defaults(
@@ -297,7 +297,8 @@ async def appearance_extraction_node(state: dict) -> dict:
     - Color Normalization: natural language → structured color data
     - Prompt Aggregation: generates full_visual_prompt for Image AI
     """
-    structured_llm = get_structured_llm(CharacterAppearanceResult)
+    # Use standard tier for visual appearance extraction
+    structured_llm = get_structured_llm(CharacterAppearanceResult, tier="standard")
     chain = APPEARANCE_EXTRACTION_PROMPT | structured_llm
     
     # Get art style from state or use default

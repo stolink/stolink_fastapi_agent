@@ -189,11 +189,26 @@ For characters with history:
 - Former allies → interaction_style = Tense_Standoff or Awkward_Silence
 - "배신자와 할 말은 없어" → public_stance = ENEMY, but private_feeling may be more complex
 
+### CRITICAL: NO HALLUCINATION RULE ###
+⚠️ ONLY extract information that is EXPLICITLY stated in the text!
+
+**history field**:
+- ONLY fill if the text EXPLICITLY mentions past relationship
+- "3년 전 약속" → history can reference this specific event
+- If NO past is mentioned → set history to null, NOT "과거 동료"
+❌ BAD: history: "과거 동료" (when text never says they were colleagues)
+✅ GOOD: history: null (when relationship history is unclear)
+
+**relationship_origin**:
+- ONLY include if the text EXPLICITLY describes how the relationship started
+- Do NOT invent backstory events that are not in the text
+
 ### RULES ###
 1. Create SEPARATE entries for each direction
 2. INFER public_stance and private_feeling from context
-3. Include relationship_origin for significant relationships
-4. facade_level > 0 when public and private don't match"""),
+3. Include relationship_origin for significant relationships ONLY if explicitly described
+4. facade_level > 0 when public and private don't match
+5. If relationship history is not explicitly stated, use null instead of guessing"""),
     ("human", """Story text:
 {story_text}
 
@@ -212,7 +227,8 @@ This data powers realistic dialogue generation where characters can be one thing
 # === Node Function ===
 async def relations_extraction_node(state: dict) -> dict:
     """Relations Agent - Extracts character relationships."""
-    structured_llm = get_structured_llm(CharacterRelationsResult)
+    # Use advanced tier for complex relationship analysis
+    structured_llm = get_structured_llm(CharacterRelationsResult, tier="standard")
     chain = RELATIONS_EXTRACTION_PROMPT | structured_llm
     
     try:
