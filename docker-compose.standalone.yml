@@ -1,0 +1,161 @@
+# =============================================================================
+# Docker Compose - Standalone (Full Stack)
+# =============================================================================
+# PostgreSQL, Neo4j, RabbitMQ, FastAPI 전체 스택 실행
+#
+# 실행:
+#   docker-compose -f docker-compose.standalone.yml up --build
+#   docker-compose -f docker-compose.standalone.yml up --build -d  (백그라운드)
+#
+# 중단:
+#   docker-compose -f docker-compose.standalone.yml down
+#   docker-compose -f docker-compose.standalone.yml down -v  (볼륨 포함 삭제)
+#
+# 로그:
+#   docker-compose -f docker-compose.standalone.yml logs -f
+#   docker-compose -f docker-compose.standalone.yml logs -f ai-backend
+#   docker-compose -f docker-compose.standalone.yml logs -f postgres
+#   docker-compose -f docker-compose.standalone.yml logs -f neo4j
+#   docker-compose -f docker-compose.standalone.yml logs -f rabbitmq
+#
+# 재시작:
+#   docker-compose -f docker-compose.standalone.yml restart
+#   docker-compose -f docker-compose.standalone.yml restart ai-backend
+#
+# 상태 확인:
+#   docker-compose -f docker-compose.standalone.yml ps
+#
+# 개별 서비스 실행:
+#   docker-compose -f docker-compose.standalone.yml up -d postgres neo4j rabbitmq
+# =============================================================================
+
+version: "3.8"
+
+services:
+  # ============================================
+  # PostgreSQL - Primary Data Store
+  # ============================================
+  postgres:
+    image: postgres:16.11-alpine
+    container_name: stolink-postgres
+    environment:
+      POSTGRES_DB: stolink
+      POSTGRES_USER: stolink
+      POSTGRES_PASSWORD: stolink123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stolink -d stolink"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - stolink-network
+
+  # ============================================
+  # Neo4j - Graph Database for Character Relations
+  # ============================================
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: stolink-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/stolink123
+      NEO4J_PLUGINS: '["apoc"]'
+    ports:
+      - "7474:7474" # HTTP
+      - "7687:7687" # Bolt
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - stolink-network
+
+  # ============================================
+  # RabbitMQ - Message Queue
+  # ============================================
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: stolink-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672" # AMQP
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - stolink-network
+
+  # ============================================
+  # AI Backend - FastAPI + LangGraph
+  # ============================================
+  ai-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: stolink-fastapi-agent
+    environment:
+      # AWS Bedrock
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: us-east-1
+      # RabbitMQ
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: guest
+      RABBITMQ_PASSWORD: guest
+      RABBITMQ_ANALYSIS_QUEUE: stolink.analysis.queue
+      # Spring Backend (external)
+      SPRING_CALLBACK_URL: ${SPRING_CALLBACK_URL:-http://host.docker.internal:8080}
+      # PostgreSQL
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: stolink
+      POSTGRES_USER: stolink
+      POSTGRES_PASSWORD: stolink123
+      # Neo4j
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: stolink123
+      # FastAPI
+      DEBUG: "true"
+    ports:
+      - "8000:8000"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - stolink-network
+    restart: unless-stopped
+
+networks:
+  stolink-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  neo4j_data:
+  neo4j_logs:
+  rabbitmq_data:

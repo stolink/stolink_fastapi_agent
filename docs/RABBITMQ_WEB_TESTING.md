@@ -9,7 +9,8 @@ Use Docker Compose to start the entire stack (PostgreSQL, Neo4j, RabbitMQ, AI Ba
 ```bash
 docker-compose up -d --build
 ```
-*Wait for all services to become healthy.*
+
+_Wait for all services to become healthy._
 
 ## 2. Prepare Webhook
 
@@ -21,8 +22,8 @@ docker-compose up -d --build
 
 1.  Open your browser and navigate to: [http://localhost:15672](http://localhost:15672)
 2.  Login with default credentials:
-    -   Username: `guest`
-    -   Password: `guest`
+    - Username: `guest`
+    - Password: `guest`
 
 ## 4. Publish Message
 
@@ -65,12 +66,12 @@ docker-compose up -d --build
 1.  **RabbitMQ UI**: The message count in the queue should briefly go up and then down (consumed by backend).
 2.  **Docker Logs**: View backend logs to see processing:
     ```bash
-    docker logs -f stolink-ai-backend
+    docker logs -f stolink-fastapi-agent
     ```
     You should see "Received analysis task" and eventually "Analysis task completed".
 3.  **Webhook Site**: Check your Webhook window. You should receive a `POST` request with the analysis result JSON.
 
 ## Troubleshooting
 
--   **Message stuck in queue**: Check if `ai-backend` container is running (`docker ps`).
--   **No callback received**: Check Docker logs for errors. Ensure the `callback_url` is accessible from the Docker container (public URLs like webhook.site work fine).
+- **Message stuck in queue**: Check if `ai-backend` container is running (`docker ps`).
+- **No callback received**: Check Docker logs for errors. Ensure the `callback_url` is accessible from the Docker container (public URLs like webhook.site work fine).

@@ -13,7 +13,7 @@ async def health_check():
     """
     return {
         "status": "healthy",
-        "service": "stolink-ai-backend",
+        "service": "stolink-fastapi-agent",
         "version": "0.1.0"
     }
 
