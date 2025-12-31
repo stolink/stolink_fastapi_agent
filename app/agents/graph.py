@@ -17,11 +17,10 @@ from app.agents.extraction.character.supervisor import character_team_graph
 from app.agents.extraction.character.state import CharacterTeamState
 from app.agents.extraction.event import event_extraction_node
 from app.agents.extraction.setting import setting_extraction_node
-from app.agents.extraction.dialogue import dialogue_analysis_node
-from app.agents.extraction.emotion import emotion_tracking_node
+# Removed: dialogue_analysis_node, emotion_tracking_node
 from app.agents.analysis.relationship import relationship_analysis_node
 from app.agents.analysis.consistency import consistency_check_node
-from app.agents.analysis.plot import plot_integration_node
+from app.agents.analysis.plot import plot_node
 from app.agents.validation.validator import validator_node
 
 
@@ -47,13 +46,12 @@ class AnalysisState(TypedDict, total=False):
     extracted_characters: list
     extracted_events: list
     extracted_settings: list
-    analyzed_dialogues: dict
-    tracked_emotions: dict
+
     
     # Analysis results
     relationship_graph: dict
     consistency_report: dict
-    plot_integration: dict
+    plot: dict
     
     # Validation
     validation_result: dict
@@ -133,8 +131,7 @@ async def extraction_node(state: dict) -> dict:
     print("[EXTRACTION] Phase 2: Narrative Flow (Event) - 순차 실행 (Character/Setting 참조)")
     phase2_tasks = [
         asyncio.create_task(event_extraction_node(phase1_state)),  # Phase 1 결과 참조!
-        asyncio.create_task(dialogue_analysis_node(phase1_state)),
-        asyncio.create_task(emotion_tracking_node(phase1_state)),
+        # Removed: dialogue_analysis_node, emotion_tracking_node
     ]
     phase2_results = await asyncio.gather(*phase2_tasks, return_exceptions=True)
     
@@ -187,7 +184,7 @@ async def analysis_node(state: dict) -> dict:
     tasks = [
         asyncio.create_task(relationship_analysis_node(state)),
         asyncio.create_task(consistency_check_node(state)),
-        asyncio.create_task(plot_integration_node(state)),
+        asyncio.create_task(plot_node(state)),
     ]
     
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -326,11 +323,9 @@ async def run_analysis_pipeline(
         "extracted_characters": [],
         "extracted_events": [],
         "extracted_settings": [],
-        "analyzed_dialogues": {},
-        "tracked_emotions": {},
         "relationship_graph": {},
         "consistency_report": {},
-        "plot_integration": {},
+        "plot": {},
         "validation_result": {},
         "extraction_done": False,
         "analysis_done": False,

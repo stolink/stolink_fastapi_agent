@@ -15,7 +15,7 @@ from .appearance import appearance_extraction_node
 from .personality import personality_extraction_node
 from .relations import relations_extraction_node
 from .dialogue_mood import dialogue_mood_extraction_node
-from .stats import stats_extraction_node
+# Removed: stats_extraction_node
 from .inventory import inventory_extraction_node
 from .aggregator import character_aggregator_node
 
@@ -26,7 +26,7 @@ PARALLEL_AGENTS = {
     "personality": personality_extraction_node,
     "relations": relations_extraction_node,
     "dialogue_mood": dialogue_mood_extraction_node,
-    "stats": stats_extraction_node,
+    # Removed: stats
     "inventory": inventory_extraction_node,
 }
 

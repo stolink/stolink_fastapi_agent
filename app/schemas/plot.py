@@ -63,22 +63,10 @@ class MultimediaSummary(BaseModel):
     has_visual_prompts: bool = Field(default=False)
 
 
-class PlotIntegrationResult(BaseModel):
-    """Result of plot integrator agent - Spring Boot compatible.
+class PlotResult(BaseModel):
+    """Result of plot integrator agent - Simplified.
     
-    Maps to Spring Boot's PlotIntegration entity.
+    Maps to Spring Boot's Plot entity.
     """
-    # Summary
-    plot_summary: PlotSummary = Field(default_factory=PlotSummary)
-    overall_tension: float = Field(default=5.0, ge=0, le=10, description="Overall tension level")
-    
-    # Narrative structure
-    narrative_beats: list[NarrativeBeat] = Field(default_factory=list)
-    tension_curve: list[float] = Field(default_factory=list, description="Tension values per scene")
-    three_act_structure: list[ThreeActSection] = Field(default_factory=list)
-    
-    # Foreshadowing
-    foreshadowing: list[Foreshadowing] = Field(default_factory=list)
-    
-    # Metadata
-    multimedia_summary: MultimediaSummary = Field(default_factory=MultimediaSummary)
+    summary: PlotSummary = Field(default_factory=PlotSummary)  # renamed from plot_summary
+

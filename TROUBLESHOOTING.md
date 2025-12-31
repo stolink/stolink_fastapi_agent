@@ -1,6 +1,6 @@
 # StoLink AI Backend - Troubleshooting Guide
 
-> **Last Updated**: 2025-12-30
+> **Last Updated**: 2025-12-31
 
 이 문서는 개발 과정에서 발생한 주요 문제와 해결책을 기록합니다.
 
@@ -25,6 +25,7 @@
 15. [Character Agent - Hierarchical Multi-Agent System 리팩토링](#15-character-agent---hierarchical-multi-agent-system-리팩토링)
 16. [Appearance Agent - Production Level 업그레이드](#16-appearance-agent---production-level-업그레이드)
 17. [Story Extraction - 한글/영문 캐릭터 중복 및 추출 품질 개선](#17-story-extraction---한글영문-캐릭터-중복-및-추출-품질-개선)
+18. [Schema v2.0 리팩토링 및 Neo4j RAG 구현](#18-schema-v20-리팩토링-및-neo4j-rag-구현)
 
 ---
 
@@ -2206,6 +2207,124 @@ effective_max_tokens = config.get("default_max_tokens", 4096)
 **예상 효과**: 에이전트당 1-2초 절감 (총 10-15초)
 
 **수정된 파일**: `app/agents/llm.py`
+
+---
+
+## 18. Schema v2.0 리팩토링 및 Neo4j RAG 구현
+
+### 📅 날짜
+2025-12-31
+
+### 🔍 문제
+1. 불필요한 필드들로 인해 출력 JSON이 비대하고 처리 속도가 느림
+2. Consistency 검사가 현재 챕터 내에서만 수행되어 이전 챕터와의 모순 감지 불가
+3. Dialogue/Emotion Agent가 Consistency 검사에 실질적 기여가 없음
+
+### 💡 원인 분석
+- `stats`, `combat`, `state`, `economy` 등 게임 전용 필드가 소설 분석에 불필요
+- `dialogues`, `emotions` 필드가 개연성 검사에서 참조되지만 명시적 검사 규칙 없음
+- 이전 캐릭터/이벤트 데이터를 조회할 RAG 시스템 부재
+
+### ✅ 해결 방법
+
+#### 1. fix.md 기반 스키마 간소화
+```
+제거된 필드:
+- Global: dialogues, emotions
+- Characters: name(root), stats, combat, state, visual, economy, final_stats
+- Events: is_foreshadowing, foreshadowing_tag
+- Plot: foreshadowing, tension_curve, three_act_structure, narrative_beats
+
+구조 변경:
+- social → profile.faction.social 마이그레이션
+- plot_integration → plot 이름 변경
+```
+
+#### 2. 에이전트 삭제
+- `dialogue.py`, `emotion.py` - Dialogue/Emotion Agent 삭제
+- `stats.py` - Stats Agent 삭제
+- 관련 스키마 파일 삭제 (`dialogues.py`, `emotions.py`)
+
+#### 3. RelationType enum 간소화
+```python
+class RelationType(str, Enum):
+    ROMANCE = "Romance"
+    NORMAL = "Normal"
+    FRIENDLY = "Friendly"
+    HOSTILE = "Hostile"
+    UNKNOWN = "Unknown"
+```
+
+#### 4. Neo4j RAG 구현
+```python
+# db_query_service.py에 추가
+async def get_embedding(text: str) -> list[float]
+async def search_similar_characters(project_id, embedding, top_k)
+async def search_similar_events(project_id, embedding, top_k)
+async def retrieve_relevant_history(project_id, characters, events)
+```
+
+#### 5. CROSS_CHAPTER_CONFLICT 타입 추가
+```
+7. **CROSS_CHAPTER_CONFLICT** (HIGH)
+   - Character marked "deceased" in previous chapter appears alive
+   - Relationship type changes drastically without justification
+   - Event contradicts previously established facts
+```
+
+#### 6. Character Embedding 생성
+```python
+# aggregator.py
+full_char = {
+    ...
+    "embedding": generate_character_embedding(name, traits, role),  # 1536-dim
+}
+```
+
+#### 7. Event Embedding 생성 (추가)
+```python
+# event.py - 각 이벤트마다 생성
+event["embedding"] = generate_event_embedding(
+    narrative_summary,  # "아린이 마족과 전투를 시작함"
+    participants        # ["아린", "마족 전사"]
+)
+```
+
+### 📁 수정된 파일
+| 파일 | 변경 내용 |
+|------|----------|
+| `app/schemas/relationships.py` | RelationType 5개 값으로 변경 |
+| `app/schemas/plot.py` | PlotIntegrationResult → PlotResult 간소화 |
+| `app/schemas/events.py` | foreshadowing 필드 제거 |
+| `app/schemas/callback.py` | dialogues/emotions 제거, plot_integration → plot |
+| `app/agents/extraction/character/aggregator.py` | SAFE_DEFAULTS 간소화, 캐릭터 embedding 생성 |
+| `app/agents/extraction/character/supervisor.py` | stats 에이전트 제거 |
+| `app/agents/extraction/event.py` | **이벤트 embedding 생성 추가** |
+| `app/agents/graph.py` | Dialogue/Emotion Agent 호출 제거 |
+| `app/agents/analysis/consistency.py` | CROSS_CHAPTER_CONFLICT + RAG 통합 |
+| `app/agents/analysis/plot.py` | 간소화된 PlotResult 사용 |
+| `app/services/db_query_service.py` | 벡터 검색 함수 추가 (RAG) |
+
+### ✅ 결과
+- 출력 JSON 크기 40-50% 감소
+- Character Team: 7개 → 6개 서브에이전트
+- **캐릭터 + 이벤트 모두 embedding 생성** → 유사 상황 검색 가능
+- Consistency 검사에서 이전 챕터 캐릭터/이벤트 RAG 검색 가능
+- Spring Boot에서 embedding 필드 그대로 Neo4j에 저장하면 벡터 검색 활성화
+
+### 📝 Spring Boot 작업 필요
+```cypher
+-- Neo4j 벡터 인덱스 생성 (5.11+)
+-- 캐릭터용
+CREATE VECTOR INDEX character_embedding IF NOT EXISTS
+FOR (c:Character) ON (c.embedding)
+OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'cosine'}}
+
+-- 이벤트용 (NEW!)
+CREATE VECTOR INDEX event_embedding IF NOT EXISTS
+FOR (e:Event) ON (e.embedding)
+OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'cosine'}}
+```
 
 ---
 

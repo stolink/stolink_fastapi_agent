@@ -6,14 +6,11 @@ from pydantic import BaseModel, Field
 
 class RelationType(str, Enum):
     """Relationship type classification."""
-    FRIENDLY = "FRIENDLY"
-    RIVAL = "RIVAL"
-    FAMILY = "FAMILY"
-    ROMANTIC = "ROMANTIC"
-    MENTOR = "MENTOR"
-    SUBORDINATE = "SUBORDINATE"
-    BETRAYED = "BETRAYED"
-    UNKNOWN = "UNKNOWN"
+    ROMANCE = "Romance"
+    NORMAL = "Normal"
+    FRIENDLY = "Friendly"
+    HOSTILE = "Hostile"
+    UNKNOWN = "Unknown"
 
 
 class RelationshipNode(BaseModel):

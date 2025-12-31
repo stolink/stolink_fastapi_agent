@@ -8,26 +8,51 @@ Uses with_structured_output() for:
 - Pydantic schema validation
 - No manual parsing required
 """
+import boto3
+import json
 from langchain_core.prompts import ChatPromptTemplate
 
 from app.agents.llm import get_structured_llm
 from app.schemas.events import EventExtractionResult
 
 
+# === Embedding Generation ===
+_bedrock_client = None
+
+def get_bedrock_client():
+    """Get or create Bedrock client singleton."""
+    global _bedrock_client
+    if _bedrock_client is None:
+        _bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
+    return _bedrock_client
+
+
+def generate_event_embedding(narrative_summary: str, participants: list) -> list[float]:
+    """Generate embedding for event using AWS Bedrock Titan.
+    
+    Creates embedding from narrative_summary + participants for vector search.
+    Returns empty list if generation fails (non-blocking).
+    """
+    try:
+        # Build text to embed
+        participants_str = ", ".join(participants[:5]) if participants else ""
+        text_to_embed = f"{narrative_summary} (Participants: {participants_str})"
+        
+        client = get_bedrock_client()
+        response = client.invoke_model(
+            modelId='amazon.titan-embed-text-v1',
+            body=json.dumps({"inputText": text_to_embed})
+        )
+        result = json.loads(response['body'].read())
+        return result.get('embedding', [])
+    except Exception as e:
+        print(f"[EVENT] Embedding generation failed: {e}")
+        return []  # Non-blocking - return empty list
+
+
 EVENT_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """You are a "Scene Director" / "Storyboard Artist".
 Your job is to break down the story into SCENES and describe the COMPOSITION for each.
-
-=== CRITICAL: BAD vs GOOD EXAMPLES ===
-
-[Example 1: visual_scene should NOT include background]
-Input: "서진이 어두운 숲에서 검을 쥐고 있었다."
-
-❌ BAD (FAIL - Vague):
-  "visual_scene": "A man in a forest."
-  
-✅ GOOD (PASS - Action focus):
-  "visual_scene": "A tall man with dark hair gripping a sword, tense posture, alert expression, medium shot. Background is dark."
 
 [Example 2: Use participant names as EXACT references]
 ❌ BAD:
@@ -44,22 +69,17 @@ Input: "서진이 어두운 숲에서 검을 쥐고 있었다."
   "location_ref": "Dark Forest"  // Short name, matches Setting Agent
 
 === YOUR TASK ===
-Extract events with THREE purposes:
+Extract events with TWO purposes:
 
 1. **Neo4j Graph Edges**:
    - participants: Exact character names → Creates (Event)-[:INVOLVES]->(Character) edges
    - location_ref: Setting name → Creates (Event)-[:HAPPENS_AT]->(Location) edge
    - prev_event_id: Previous event ID → Creates timeline
 
-2. **Image Generation Prompt**:
-   - visual_scene: Describe ONLY the composition and action
-     * INCLUDE: poses, positions, expressions, gestures, camera angle
-     * EXCLUDE: background, environment, weather (that comes from Setting Agent)
-
-3. **Narrative Context**:
+2. **Narrative Context**:
    - narrative_summary: One-sentence summary
    - description: Detailed description (REQUIRED)
-   - importance: 1-10 (use for filtering which scenes to illustrate)
+   - importance: 1-10 (use for filtering key events)
 
 === FIELD REQUIREMENTS ===
 For each event, you MUST provide:
@@ -70,13 +90,7 @@ For each event, you MUST provide:
 - participants: List of exact character names
 - location_ref: Short setting name
 - prev_event_id: Previous event ID or null
-- visual_scene: Character action/pose description (Focus on action)
-- camera_angle: medium shot, close-up, wide shot, low angle, bird's eye, etc.
 - importance: 1-10
-- is_foreshadowing: true/false
-
-=== NOTE ON BACKGROUNDS ===
-While the Setting Agent handles the main environment, you SHOULD describe the immediate surroundings relevant to the action (e.g., "leaning against a rough stone wall", "splashing through a puddle").
 
 Your goal is to capture the DRAMA and ACTION of the scene."""),
     ("human", """Text to analyze:
@@ -113,14 +127,13 @@ PREVIOUS CONFLICTS:
 === CORRECTION RULES ===
 1. Keep all valid events from previous extraction
 2. Fix specific issues mentioned in conflicts
-3. REMOVE any background descriptions from visual_scene
-4. Ensure participants match exact character names
-5. Ensure location_ref matches exact setting names
-6. Ensure ALL events have a description field
-7. Maintain timeline integrity (prev_event_id chain)
+3. Ensure participants match exact character names
+4. Ensure location_ref matches exact setting names
+5. Ensure ALL events have a description field
+6. Maintain timeline integrity (prev_event_id chain)
 
 === GUIDELINE ===
-Focus on the action. Background details are allowed if they support the action."""),
+Focus on the action and drama of the story."""),
     ("human", """Original text:
 {story_text}
 
@@ -136,10 +149,10 @@ Re-extract with corrections.""")
 
 
 async def event_extraction_node(state: dict) -> dict:
-    """Event Extraction Agent node function - with Structured Output.
+    """Event Extraction Agent node function - with Structured Output + Embedding.
     
     Uses with_structured_output() for guaranteed schema compliance.
-    No manual JSON parsing required.
+    Generates embedding for each event for RAG-based consistency checking.
     """
     # Get LLM with structured output bound to schema
     structured_llm = get_structured_llm(EventExtractionResult, tier="standard")
@@ -213,6 +226,13 @@ async def event_extraction_node(state: dict) -> dict:
         # Result is already an EventExtractionResult Pydantic object
         events = [e.model_dump() for e in result.events]
         
+        # === Generate embeddings for each event ===
+        print(f"[EVENT] Generating embeddings for {len(events)} events...")
+        for event in events:
+            narrative = event.get("narrative_summary", "")
+            participants = event.get("participants", [])
+            event["embedding"] = generate_event_embedding(narrative, participants)
+        
         # Validate and log
         for event in events:
             participants = event.get("participants", [])
@@ -228,7 +248,7 @@ async def event_extraction_node(state: dict) -> dict:
             "extracted_events": events,
             "messages": [
                 {"role": "event_agent", 
-                 "content": f"{'Re-' if is_re_extraction else ''}Extracted {len(events)} events (Structured Output)"}
+                 "content": f"{'Re-' if is_re_extraction else ''}Extracted {len(events)} events with embeddings"}
             ]
         }
     except Exception as e:
@@ -238,3 +258,4 @@ async def event_extraction_node(state: dict) -> dict:
             "errors": [f"Event extraction failed: {str(e)}"],
             "partial_failure": True
         }
+

@@ -20,8 +20,6 @@ class DataCompleteness(BaseModel):
     extracted_characters: float = Field(default=100.0, ge=0, le=100)
     extracted_events: float = Field(default=100.0, ge=0, le=100)
     extracted_settings: float = Field(default=100.0, ge=0, le=100)
-    extracted_dialogues: float = Field(default=100.0, ge=0, le=100)
-    extracted_emotions: float = Field(default=100.0, ge=0, le=100)
     extracted_relationships: float = Field(default=100.0, ge=0, le=100)
 
 

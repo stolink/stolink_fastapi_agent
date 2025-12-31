@@ -203,12 +203,10 @@ async def run_analysis(
             "settings": final_state.get("extracted_settings", []),
             "relationships": final_state.get("relationship_graph", {}).get("relationships", []),
             
-            # Level 1 Analysis Results
-            "dialogues": final_state.get("analyzed_dialogues", {}),
-            "emotions": final_state.get("tracked_emotions", {}),
+
             
             # Level 2 Analysis Results
-            "plot_integration": final_state.get("plot_integration", {}),
+            "plot": final_state.get("plot", {}),
             "consistency_report": final_state.get("consistency_report", {}),
             "validation": validation,
             
@@ -218,7 +216,7 @@ async def run_analysis(
                 "tokens_used": final_state.get("tokens_used", 0),
                 "trace_id": trace_id,
                 "agents_executed": [
-                    "character", "event", "setting", "dialogue", "emotion",
+                    "character", "event", "setting",
                     "relationship", "consistency", "plot", "validator"
                 ]
             }
