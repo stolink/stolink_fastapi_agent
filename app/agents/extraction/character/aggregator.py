@@ -1,70 +1,67 @@
 """Character Aggregator - Merges all sub-agent results into FullCharacter.
 
-Takes results from all 7 sub-agents and combines them by character name
+Takes results from all sub-agents and combines them by character name
 into the FullCharacter format expected by the main pipeline.
 
 Sub-agents:
-- Identity, Appearance, Personality, Relations, Dialogue/Mood, Stats, Inventory
+- Identity, Appearance, Personality, Relations, Dialogue/Mood, Inventory
 
 Improvements:
 - Null Safety: Game-related fields use safe defaults instead of null
 - Naming: relations.graph (not relations.relations)
 - Optimization: event_refs for Event IDs instead of full text
-- Inventory: Equipped items and bag items from inventory agent
+- Embedding: Generate embedding for Neo4j vector search
 """
+import boto3
+import json
 from typing import Any
 
 from app.schemas.character_full import FullCharacter, FullCharacterExtractionResult
 
 
+# === Embedding Generation ===
+_bedrock_client = None
+
+def get_bedrock_client():
+    """Get or create Bedrock client singleton."""
+    global _bedrock_client
+    if _bedrock_client is None:
+        _bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
+    return _bedrock_client
+
+
+def generate_character_embedding(name: str, traits: list, role: str) -> list[float]:
+    """Generate embedding for character using AWS Bedrock Titan.
+    
+    Creates embedding from character name + traits + role for vector search.
+    Returns empty list if generation fails (non-blocking).
+    """
+    try:
+        # Build text to embed
+        trait_str = ", ".join(traits[:5]) if traits else ""
+        text_to_embed = f"{name} ({role}): {trait_str}"
+        
+        client = get_bedrock_client()
+        response = client.invoke_model(
+            modelId='amazon.titan-embed-text-v1',
+            body=json.dumps({"inputText": text_to_embed})
+        )
+        result = json.loads(response['body'].read())
+        return result.get('embedding', [])
+    except Exception as e:
+        print(f"[AGGREGATOR] Embedding generation failed for {name}: {e}")
+        return []  # Non-blocking - return empty list
+
+
 # === Safe Defaults for Game Engine ===
-# Applied when extracted values are null to prevent game engine errors
+# Simplified - only faction.social defaults
 SAFE_DEFAULTS = {
-    "combat": {
-        # Base vs Total separation
-        "base_attack": 10,
-        "base_defense": 10,
-        "total_attack": 10,
-        "total_defense": 10,
-        "source": "default",  # "extracted" for real data, "default" for fallback
-        # Other combat stats
-        "attack_range": 1.5,
-        "crit_chance": 0.05,
-        "attack_type": "MELEE",
-        # Legacy fields for backward compatibility
-        "hitbox_radius": 1.0,
-        "mass": 70.0,
-        "damage_multiplier": 1.0,
-    },
-    "social": {
-        "rank": "COMMON",
-        "influence": 0,
-        "faction_reputation": {},
-        "trade_unlocked": True,
-    },
-    "economy": {
-        "gold": 0,
-        "trade_status": "NORMAL",
-    },
-    "state": {
-        "hp": 100,
-        "hp_max": 100,
-        "mp": 50,
-        "mp_max": 50,
-        "status_effects": [],
-        "stamina": 100,
-        "hunger": 100,
-        "is_invincible": False,
-    },
-    "stats": {
-        # Normalized field names (NOT str_, int_, etc.)
-        "strength": 10,
-        "dexterity": 10,
-        "intelligence": 10,
-        "constitution": 10,
-        "level": 1,
-        "exp": 0,
-        "skills": [],
+    "faction": {
+        "social": {
+            "rank": "COMMON",
+            "influence": 0,
+            "faction_reputation": {},
+        }
     },
 }
 
@@ -477,7 +474,6 @@ def merge_character_data(
     personality: dict,
     relations: dict,
     dialogue_mood: dict,
-    stats: dict,
     inventory: dict = None,
     existing_characters: list = None,
     story_text: str = None
@@ -519,7 +515,6 @@ def merge_character_data(
     all_raw_names.update(personality.keys())
     all_raw_names.update(relations.keys())
     all_raw_names.update(dialogue_mood.keys())
-    all_raw_names.update(stats.keys())
     if inventory:
         all_raw_names.update(inventory.keys())
     
@@ -567,13 +562,16 @@ def merge_character_data(
         per_data = get_merged_data(personality)
         rel_data = get_merged_data(relations)
         dm_data = get_merged_data(dialogue_mood)
-        st_data = get_merged_data(stats)
         inv_data = get_merged_data(inventory) if inventory else {}
+        
+        # Debug: Log relations data for each character
+        rel_graph = rel_data.get("relations", [])
+        print(f"[AGGREGATOR] {canonical_name}: rel_data keys={list(rel_data.keys())}, relations count={len(rel_graph)}")
         
         # Use canonical name for the character
         name = canonical_name
         
-        # === STATS AGGREGATION: Calculate item bonuses ===
+        # Calculate item bonuses for display
         item_attack_bonus = 0
         item_defense_bonus = 0
         item_hp_bonus = 0
@@ -584,16 +582,6 @@ def merge_character_data(
                 item_attack_bonus += item_stats.get("attack_bonus", 0) or 0
                 item_defense_bonus += item_stats.get("defense_bonus", 0) or 0
                 item_hp_bonus += item_stats.get("hp_bonus", 0) or 0
-        
-        # Apply safe defaults first
-        base_stats = apply_safe_defaults(st_data.get("stats", {}), SAFE_DEFAULTS["stats"])
-        base_state = apply_safe_defaults(st_data.get("state", {}), SAFE_DEFAULTS["state"])
-        base_combat = apply_safe_defaults(st_data.get("combat", {}), SAFE_DEFAULTS["combat"])
-        
-        # Calculate final stats with item bonuses
-        final_attack = (base_combat.get("total_attack") or base_combat.get("base_attack", 10)) + item_attack_bonus
-        final_defense = (base_combat.get("total_defense") or base_combat.get("base_defense", 10)) + item_defense_bonus
-        final_hp_max = (base_state.get("hp_max", 100)) + item_hp_bonus
         
         # Build FullCharacter structure with improvements
         # Role inference: ALWAYS run and override if strong evidence exists
@@ -612,12 +600,9 @@ def merge_character_data(
             final_role = extracted_role if extracted_role != "other" else (char_role or "other")
         
         full_char = {
-            # === SEARCH INDEXING: Root-level fields for fast DB queries ===
-            "_id": char_id,  # MongoDB-style ID (uses existing if available)
-            "name": name,  # Hoisted for search
-            "role": final_role,  # Hoisted for search
-            "level": base_stats.get("level", 1),  # Hoisted for search
-            "faction": id_data.get("faction"),  # Hoisted for search
+            # === SEARCH INDEXING: Root-level fields ===
+            "_id": char_id,
+            "role": final_role,
             
             "profile": {
                 "character_id": char_id,
@@ -625,13 +610,19 @@ def merge_character_data(
                 "age": id_data.get("age"),
                 "gender": id_data.get("gender"),
                 "race": id_data.get("race"),
-                "faction": id_data.get("faction"),
                 "mbti": None,
                 "personality": per_data.get("core_traits", []),
-                "chapter_appearance": None,
                 "backstory": id_data.get("backstory"),
+                # === FACTION: Use defaults (stats agent removed) ===
+                "faction": {
+                    "name": id_data.get("faction") or None,  # Faction name from identity agent
+                    "social": {
+                        "rank": SAFE_DEFAULTS["faction"]["social"]["rank"],
+                        "influence": SAFE_DEFAULTS["faction"]["social"]["influence"],
+                        "faction_reputation": {},
+                    }
+                },
             },
-            "role": final_role,
             "aliases": id_data.get("aliases", []),
             "status": id_data.get("status", "alive"),
             "appearance": {
@@ -645,75 +636,30 @@ def merge_character_data(
                 "attire": app_data.get("attire", []),
                 "expression": app_data.get("expression", "neutral"),
                 "scars_tattoos": app_data.get("scars_tattoos", []),
-                "cyberware": app_data.get("cyberware", []),
-                # Production fields from Appearance Agent
-                "hair_color_normalized": app_data.get("hair_color_normalized", {
-                    "description": "unspecified",
-                    "hex_code": None,
-                    "category": "unspecified"
-                }),
-                "eye_color_normalized": app_data.get("eye_color_normalized", {
-                    "description": "unspecified",
-                    "hex_code": None,
-                    "category": "unspecified"
-                }),
-                "full_visual_prompt": app_data.get("full_visual_prompt", ""),
-                "style_context": app_data.get("style_context", {
-                    "art_style": "fantasy illustration",
-                    "rendering_engine": None
-                }),
+                # Removed: cyberware, full_visual_prompt, hair_color_normalized, eye_color_normalized
+                "style_context": {
+                    "art_style": app_data.get("style_context", {}).get("art_style", "fantasy illustration"),
+                    # Removed: rendering_engine
+                },
             },
             "personality": {
                 "core_traits": per_data.get("core_traits", []),
                 "flaws": per_data.get("flaws", []),
                 "values": per_data.get("values", []),
             },
-            "visual": {
-                "appearance": [],
-                "attire": app_data.get("attire", []),
-                "age_group": infer_age_group(name, app_data, story_text or "", id_data),
-                "gender": id_data.get("gender"),
-            },
-            # FIX: relations.graph instead of relations.relations (naming duplication removed)
+            # Removed: visual
             "relations": {
-                "graph": rel_data.get("relations", []),  # Changed from "relations" to "graph"
-                "event_refs": rel_data.get("known_events", []),  # Changed to event_refs for optimization
-                "location_context": rel_data.get("location_context"),
+                "graph": rel_data.get("relations", []),
+                "event_refs": [],  # Simplified schema - events handled separately
+                "location_context": rel_data.get("location_context") or "Unknown",
             },
             "current_mood": dm_data.get("current_mood", {
                 "emotion": None,
                 "intensity": 5,
                 "trigger": None,
             }),
-            "dialogue": dm_data.get("dialogue", {
-                "tone": None,
-                "catchphrases": [],
-                "forbidden_topics": [],
-                "secret_keys": [],
-            }),
-            # Base stats from Stats Agent
-            "stats": base_stats,
-            "state": base_state,
-            "combat": base_combat,
-            "social": apply_safe_defaults(st_data.get("social", {}), SAFE_DEFAULTS["social"]),
-            "economy": apply_safe_defaults(st_data.get("economy", {}), SAFE_DEFAULTS["economy"]),
-            
-            # === FINAL STATS: Aggregated with item bonuses ===
-            "final_stats": {
-                "attack": final_attack,
-                "defense": final_defense,
-                "hp_max": final_hp_max,
-                "details": {
-                    "base_attack": base_combat.get("base_attack", 10),
-                    "base_defense": base_combat.get("base_defense", 10),
-                    "base_hp_max": base_state.get("hp_max", 100),
-                    "item_attack_bonus": item_attack_bonus,
-                    "item_defense_bonus": item_defense_bonus,
-                    "item_hp_bonus": item_hp_bonus,
-                }
-            },
-            
-            # Inventory from Inventory Agent
+            # Removed: dialogue
+            # Removed: stats, state, combat, social, economy, final_stats
             "inventory": {
                 "equipped_items": inv_data.get("equipped_items", []),
                 "bag_items": inv_data.get("bag_items", []),
@@ -722,13 +668,15 @@ def merge_character_data(
             "meta": {
                 "created_at": None,
                 "updated_at": None,
-                "is_active": True,
-                "data_version": "1.1.0",  # Version bump for new structure
+                "data_version": "2.0.0",
                 "lock_version": 0,
-                "plot_armor": False,
-                "is_player": False,
             },
-            "extraction_notes": None,
+            # === Embedding for Neo4j Vector Search ===
+            "embedding": generate_character_embedding(
+                name=name,
+                traits=per_data.get("core_traits", []),
+                role=final_role
+            ),
         }
         
         characters.append(full_char)
@@ -743,7 +691,7 @@ async def character_aggregator_node(state: dict) -> dict:
     personality = state.get("char_personality") or {}
     relations = state.get("char_relations") or {}
     dialogue_mood = state.get("char_dialogue_mood") or {}
-    stats = state.get("char_stats") or {}
+    # Removed: stats = state.get("char_stats") or {}
     inventory = state.get("char_inventory") or {}
     
     # Extract existing_characters from context if available (from message context)
@@ -757,7 +705,7 @@ async def character_aggregator_node(state: dict) -> dict:
     story_text = state.get("story_text") or state.get("content") or ""
     
     characters = merge_character_data(
-        identity, appearance, personality, relations, dialogue_mood, stats, inventory,
+        identity, appearance, personality, relations, dialogue_mood, inventory,
         existing_characters=existing_characters,
         story_text=story_text
     )

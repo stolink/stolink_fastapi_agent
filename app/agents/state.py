@@ -36,13 +36,11 @@ class AnalysisState(TypedDict, total=False):
     extracted_characters: list
     extracted_events: list
     extracted_settings: list
-    analyzed_dialogues: dict
-    tracked_emotions: dict
     
     # Analysis results
     relationship_graph: dict
     consistency_report: dict
-    plot_integration: dict
+    plot: dict
     
     # Validation
     validation_result: dict
@@ -118,14 +116,6 @@ class StoryAnalysisState(BaseModel):
         default_factory=list,
         description="Settings extracted by SettingExtractorAgent"
     )
-    analyzed_dialogues: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Dialogue analysis by DialogueAnalyzerAgent"
-    )
-    tracked_emotions: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Emotion tracking by EmotionTrackerAgent"
-    )
     
     # ===== Level 2: Analysis Results =====
     relationship_graph: dict[str, Any] = Field(
@@ -136,9 +126,9 @@ class StoryAnalysisState(BaseModel):
         default_factory=dict,
         description="Consistency report by ConsistencyCheckerAgent"
     )
-    plot_integration: dict[str, Any] = Field(
+    plot: dict[str, Any] = Field(
         default_factory=dict,
-        description="Plot integration by PlotIntegratorAgent"
+        description="Plot analysis by PlotAgent"
     )
     
     # ===== Level 3: Validation Results =====

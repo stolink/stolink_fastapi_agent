@@ -59,6 +59,11 @@ Your job is to find ALL inconsistencies and contradictions across story elements
 6. **STATS_CONFLICT** (MEDIUM)
    - Level 1 character defeating Level 99 boss without explanation.
 
+7. **CROSS_CHAPTER_CONFLICT** (HIGH) [NEW - Check against historical_context]
+   - Character marked "deceased" in previous chapter appears alive without explanation.
+   - Relationship type changes drastically without narrative justification.
+   - Event contradicts previously established facts.
+
 === SUGGESTED_ACTION VALUES ===
 - AUTO_FIX: Can be fixed automatically
 - FLAG_FOR_HUMAN: True data error needing review
@@ -72,24 +77,21 @@ Your job is to find ALL inconsistencies and contradictions across story elements
 - LOW severity: -5 points each
 
 If score <= 50 or any HIGH severity conflict: requires_reextraction = true"""),
-    ("human", """=== DATA TO VALIDATE ===
+    ("human", """=== CURRENT CHAPTER DATA ===
 
-**Characters:**
+**Characters (Current):**
 {characters}
 
-**Events:**
+**Events (Current):**
 {events}
 
-**Relationships:**
+**Relationships (Current):**
 {relationships}
 
-**Dialogues:**
-{dialogues}
+=== HISTORICAL CONTEXT (Previous Chapters) ===
+{historical_context}
 
-**Emotions:**
-{emotions}
-
-Find ALL conflicts and validate consistency.""")
+Find ALL conflicts including CROSS_CHAPTER_CONFLICT between current and historical data.""")
 ])
 
 
@@ -152,15 +154,16 @@ def validate_relationship_directions(relationships: list) -> list[Conflict]:
 
 
 async def consistency_check_node(state: dict) -> dict:
-    """Consistency Checker Agent node function - with Structured Output.
+    """Consistency Checker Agent node function - with Structured Output + RAG.
     
-    Combines LLM analysis with programmatic validation for guaranteed detection.
+    Combines LLM analysis with programmatic validation and historical context.
     """
+    from app.services.db_query_service import get_db_service
+    
     characters = state.get("extracted_characters", [])
     events = state.get("extracted_events", [])
     relationships = state.get("relationship_graph", {}).get("relationships", [])
-    dialogues = state.get("analyzed_dialogues", {})
-    emotions = state.get("tracked_emotions", {})
+    project_id = state.get("project_id")
     
     # Support both legacy (c["name"]) and FullCharacter (c["profile"]["name"]) formats
     available_names = set()
@@ -171,6 +174,21 @@ async def consistency_check_node(state: dict) -> dict:
     
     print(f"[CONSISTENCY] Validating: {len(characters)} chars, {len(events)} events, {len(relationships)} rels")
     
+    # === RAG: Retrieve historical context ===
+    historical_context = {"characters": [], "events": [], "search_performed": False}
+    if project_id:
+        try:
+            db_service = await get_db_service()
+            historical_context = await db_service.retrieve_relevant_history(
+                project_id=project_id,
+                current_characters=characters,
+                current_events=events,
+                top_k=10
+            )
+            print(f"[CONSISTENCY] RAG: Found {len(historical_context['characters'])} historical chars, {len(historical_context['events'])} historical events")
+        except Exception as e:
+            print(f"[CONSISTENCY] RAG failed (non-critical): {e}")
+    
     try:
         # Get structured LLM
         structured_llm = get_structured_llm(ConsistencyReport, tier="basic")
@@ -180,8 +198,7 @@ async def consistency_check_node(state: dict) -> dict:
             "characters": str(characters),
             "events": str(events),
             "relationships": str(relationships),
-            "dialogues": str(dialogues) if dialogues else "{}",
-            "emotions": str(emotions) if emotions else "{}"
+            "historical_context": str(historical_context) if historical_context["search_performed"] else "No historical data available",
         })
         
     except Exception as e:

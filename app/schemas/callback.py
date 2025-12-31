@@ -2,13 +2,12 @@
 
 Includes all data categories that Spring Boot expects:
 - Characters, Events, Settings, Relationships
-- Dialogues, Emotions
-- Plot Integration, Consistency Report, Validation
+- Plot, Consistency Report, Validation
 """
 from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
-from app.schemas.plot import PlotIntegrationResult
+from app.schemas.plot import PlotResult
 from app.schemas.consistency import ConsistencyReport
 from app.schemas.validation import ValidationResult
 
@@ -35,12 +34,8 @@ class FullAnalysisResult(BaseModel):
     settings: list[dict[str, Any]] = Field(default_factory=list)
     relationships: list[dict[str, Any]] = Field(default_factory=list)
     
-    # Level 1 Analysis Results
-    dialogues: dict[str, Any] = Field(default_factory=dict)
-    emotions: dict[str, Any] = Field(default_factory=dict)
-    
-    # Level 2 Analysis Results
-    plot_integration: dict[str, Any] = Field(default_factory=dict)
+    # Level 2 Analysis Results (renamed: plot_integration → plot)
+    plot: dict[str, Any] = Field(default_factory=dict)
     consistency_report: dict[str, Any] = Field(default_factory=dict)
     validation: dict[str, Any] = Field(default_factory=dict)
     
@@ -69,10 +64,8 @@ class AnalysisCallbackPayload(BaseModel):
                     "events": [{"event_id": "E001", "description": "Arin enters the forest"}],
                     "settings": [{"setting_id": "loc_forest_01", "location_name": "Dark Forest"}],
                     "relationships": [{"source": "Arin", "target": "Kael", "relation_type": "ALLY"}],
-                    "dialogues": {"key_dialogues": []},
-                    "emotions": {"emotion_states": []},
-                    "plot_integration": {
-                        "plot_summary": {"narrative": "..."},
+                    "plot": {
+                        "summary": {"narrative": "..."},
                         "foreshadowing": [{"foreshadow_id": "F001", "hint_text": "..."}]
                     },
                     "consistency_report": {

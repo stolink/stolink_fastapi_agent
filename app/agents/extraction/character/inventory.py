@@ -60,7 +60,7 @@ class InventoryItem(BaseModel):
     """Single item entry with stats and inferred values."""
     item_id: Optional[str] = Field(None, description="Item ID if mentioned (e.g., 'SWORD_001')")
     name: str = Field(..., description="Item name")
-    item_type: str = Field("MISC", description="WEAPON/ARMOR/ACCESSORY/CONSUMABLE/QUEST/MATERIAL/MISC")
+    # Removed: item_type
     quantity: int = Field(1, ge=1, description="Number of items")
     
     # Rarity and Value
@@ -71,24 +71,18 @@ class InventoryItem(BaseModel):
     equipped: bool = Field(False, description="Whether currently equipped")
     slot: Optional[str] = Field(None, description="MAIN_HAND/OFF_HAND/HEAD/BODY/LEGS/FEET/HANDS/ACCESSORY/QUICK_SLOT")
     
-    # Item stats (for equipment)
-    stats: Optional[ItemStats] = Field(default_factory=ItemStats, description="Item bonus stats")
+    # Removed: stats
     
     description: Optional[str] = Field(None, description="Brief item description")
     
     @model_validator(mode='after')
-    def infer_slot_and_value(self):
-        """Auto-infer slot from item_type and calculate estimated_value."""
-        # Slot inference
-        if self.equipped and not self.slot:
-            self.slot = SLOT_INFERENCE.get(self.item_type.upper(), "MISC")
-        
-        # Value estimation
+    def infer_value(self):
+        """Calculate estimated_value based on rarity."""
+        # Value estimation based on rarity only (item_type removed)
         if self.estimated_value is None:
             rarity = self.rarity or "COMMON"
-            item_type = self.item_type.upper()
             base_prices = BASE_PRICES.get(rarity, BASE_PRICES["COMMON"])
-            self.estimated_value = base_prices.get(item_type, base_prices.get("MISC", 5))
+            self.estimated_value = base_prices.get("MISC", 5)
         
         return self
 

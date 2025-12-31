@@ -279,6 +279,204 @@ class DatabaseQueryService:
             logger.error("Failed to query all relationships", error=str(e))
             return []
     
+    # ===== Vector Search (RAG) =====
+    
+    async def get_embedding(self, text: str) -> list[float]:
+        """Generate embedding using AWS Bedrock Titan Embeddings.
+        
+        Args:
+            text: Text to embed
+            
+        Returns:
+            Embedding vector (1536 dimensions)
+        """
+        import boto3
+        import json
+        
+        bedrock = boto3.client(
+            'bedrock-runtime',
+            region_name='us-east-1'
+        )
+        
+        try:
+            response = bedrock.invoke_model(
+                modelId='amazon.titan-embed-text-v1',
+                body=json.dumps({"inputText": text})
+            )
+            result = json.loads(response['body'].read())
+            return result['embedding']
+        except Exception as e:
+            logger.error("Failed to generate embedding", error=str(e))
+            return []
+    
+    async def search_similar_characters(
+        self,
+        project_id: str,
+        query_embedding: list[float],
+        top_k: int = 10
+    ) -> list[dict[str, Any]]:
+        """Search for similar characters using Neo4j vector index.
+        
+        Args:
+            project_id: Project UUID
+            query_embedding: Query embedding vector
+            top_k: Number of results to return
+            
+        Returns:
+            List of similar character dicts with similarity scores
+        """
+        if not self._neo4j_driver or not query_embedding:
+            return []
+        
+        query = """
+            MATCH (c:Character {project_id: $project_id})
+            WHERE c.embedding IS NOT NULL
+            WITH c, vector.similarity.cosine(c.embedding, $embedding) AS score
+            WHERE score > 0.6
+            RETURN c.name AS name, c.status AS status, c.role AS role,
+                   c.traits AS traits, score
+            ORDER BY score DESC
+            LIMIT $top_k
+        """
+        
+        try:
+            async with self._neo4j_driver.session() as session:
+                result = await session.run(
+                    query,
+                    project_id=project_id,
+                    embedding=query_embedding,
+                    top_k=top_k
+                )
+                records = await result.data()
+                return records
+        except Exception as e:
+            logger.error("Failed vector search", error=str(e))
+            return []
+    
+    async def search_similar_events(
+        self,
+        project_id: str,
+        query_embedding: list[float],
+        top_k: int = 10
+    ) -> list[dict[str, Any]]:
+        """Search for similar events using Neo4j vector index.
+        
+        Args:
+            project_id: Project UUID
+            query_embedding: Query embedding vector
+            top_k: Number of results to return
+            
+        Returns:
+            List of similar event dicts with similarity scores
+        """
+        if not self._neo4j_driver or not query_embedding:
+            return []
+        
+        query = """
+            MATCH (e:Event {project_id: $project_id})
+            WHERE e.embedding IS NOT NULL
+            WITH e, vector.similarity.cosine(e.embedding, $embedding) AS score
+            WHERE score > 0.6
+            RETURN e.event_id AS event_id, e.description AS description,
+                   e.participants AS participants, e.chapter AS chapter, score
+            ORDER BY score DESC
+            LIMIT $top_k
+        """
+        
+        try:
+            async with self._neo4j_driver.session() as session:
+                result = await session.run(
+                    query,
+                    project_id=project_id,
+                    embedding=query_embedding,
+                    top_k=top_k
+                )
+                records = await result.data()
+                return records
+        except Exception as e:
+            logger.error("Failed event vector search", error=str(e))
+            return []
+    
+    async def retrieve_relevant_history(
+        self,
+        project_id: str,
+        current_characters: list[dict],
+        current_events: list[dict],
+        top_k: int = 10
+    ) -> dict[str, Any]:
+        """Retrieve relevant historical data using RAG.
+        
+        Searches for similar characters and events from previous chapters
+        to provide context for consistency checking.
+        
+        Args:
+            project_id: Project UUID
+            current_characters: Currently extracted characters
+            current_events: Currently extracted events
+            top_k: Number of results per category
+            
+        Returns:
+            Dict with 'characters' and 'events' lists
+        """
+        result = {
+            "characters": [],
+            "events": [],
+            "search_performed": False
+        }
+        
+        if not self._neo4j_driver:
+            return result
+        
+        try:
+            # Build query text from current characters
+            char_names = []
+            for c in current_characters:
+                name = c.get("name") or (c.get("profile", {}) or {}).get("name")
+                if name:
+                    char_names.append(name)
+            
+            if char_names:
+                # Create query text and get embedding
+                query_text = f"Characters: {', '.join(char_names)}"
+                embedding = await self.get_embedding(query_text)
+                
+                if embedding:
+                    # Search similar characters
+                    similar_chars = await self.search_similar_characters(
+                        project_id, embedding, top_k
+                    )
+                    result["characters"] = similar_chars
+                    result["search_performed"] = True
+            
+            # Build query text from current events
+            event_descriptions = []
+            for e in current_events:
+                desc = e.get("narrative_summary") or e.get("description")
+                if desc:
+                    event_descriptions.append(desc[:100])  # Truncate
+            
+            if event_descriptions:
+                query_text = " ".join(event_descriptions[:5])
+                embedding = await self.get_embedding(query_text)
+                
+                if embedding:
+                    similar_events = await self.search_similar_events(
+                        project_id, embedding, top_k
+                    )
+                    result["events"] = similar_events
+                    result["search_performed"] = True
+            
+            logger.info(
+                "RAG search completed",
+                chars_found=len(result["characters"]),
+                events_found=len(result["events"])
+            )
+            
+        except Exception as e:
+            logger.error("Failed to retrieve history", error=str(e))
+        
+        return result
+    
     # ===== World Rules Query =====
     
     async def get_world_rules(

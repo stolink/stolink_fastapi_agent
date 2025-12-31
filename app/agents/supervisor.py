@@ -73,15 +73,13 @@ def get_phase_status(state: dict) -> dict:
             "done": state.get("extraction_done", False),
             "characters": len(state.get("extracted_characters") or []),
             "events": len(state.get("extracted_events") or []),
-            "settings": len(state.get("extracted_settings") or []),
-            "dialogues": bool(state.get("analyzed_dialogues")),
-            "emotions": bool(state.get("tracked_emotions"))
+            "settings": len(state.get("extracted_settings") or [])
         },
         "analysis": {
             "done": state.get("analysis_done", False),
             "relationships": len((state.get("relationship_graph") or {}).get("relationships", [])),
             "consistency_score": (state.get("consistency_report") or {}).get("overall_score", 0),
-            "plot_beats": len((state.get("plot_integration") or {}).get("narrative_beats", []))
+            "plot_beats": len((state.get("plot") or {}).get("narrative_beats", []))
         },
         "validation": {
             "done": state.get("validation_done", False),

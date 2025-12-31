@@ -12,11 +12,9 @@ Validates outputs from:
 - Character Agent: extracted_characters
 - Event Agent: extracted_events
 - Setting Agent: extracted_settings
-- Dialogue Agent: analyzed_dialogues
-- Emotion Agent: tracked_emotions
 - Relationship Agent: relationship_graph
 - Consistency Agent: consistency_report
-- Plot Agent: plot_integration
+- Plot Agent: plot
 """
 import json
 import time
@@ -59,22 +57,12 @@ VALIDATION_RULES = {
         "penalty_missing": 10,
         "required_fields": ["relationships"]
     },
-    "analyzed_dialogues": {
-        "required": False,
-        "penalty_missing": 5,
-        "required_fields": []
-    },
-    "tracked_emotions": {
-        "required": False,
-        "penalty_missing": 5,
-        "required_fields": []
-    },
     "consistency_report": {
         "required": True,
         "penalty_missing": 15,
         "required_fields": ["overall_score"]
     },
-    "plot_integration": {
+    "plot": {
         "required": False,
         "penalty_missing": 5,
         "required_fields": []

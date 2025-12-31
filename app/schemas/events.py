@@ -58,21 +58,10 @@ class EventExtraction(BaseModel):
         description="Previous event ID (creates NEXT edge for timeline)"
     )
     
-    # === Visual Prompt (for Image Generation) ===
-    visual_scene: str = Field(
-        default="",
-        description="Visual scene description for image AI (e.g., 'Two men facing each other with swords drawn, intense eye contact, low angle shot')"
-    )
-    camera_angle: Optional[str] = Field(
-        None,
-        description="Suggested camera angle (e.g., 'low angle', 'bird's eye', 'close-up')"
-    )
     
     # === Metadata ===
     timestamp: Optional[TimeStamp] = Field(default=None)
     importance: int = Field(default=5, ge=1, le=10, description="Importance level (1-10)")
-    is_foreshadowing: bool = Field(default=False, description="Whether this is foreshadowing")
-    foreshadowing_tag: Optional[str] = Field(None, description="Foreshadowing tag if applicable")
     
     # === Re-extraction tracking ===
     changes_made: Optional[str] = Field(None, description="Changes made during re-extraction")
