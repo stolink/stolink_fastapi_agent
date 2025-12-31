@@ -141,6 +141,15 @@ KOREAN_TO_ROMANIZATION = {
     "인": ["in", "een"],
     "엔": ["en"],
     "운": ["un", "woon", "oon"],
+    # === Additional syllables for common names ===
+    "진": ["jin", "jean", "jin"],
+    "세": ["se", "sae", "seh"],
+    "유": ["yu", "you", "yoo"],
+    "민": ["min", "meen"],
+    "재": ["jae", "je", "jay"],
+    "리": ["ri", "lee", "li"],
+    "라": ["ra", "la"],
+    "아리": ["ari", "arie"],
 }
 
 def korean_to_romanization_variants(korean_name: str) -> list[str]:
@@ -176,17 +185,21 @@ def find_romanization_match(korean_names: set, english_names: set) -> dict:
     """
     matches = {}
     
+    # Helper to normalize names (remove hyphens, spaces, underscores)
+    def normalize_for_match(name: str) -> str:
+        return name.lower().replace("-", "").replace("_", "").replace(" ", "")
+    
     for korean in korean_names:
         variants = korean_to_romanization_variants(korean)
-        variants_lower = [v.lower() for v in variants]
+        variants_normalized = [normalize_for_match(v) for v in variants]
         
         for english in english_names:
-            english_lower = english.lower()
-            if english_lower in variants_lower:
+            english_normalized = normalize_for_match(english)
+            if english_normalized in variants_normalized:
                 matches[english] = korean
                 matches[english.lower()] = korean
                 matches[english.upper()] = korean
-                print(f"[AGGREGATOR] Romanization match: '{english}' → '{korean}'")
+                print(f"[AGGREGATOR] Romanization match: '{english}' → '{korean}' (matched: {english_normalized})")
     
     return matches
 
@@ -218,9 +231,12 @@ def extract_name_pairs_from_text(story_text: str) -> dict:
 AGE_GROUP_KEYWORDS = {
     "child": ["아이", "어린이", "꼬마", "child", "kid"],
     "teen": ["소년", "소녀", "청소년", "앳된", "teen", "teenager", "young man", "young woman"],
-    "adult": ["성인", "청년", "adult", "man", "woman"],
+    "adult": ["성인", "청년", "adult", "man", "woman", "탐정", "브로커", "해커", "전사", "기사", "용병", "detective", "broker", "hacker", "warrior", "knight", "mercenary"],
     "elderly": ["노인", "할아버지", "할머니", "elderly", "old man", "old woman", "늙은"],
 }
+
+# AI/Robot races that should not have age_group
+NON_AGING_RACES = ["인공지능", "AI", "로봇", "안드로이드", "android", "robot", "artificial intelligence"]
 
 def get_character_context(name: str, story_text: str, window: int = 100) -> str:
     """Extract text context around character name mentions.
@@ -248,11 +264,21 @@ def get_character_context(name: str, story_text: str, window: int = 100) -> str:
     
     return " ".join(contexts)
 
-def infer_age_group(name: str, appearance_data: dict, story_text: str = "") -> str | None:
+def infer_age_group(name: str, appearance_data: dict, story_text: str = "", identity_data: dict = None) -> str | None:
     """Infer age_group from appearance descriptions or character-specific context.
     
     Returns: "child", "teen", "adult", "elderly", or None
+    
+    Note: AI/Robot characters return None (no biological age).
     """
+    # === Skip AI/Robot characters ===
+    if identity_data:
+        race = (identity_data.get("race") or "").lower()
+        for ai_race in NON_AGING_RACES:
+            if ai_race.lower() in race:
+                print(f"[AGGREGATOR] Skipping age_group for AI/Robot '{name}' (race: {race})")
+                return None
+    
     # Check full_visual_prompt first (character-specific)
     visual_prompt = appearance_data.get("full_visual_prompt", "")
     expression = appearance_data.get("expression", "")
@@ -645,7 +671,7 @@ def merge_character_data(
             "visual": {
                 "appearance": [],
                 "attire": app_data.get("attire", []),
-                "age_group": infer_age_group(name, app_data, story_text or ""),
+                "age_group": infer_age_group(name, app_data, story_text or "", id_data),
                 "gender": id_data.get("gender"),
             },
             # FIX: relations.graph instead of relations.relations (naming duplication removed)
@@ -720,9 +746,12 @@ async def character_aggregator_node(state: dict) -> dict:
     stats = state.get("char_stats") or {}
     inventory = state.get("char_inventory") or {}
     
-    # Extract existing_characters from context if available
-    context = state.get("context") or {}
-    existing_characters = context.get("existing_characters") or []
+    # Extract existing_characters from context if available (from message context)
+    # OR directly from state (from graph initial state)
+    existing_characters = state.get("existing_characters") or []
+    if not existing_characters:
+        context = state.get("context") or {}
+        existing_characters = context.get("existing_characters") or []
     
     # Extract story_text for dynamic name mapping (Korean/English pairs)
     story_text = state.get("story_text") or state.get("content") or ""

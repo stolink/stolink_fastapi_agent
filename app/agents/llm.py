@@ -78,22 +78,28 @@ def get_bedrock_llm(
     model_configs = {
         "basic": {
             "model_id": "anthropic.claude-3-haiku-20240307-v1:0",
+            "default_max_tokens": 1024,  # Faster for simple tasks
         },
         "standard": {
             "model_id": "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+            "default_max_tokens": 2048,  # Balanced
         },
         "advanced": {
             "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            "default_max_tokens": 4096,  # Full capacity for complex tasks
         }
     }
     
     config = model_configs.get(tier, model_configs["standard"])
     
+    # Use tier-specific default if max_tokens not explicitly specified
+    effective_max_tokens = max_tokens if max_tokens != 4096 else config.get("default_max_tokens", 4096)
+    
     return ChatBedrockConverse(
         client=get_bedrock_client(),
         model=config["model_id"],
         temperature=temperature,
-        max_tokens=max_tokens,
+        max_tokens=effective_max_tokens,
     )
 
 

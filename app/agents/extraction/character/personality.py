@@ -263,6 +263,7 @@ DO NOT return null for character_arc or internal_monologue fields.""")
 async def personality_extraction_node(state: dict) -> dict:
     """Personality Agent - Extracts personality traits (not emotions)."""
     # Use standard tier for personality trait extraction
+    # Use standard tier for personality - basic tier causes empty arrays
     structured_llm = get_structured_llm(CharacterPersonalityResult, tier="standard")
     chain = PERSONALITY_EXTRACTION_PROMPT | structured_llm
     

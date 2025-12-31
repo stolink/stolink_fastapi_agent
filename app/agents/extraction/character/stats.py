@@ -175,6 +175,13 @@ Not all stories have game data. Only extract if the text explicitly mentions:
 - Attack, defense, damage values
 - Ranks, titles with numerical significance
 
+### SKILL EXTRACTION RULE ###
+Skills should include:
+- Combat abilities mentioned (e.g., "홀로그램 방어", "기동성 전투")
+- Professional expertise (e.g., "해킹", "암호화 해독", "군사급 암호화 해독")
+- Special techniques or talents (e.g., "데이터 분석", "위험 감지")
+* IMPORTANT: If a character is described as a "해커" or has "해킹 기술", add appropriate skills like "해킹", "암호화 해독"
+
 ### LANGUAGE CONSISTENCY RULE ###
 Output ALL text in the SAME language as the input.
 
@@ -225,7 +232,7 @@ Combat values go to total_attack/total_defense with source="extracted".""")
 async def stats_extraction_node(state: dict) -> dict:
     """Stats Agent - Extracts game-related numerical data."""
     # Use basic tier - formulaic stat generation
-    structured_llm = get_structured_llm(CharacterGameStatsResult, tier="basic")
+    structured_llm = get_structured_llm(CharacterGameStatsResult, tier="standard")
     chain = STATS_EXTRACTION_PROMPT | structured_llm
     
     try:

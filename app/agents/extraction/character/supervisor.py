@@ -36,20 +36,31 @@ async def parallel_extraction_node(state: CharacterTeamState) -> dict:
     
     This node implements:
     1. Adaptive Analysis: Selects agents based on character role (from state).
-    2. Parallel Execution: Runs agents concurrently using asyncio.gather.
-    3. Partial Failure Tolerance: One failure doesn't stop others.
+    2. AI Character Skip: Skips appearance/inventory/stats for non-physical AI characters.
+    3. Parallel Execution: Runs agents concurrently using asyncio.gather.
+    4. Partial Failure Tolerance: One failure doesn't stop others.
     """
-    # 1. Adaptive Analysis (Filter agents based on role)
-    # Get extracted identity to determine role
+    # 1. Determine which agents to skip for AI characters
     identities = state.get("char_identity", {})
-    # Simple heuristic: If "Extra" is detected in any character role, we might skip some agents.
-    # For now, we enable full scan for safety, but structure allows filtering.
-    # Future optimization: Inspect `identities` and reduce `target_agents` list.
+    ai_characters = state.get("ai_characters", [])
     
+    # If ALL characters are AI (unlikely), skip physical agents entirely
+    # Otherwise, run all agents but agents will handle AI characters internally
+    all_ai = len(ai_characters) > 0 and len(ai_characters) == len(identities)
+    
+    # Default: run all parallel agents
     target_agents = list(PARALLEL_AGENTS.keys())
     
-    # 2. Context Optimization (Optional)
-    # We could filter `state["content"]` here for specific agents.
+    # Method 3: Skip agents for pure AI characters (no physical body)
+    if all_ai:
+        # All characters are AI - skip physical agents
+        skip_agents = {"appearance", "inventory", "stats"}
+        target_agents = [a for a in target_agents if a not in skip_agents]
+        print(f"[Character Team] All AI characters - skipping: {skip_agents}")
+    else:
+        # Mixed - each agent will check individual characters
+        # Pass AI character info via state
+        pass
     
     print(f"[Character Team] Starting Parallel Phase for agents: {target_agents}")
     

@@ -129,7 +129,10 @@ For each character, extract:
     - Commands others to harm → likely antagonist  
     - Uses hostile language (경멸, 살기, 위협) → likely antagonist
     - Example: "베라의 눈빛이 살기로 번뜩였다" → role: "antagonist"
-- aliases: Any nicknames or titles
+- aliases: Any nicknames, titles, or REAL NAMES revealed later in the story
+  * IMPORTANT: If a character's TRUE IDENTITY is revealed (e.g., "세라 is actually 한채린"), add the real name to aliases
+  * Example: 세라's aliases should include "한채린" if revealed in story
+  * Include: nicknames, code names, birth names, secret identities
 - status: alive/deceased/unknown
 - backstory: Background information using FALLBACK POLICY:
   1. First: Extract specific past events if mentioned
@@ -149,6 +152,71 @@ IMPORTANT: Fill occupation and backstory using context clues - do not leave them
 ])
 
 
+# === Helper: Detect AI/Non-physical characters ===
+AI_RACE_KEYWORDS = ["ai", "인공지능", "안드로이드", "로봇", "android", "robot", "artificial intelligence", "시스템", "보조 시스템"]
+
+def is_ai_character(identity: dict) -> bool:
+    """Check if character is a non-physical AI (like ARIA)."""
+    race = (identity.get("race") or "").lower()
+    backstory = (identity.get("backstory") or "").lower()
+    
+    # Check for AI keywords in race
+    for keyword in AI_RACE_KEYWORDS:
+        if keyword in race:
+            # But exclude androids with physical bodies (like 세라)
+            if "바디" in backstory or "body" in backstory.lower():
+                return False  # Physical android body
+            if "임플란트" in backstory or "탑재" in backstory:
+                return True  # Brain implant AI = non-physical
+            return True
+    return False
+
+
+# === Helper: Name normalization ===
+def normalize_character_names(identity_data: dict, story_text: str) -> dict:
+    """Deduplicate Korean/English name variants."""
+    from .aggregator import extract_name_pairs_from_text, korean_to_romanization_variants, is_korean
+    
+    # Build name mapping from story text
+    name_mapping = extract_name_pairs_from_text(story_text)
+    
+    # Also detect romanization matches
+    korean_names = {n for n in identity_data.keys() if is_korean(n)}
+    english_names = {n for n in identity_data.keys() if not is_korean(n)}
+    
+    # Helper to normalize names (remove hyphens, spaces, underscores)
+    def normalize_for_match(name: str) -> str:
+        return name.lower().replace("-", "").replace("_", "").replace(" ", "")
+    
+    for korean in korean_names:
+        variants = korean_to_romanization_variants(korean)
+        variants_normalized = [normalize_for_match(v) for v in variants]
+        for english in english_names:
+            english_normalized = normalize_for_match(english)
+            if english_normalized in variants_normalized:
+                name_mapping[english] = korean
+                print(f"[IDENTITY] Auto-mapped: '{english}' → '{korean}' (matched: {english_normalized})")
+    
+    # Remove duplicates (keep Korean version)
+    to_remove = []
+    for english, korean in name_mapping.items():
+        if english in identity_data and korean in identity_data:
+            to_remove.append(english)
+            print(f"[IDENTITY] Removing duplicate: '{english}' (keeping '{korean}')")
+        elif english in identity_data:
+            # English only - rename to Korean
+            identity_data[korean] = identity_data[english]
+            identity_data[korean]["name"] = korean
+            to_remove.append(english)
+            print(f"[IDENTITY] Renamed: '{english}' → '{korean}'")
+    
+    for name in to_remove:
+        if name in identity_data:
+            del identity_data[name]
+    
+    return identity_data
+
+
 # === Node Function ===
 async def identity_extraction_node(state: dict) -> dict:
     """Identity Agent - Extracts basic character information."""
@@ -166,10 +234,22 @@ async def identity_extraction_node(state: dict) -> dict:
         for char in result.characters:
             identity_data[char.name] = char.model_dump()
         
+        # === Method 2: Name Normalization ===
+        identity_data = normalize_character_names(identity_data, state["content"])
+        
+        # === Method 3: Mark AI characters for agent skipping ===
+        ai_characters = []
+        for name, identity in identity_data.items():
+            if is_ai_character(identity):
+                identity["_skip_agents"] = ["appearance", "inventory", "stats"]
+                ai_characters.append(name)
+                print(f"[IDENTITY] AI character detected: '{name}' - will skip appearance/inventory/stats")
+        
         return {
             "char_identity": identity_data,
+            "ai_characters": ai_characters,  # Pass to supervisor
             "completed_agents": (state.get("completed_agents") or []) + ["identity"],
-            "messages": [{"role": "identity_agent", "content": f"Extracted {len(identity_data)} character identities"}]
+            "messages": [{"role": "identity_agent", "content": f"Extracted {len(identity_data)} character identities ({len(ai_characters)} AI)"}]
         }
     except Exception as e:
         print(f"[IDENTITY] Exception: {e}")

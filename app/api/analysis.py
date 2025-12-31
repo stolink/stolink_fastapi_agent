@@ -1,4 +1,7 @@
 """Manual analysis trigger API (for testing)."""
+from typing import Optional
+import uuid
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -10,10 +13,13 @@ router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
 class ManualAnalysisRequest(BaseModel):
     """Request for manual analysis trigger."""
+    job_id: Optional[str] = None  # 입력값 사용, 없으면 자동 생성
     project_id: str
     document_id: str
     content: str
+    context: Optional[AnalysisContext] = None  # 입력값 사용, 없으면 기본값
     callback_url: str = "http://localhost:8080/api/internal/ai/analysis/callback"
+    trace_id: Optional[str] = None  # 입력값 사용, 없으면 자동 생성
 
 
 @router.post("/trigger")
@@ -26,9 +32,10 @@ async def trigger_analysis(request: ManualAnalysisRequest):
     Returns:
         Full analysis results including characters, events, relationships, etc.
     """
-    import uuid
-    
-    job_id = str(uuid.uuid4())
+    # 입력값 사용 또는 자동 생성
+    job_id = request.job_id or str(uuid.uuid4())
+    trace_id = request.trace_id or f"trace-{uuid.uuid4()}"
+    context = request.context or AnalysisContext()
     
     # Create task message
     task = AnalysisTaskMessage(
@@ -36,13 +43,14 @@ async def trigger_analysis(request: ManualAnalysisRequest):
         project_id=request.project_id,
         document_id=request.document_id,
         content=request.content,
-        context=AnalysisContext(),
-        callback_url=request.callback_url
+        context=context,
+        callback_url=request.callback_url,
+        trace_id=trace_id
     )
     
     try:
         # Run analysis
-        result = await run_analysis(task)
+        result = await run_analysis(task, trace_id=trace_id)
         
         return {
             "job_id": job_id,

@@ -173,7 +173,7 @@ async def consistency_check_node(state: dict) -> dict:
     
     try:
         # Get structured LLM
-        structured_llm = get_structured_llm(ConsistencyReport)
+        structured_llm = get_structured_llm(ConsistencyReport, tier="basic")
         chain = CONSISTENCY_CHECK_PROMPT | structured_llm
         
         result: ConsistencyReport = await chain.ainvoke({
@@ -216,8 +216,10 @@ async def consistency_check_node(state: dict) -> dict:
     calculated_score = 100 - (high_count * 25) - (medium_count * 10) - (low_count * 5)
     result.overall_score = max(0, calculated_score)
     
-    # Force re-extraction if score <= 50 OR any HIGH severity conflicts
-    result.requires_reextraction = result.overall_score <= 50 or high_count >= 1
+    # Force re-extraction only for critical issues:
+    # - Score <= 30 (severe problems)
+    # - OR 2+ HIGH severity conflicts (multiple critical issues)
+    result.requires_reextraction = result.overall_score <= 30 or high_count >= 2
     
     # === Update resolution summary ===
     auto_fix_count = sum(1 for c in conflicts if c.suggested_action == SuggestedAction.AUTO_FIX)

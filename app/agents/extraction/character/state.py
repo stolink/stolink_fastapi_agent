@@ -12,6 +12,7 @@ class CharacterTeamState(TypedDict, total=False):
     # Input from main pipeline
     content: str
     retry_count: int
+    existing_characters: list  # For ID reuse
     
     # Sub-agent results (keyed by character name)
     char_identity: Optional[dict]        # {name: {profile, role, ...}}

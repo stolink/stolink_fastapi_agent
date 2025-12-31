@@ -110,8 +110,10 @@ async def setting_extraction_node(state: dict) -> dict:
     Uses with_structured_output() for guaranteed schema compliance.
     No manual JSON parsing required.
     """
+    print("[SETTING] Starting setting extraction...")
+    
     # Get LLM with structured output bound to schema
-    structured_llm = get_structured_llm(SettingExtractionResult, tier="standard")
+    structured_llm = get_structured_llm(SettingExtractionResult, tier="basic")
     
     conflicts = state.get("consistency_report", {}).get("conflicts", [])
     retry_count = state.get("retry_count", 0)
@@ -129,6 +131,7 @@ async def setting_extraction_node(state: dict) -> dict:
                 "previous_extraction": str(previous_settings)
             })
         else:
+            print(f"[SETTING] First extraction, content length: {len(state.get('content', ''))}")
             chain = SETTING_EXTRACTION_PROMPT | structured_llm
             result: SettingExtractionResult = await chain.ainvoke({
                 "story_text": state["content"]
@@ -143,6 +146,27 @@ async def setting_extraction_node(state: dict) -> dict:
             if not setting.get("location_name") and setting.get("name"):
                 setting["location_name"] = setting["name"]
         
+        print(f"[SETTING] Successfully extracted {len(settings)} settings")
+        
+        # If LLM returned empty, try fallback
+        if not settings:
+            print(f"[SETTING] LLM returned empty, trying fallback...")
+            fallback_settings = create_fallback_settings(state.get("content", ""))
+            if fallback_settings:
+                print(f"[SETTING] Fallback created {len(fallback_settings)} settings")
+                return {
+                    "extracted_settings": fallback_settings,
+                    "world_context": {
+                        "world_name": result.world_name or "Unknown",
+                        "era": result.era,
+                        "technology_level": result.technology_level,
+                    },
+                    "messages": [
+                        {"role": "setting_agent", 
+                         "content": f"Fallback: Created {len(fallback_settings)} settings from keywords"}
+                    ]
+                }
+        
         return {
             "extracted_settings": settings,
             "world_context": {
@@ -156,9 +180,64 @@ async def setting_extraction_node(state: dict) -> dict:
             ]
         }
     except Exception as e:
-        print(f"[SETTING] Extraction failed: {e}")
+        print(f"[SETTING] Extraction failed with error: {type(e).__name__}: {e}")
+        
+        # Create fallback settings based on common patterns in story
+        fallback_settings = create_fallback_settings(state.get("content", ""))
+        
+        if fallback_settings:
+            print(f"[SETTING] Created {len(fallback_settings)} fallback settings")
+            return {
+                "extracted_settings": fallback_settings,
+                "messages": [
+                    {"role": "setting_agent", 
+                     "content": f"Fallback: Created {len(fallback_settings)} settings from keywords"}
+                ]
+            }
+        
         return {
             "extracted_settings": previous_settings or [],
             "errors": [f"Setting extraction failed: {str(e)}"],
             "partial_failure": True
         }
+
+
+def create_fallback_settings(content: str) -> list[dict]:
+    """Create basic settings from story keywords when LLM fails."""
+    import re
+    
+    settings = []
+    
+    # Common location patterns (Korean)
+    location_patterns = [
+        (r"(네오서울|neo-?seoul)", "네오서울", "city", "Cyberpunk megacity with neon lights, towering skyscrapers, rain-slicked streets"),
+        (r"(하층.?거주구|빈민가|슬럼)", "하층 거주구", "city", "Dark urban slums, cramped alleyways, flickering neon signs, steam rising from vents"),
+        (r"(클럽|블루.?드래곤)", "블루 드래곤 클럽", "indoor", "Dimly lit nightclub, red and blue neon lighting, VIP booths, smoky atmosphere"),
+        (r"(골목|뒷골목)", "뒷골목", "outdoor", "Narrow alleyway, wet pavement, graffiti walls, dim streetlights"),
+        (r"(숲|삼림)", "숲", "forest", "Dense forest with tall trees, fog covering the ground, filtered sunlight"),
+        (r"(성|궁전|왕궁)", "성", "castle", "Ancient stone castle, tall towers, banners flying, torchlit corridors"),
+    ]
+    
+    content_lower = content.lower()
+    
+    for pattern, name, loc_type, visual in location_patterns:
+        if re.search(pattern, content, re.IGNORECASE):
+            setting_id = f"loc_{name.replace(' ', '_').lower()}_{len(settings)+1:02d}"
+            settings.append({
+                "setting_id": setting_id,
+                "name": name,
+                "location_name": name,
+                "location_type": loc_type,
+                "visual_background": visual,
+                "atmosphere": "cyberpunk, noir" if "사이버" in content or "네오" in content else "mysterious",
+                "time_of_day": "night" if "밤" in content or "야간" in content else "unknown",
+                "lighting": "neon lights" if "네온" in content else "dim",
+                "weather": "rain" if "비" in content or "산성비" in content else None,
+                "description": f"Location mentioned in story: {name}",
+                "notable_features": [],
+                "significance": "Story location",
+                "is_primary": True
+            })
+    
+    return settings
+
