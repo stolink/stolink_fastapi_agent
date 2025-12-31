@@ -23,6 +23,8 @@ FASTAPI_SCHEMA_REQUEST.md
 AI_BACKEND*.md
 JOB*.md
 ref.md
+docs
+
 
 
 # --- Python Compiled Files (자동 생성되는 파일들) ---
