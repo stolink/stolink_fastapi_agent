@@ -301,8 +301,17 @@ async def appearance_extraction_node(state: dict) -> dict:
     structured_llm = get_structured_llm(CharacterAppearanceResult, tier="standard")
     chain = APPEARANCE_EXTRACTION_PROMPT | structured_llm
     
-    # Get art style from state or use default
-    art_style = state.get("art_style", "fantasy illustration")
+    # Get art style from state or auto-detect from content
+    art_style = state.get("art_style")
+    if not art_style:
+        content = state.get("content", "").lower()
+        # Cyberpunk keywords detection
+        cyberpunk_keywords = ["사이버", "네온", "안드로이드", "임플란트", "홀로그램", "네오서울", 
+                              "cyberware", "cyberpunk", "android", "implant", "hologram", "neon"]
+        if any(kw in content for kw in cyberpunk_keywords):
+            art_style = "cyberpunk noir"
+        else:
+            art_style = "fantasy illustration"
     rendering_engine = state.get("rendering_engine")
     
     try:

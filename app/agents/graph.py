@@ -46,7 +46,7 @@ class AnalysisState(TypedDict, total=False):
     # Extraction results
     extracted_characters: list
     extracted_events: list
-    extracted_settings: dict
+    extracted_settings: list
     analyzed_dialogues: dict
     tracked_emotions: dict
     
@@ -98,6 +98,8 @@ async def extraction_node(state: dict) -> dict:
             "completed_agents": [],
             "errors": [],
             "messages": [],
+            # Pass existing characters for ID reuse
+            "existing_characters": state.get("existing_characters", []),
         }
         # CRITICAL: Set recursion_limit to prevent infinite loops
         result = await character_team_graph.ainvoke(
@@ -323,7 +325,7 @@ async def run_analysis_pipeline(
         "existing_settings": existing_settings or [],
         "extracted_characters": [],
         "extracted_events": [],
-        "extracted_settings": {},
+        "extracted_settings": [],
         "analyzed_dialogues": {},
         "tracked_emotions": {},
         "relationship_graph": {},

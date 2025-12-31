@@ -199,12 +199,8 @@ async def run_analysis(
             # Level 1 Extraction Results
             "characters": final_state.get("extracted_characters", []),
             "events": final_state.get("extracted_events", []),
-            # Safely handle settings (dict with 'settings' key or direct list)
-            "settings": (
-                final_state.get("extracted_settings", {}).get("settings", [])
-                if isinstance(final_state.get("extracted_settings"), dict)
-                else final_state.get("extracted_settings", [])
-            ),
+            # extracted_settings is now a list (fixed from dict)
+            "settings": final_state.get("extracted_settings", []),
             "relationships": final_state.get("relationship_graph", {}).get("relationships", []),
             
             # Level 1 Analysis Results

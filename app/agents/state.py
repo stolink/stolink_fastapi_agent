@@ -35,7 +35,7 @@ class AnalysisState(TypedDict, total=False):
     # Extraction results
     extracted_characters: list
     extracted_events: list
-    extracted_settings: dict
+    extracted_settings: list
     analyzed_dialogues: dict
     tracked_emotions: dict
     
@@ -114,8 +114,8 @@ class StoryAnalysisState(BaseModel):
         default_factory=list,
         description="Events extracted by EventExtractionAgent"
     )
-    extracted_settings: dict[str, Any] = Field(
-        default_factory=dict,
+    extracted_settings: list[dict[str, Any]] = Field(
+        default_factory=list,
         description="Settings extracted by SettingExtractorAgent"
     )
     analyzed_dialogues: dict[str, Any] = Field(

@@ -2070,6 +2070,145 @@ if phrase_pos == -1:
 
 ---
 
+#### 20. 성능 최적화 - LLM Tier 다운그레이드 (2025-12-30)
+
+**문제**: 5500자 소설 분석에 약 90초 소요 (과도한 처리 시간).
+
+**원인 분석**: 
+- 간단한 추출 작업(인벤토리, 성격, 배경)에도 고성능 모델(Claude 3.5 Haiku) 사용
+- LLM 호출당 응답 시간이 성능 병목
+
+**해결책**: 단순 추출 에이전트를 `basic` tier(Claude 3 Haiku)로 다운그레이드.
+
+| 에이전트 | 변경 전 | 변경 후 | 이유 |
+|---------|---------|---------|------|
+| inventory | standard | **basic** | 아이템 목록 추출은 단순 작업 |
+| personality | standard | **basic** | 성격 키워드 분류는 단순 작업 |
+| setting | standard | **basic** | 배경 묘사 추출은 단순 작업 |
+| stats | basic | basic (유지) | 이미 최적화됨 |
+| identity | standard | standard (유지) | Role 추론에 높은 정확도 필요 |
+| appearance | standard | standard (유지) | 시각 프롬프트 생성에 품질 필요 |
+| dialogue_mood | advanced | advanced (유지) | TTS 통합에 복잡한 분석 필요 |
+
+**예상 개선**: 처리 시간 20-30% 단축 (90초 → 60-70초)
+
+**수정된 파일**: 
+- `app/agents/extraction/character/inventory.py` - tier: standard → basic
+- `app/agents/extraction/character/personality.py` - tier: standard → basic
+- `app/agents/extraction/setting.py` - tier: standard → basic
+
+---
+
+#### 21. 재추출 루프로 인한 성능 저하 (2025-12-30)
+
+**문제**: 5500자 소설 분석 시간이 90초 → 409초로 4.5배 증가.
+
+**원인 분석**: 
+- Consistency Check의 `requires_reextraction` 조건이 너무 엄격함
+- 기존 조건: `score <= 50 OR HIGH severity >= 1` → 재추출 트리거
+- HIGH severity 1개만 있어도 전체 파이프라인 재실행 (최대 3회)
+
+**증상**:
+```
+[trace-xxx] Consistency requires re-extraction
+[trace-xxx] -> extraction (retry: 2/3)
+```
+
+**해결책**: 재추출 임계값 완화
+
+| 조건 | 변경 전 | 변경 후 |
+|------|---------|---------|
+| 점수 임계값 | ≤ 50 | **≤ 30** |
+| HIGH severity | ≥ 1개 | **≥ 2개** |
+
+**기대 효과**: 
+- 단일 HIGH severity 문제로는 재추출 안 함 (human_review로 처리)
+- 실제로 심각한 문제(점수 30 이하 또는 HIGH 2개 이상)만 재추출
+
+**수정된 파일**: 
+- `app/agents/analysis/consistency.py` - requires_reextraction 임계값 변경
+
+---
+
+#### 22. 종합 성능 최적화 (4가지 방안) - 2025-12-30
+
+**문제**: 
+1. Personality 추출 품질 저하 (빈 배열 반환)
+2. 캐릭터 이름 중복 (한글/영문 동일 인물 2번 추출)
+3. AI 캐릭터(ARIA)에 불필요한 에이전트 실행
+4. 처리 시간 ~94초
+
+**해결책**:
+
+**방안 1: Personality Agent Tier 복원**
+- 원인: `basic` tier(Haiku)가 빈 성격 배열 반환
+- 해결: `standard` tier로 복원
+- 파일: `personality.py`
+
+**방안 2: 캐릭터 이름 정규화**
+- 원인: LLM이 "세라"와 "Sera"를 별도 캐릭터로 추출
+- 해결: `identity.py`에 후처리 로직 추가
+  - 스토리에서 "베라(Vera)" 패턴 감지 → 영문 삭제
+  - 한글-로마자 변환으로 중복 감지 (리안 ↔ Lian)
+- 파일: `identity.py`
+
+**방안 3: AI 캐릭터 에이전트 스킵**
+- 원인: ARIA(뇌 임플란트 AI)에게도 appearance/inventory/stats 실행
+- 해결:
+  - `identity.py`: AI 캐릭터 감지 (`race`에 "인공지능", "임플란트" 등)
+  - `supervisor.py`: AI 캐릭터만 있을 경우 물리적 에이전트 스킵
+- 파일: `identity.py`, `supervisor.py`
+
+**방안 4: 배치 LLM 호출 (확인)**
+- 분석: 이미 에이전트별 1회 LLM 호출로 모든 캐릭터 처리 중
+- 상태: 추가 변경 불필요 (이미 최적화됨)
+
+**예상 효과**:
+- 품질: Personality 데이터 정상 추출
+- 정확도: 중복 캐릭터 제거 (7명 → 5명)
+- 속도: AI 캐릭터 스킵으로 ~10-15초 절감
+
+**수정된 파일**:
+- `app/agents/extraction/character/personality.py` - tier: basic → standard
+- `app/agents/extraction/character/identity.py` - 이름 정규화 + AI 감지
+- `app/agents/extraction/character/supervisor.py` - AI 캐릭터 에이전트 스킵
+
+---
+
+#### 23. max_tokens 티어별 최적화 - 2025-12-30
+
+**문제**: 모든 LLM 호출에 `max_tokens=4096` 사용으로 불필요한 토큰 생성 및 지연 발생.
+
+**해결책**: 티어별 최적화된 max_tokens 기본값 설정
+
+| Tier | 모델 | max_tokens | 용도 |
+|------|------|------------|------|
+| basic | Claude 3 Haiku | **1024** | 단순 분류, 라우팅 |
+| standard | Claude 3.5 Haiku | **2048** | 추출, 요약 |
+| advanced | Claude 4.5 Haiku | 4096 | 복잡한 분석 |
+
+**원리**:
+- LLM은 max_tokens까지 생성할 "여유"를 두고 추론
+- 작은 max_tokens = 더 빠른 토큰 생성 시작
+- 대부분의 에이전트는 2048 토큰 미만 응답
+
+**구현**:
+```python
+# llm.py
+model_configs = {
+    "basic": {"model_id": "...", "default_max_tokens": 1024},
+    "standard": {"model_id": "...", "default_max_tokens": 2048},
+    "advanced": {"model_id": "...", "default_max_tokens": 4096},
+}
+effective_max_tokens = config.get("default_max_tokens", 4096)
+```
+
+**예상 효과**: 에이전트당 1-2초 절감 (총 10-15초)
+
+**수정된 파일**: `app/agents/llm.py`
+
+---
+
 ## 템플릿 (새 이슈 추가 시 사용)
 
 ```markdown
