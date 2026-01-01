@@ -20,10 +20,14 @@ Your job is to analyze and map relationships between characters.
 ❌ BAD: "source": "the protagonist", "the healer"
 ✅ GOOD: "source": "서진", "target": "하나"  // Exact names from Available Characters
 
-=== RELATIONSHIP TYPES ===
-- FRIENDLY: 우정, 동료, 협력 관계
+=== RELATIONSHIP TYPES (Primary) ===
+- ALLY: 동맹, 동료, 협력 관계 (가장 일반적)
+- ENEMY: 적대 관계
 - RIVAL: 경쟁 관계 (적대적이진 않음)
-- ENEMY: 상호 적대 관계 (양쪽이 서로 적대시)
+- NEUTRAL: 중립, 특별한 관계 없음
+
+=== EXTENDED TYPES (Optional) ===
+- FRIENDLY: 우정 관계
 - FAMILY: 가족 관계
 - ROMANTIC: 연인, 호감
 - MENTOR: 스승-제자 관계 (스승 → 제자)
@@ -274,7 +278,7 @@ async def relationship_analysis_node(state: dict) -> dict:
                 edge = {
                     "source": rel.get("source"),
                     "target": rel.get("target"),
-                    "relationship_type": rel.get("relation_type", "FRIENDLY"),
+                    "relationship_type": rel.get("relation_type", "ALLY"),
                     "attributes": {
                         "strength": rel.get("strength", 5),
                         "description": rel.get("description", ""),

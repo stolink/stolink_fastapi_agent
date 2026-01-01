@@ -97,6 +97,20 @@ class CharacterIdentityResult(BaseModel):
 IDENTITY_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """You are an expert story analyst. Extract BASIC IDENTITY information for ALL characters.
 
+### CRITICAL: WHAT IS A CHARACTER? ###
+⚠️ A CHARACTER is a PERSON or BEING with sentience who can act, speak, or think.
+⚠️ A CHARACTER is NOT an object, item, weapon, clothing, or body part.
+
+✅ CHARACTERS: 진하, 세라, ARIA, 유민재, 리사 (people/beings with names who act in the story)
+❌ NOT CHARACTERS: 트렌치코트, 홀로그램 방패, 뇌 임플란트, 기계 팔, 메모리 칩, 검은 슈트, 플라즈마 건
+
+### EXCLUSION EXAMPLES ###
+- "낡은 트렌치코트" → This is CLOTHING, not a character
+- "홀로그램 방패" → This is a DEVICE, not a character
+- "뇌 임플란트" → This is an IMPLANT, not a character
+- "기계 팔" → This is a PROSTHETIC, not a character
+- "플라즈마 건" → This is a WEAPON, not a character
+
 ### LANGUAGE CONSISTENCY RULE ###
 Output ALL text in the SAME language as the input.
 If the story is in Korean, all values must be in Korean.
@@ -107,48 +121,29 @@ When a character is introduced as "베라(Vera)" or "리안(Lian)", extract ONLY
 The English in parentheses is just a transliteration hint - DO NOT create separate characters.
 ❌ BAD: Extract both "Vera" and "베라" as different characters
 ✅ GOOD: Extract only "베라" (use Korean name)
-❌ BAD: "name": "Lian"
-✅ GOOD: "name": "리안"
 
 ### EXTRACTION FOCUS ###
 For each character, extract:
 - name: Character's name as it appears in text (REQUIRED)
 - age: Exact age or estimate if mentioned
-  * "앳된 얼굴의 소년" → age inference: young/teen
-  * "소년" → infer age as teen (10-19)
-  * "노인" → infer age as elderly (60+)
 - gender: male/female/unknown
-- race: Race/species if mentioned
-- occupation: Job, class, or profession (e.g., "여전사", "기사", "마법사", "warrior", "knight")
-  * Look for descriptive terms like "전사", "기사", "왕", "상인", etc.
-  * This is IMPORTANT for character visualization (armor, weapons, attire)
+- race: Race/species if mentioned (e.g., human, android, AI)
+- occupation: Job, class, or profession
 - faction: Organization, group, or affiliation
 - role: Main story role (protagonist/antagonist/supporting/mentor/sidekick/other)
-  * IMPORTANT: Detect antagonist from context clues:
-    - Attacks/threatens the protagonist → likely antagonist
-    - Commands others to harm → likely antagonist  
-    - Uses hostile language (경멸, 살기, 위협) → likely antagonist
-    - Example: "베라의 눈빛이 살기로 번뜩였다" → role: "antagonist"
-- aliases: Any nicknames, titles, or REAL NAMES revealed later in the story
-  * IMPORTANT: If a character's TRUE IDENTITY is revealed (e.g., "세라 is actually 한채린"), add the real name to aliases
-  * Example: 세라's aliases should include "한채린" if revealed in story
-  * Include: nicknames, code names, birth names, secret identities
+- aliases: Any nicknames, titles, descriptive references, or REAL NAMES
 - status: alive/deceased/unknown
-- backstory: Background information using FALLBACK POLICY:
-  1. First: Extract specific past events if mentioned
-  2. Fallback: If no past events, use current status description (e.g., "25세 여전사, 은빛 여명 기사단 소속")
-  3. NEVER leave backstory as null if ANY descriptive information exists
+- backstory: Background information
 
 ### RULES ###
-1. Extract ALL characters, even minor ones
+1. Extract ONLY characters (people/beings), NOT objects or items
 2. Use EXACT names from the text
-3. occupation and backstory should be filled whenever possible using context clues
-4. Focus ONLY on identity information, not appearance or personality"""),
+3. Focus ONLY on identity information, not appearance or personality"""),
     ("human", """Story text:
 {story_text}
 
-Extract identity information for all characters.
-IMPORTANT: Fill occupation and backstory using context clues - do not leave them null if descriptive information exists.""")
+Extract identity information for all CHARACTERS (people/beings who act in the story).
+DO NOT extract items, weapons, clothing, or devices as characters.""")
 ])
 
 
@@ -224,6 +219,27 @@ async def identity_extraction_node(state: dict) -> dict:
     structured_llm = get_structured_llm(CharacterIdentityResult, tier="standard")
     chain = IDENTITY_EXTRACTION_PROMPT | structured_llm
     
+    # === ITEM FILTER: Names that should NOT be characters ===
+    ITEM_KEYWORDS = [
+        # Cyberpunk items
+        "트렌치코트", "홀로그램 방패", "뇌 임플란트", "기계 팔", "메모리 칩", 
+        "검은 슈트", "플라즈마 건", "홀로그램 인터페이스", "임플란트", "칩",
+        # Generic items
+        "방패", "총", "건", "슈트", "코트", "칼", "검", "갑옷", "무기",
+        # English items
+        "shield", "gun", "suit", "coat", "sword", "armor", "weapon", "implant", "chip"
+    ]
+    
+    def is_likely_item(name: str) -> bool:
+        """Check if name looks like an item rather than a character."""
+        # Normalize name (remove spaces) for matching
+        name_normalized = name.replace(" ", "").lower()
+        for keyword in ITEM_KEYWORDS:
+            keyword_normalized = keyword.replace(" ", "").lower()
+            if keyword_normalized in name_normalized or keyword in name:
+                return True
+        return False
+    
     try:
         result: CharacterIdentityResult = await chain.ainvoke({
             "story_text": state["content"]
@@ -231,8 +247,20 @@ async def identity_extraction_node(state: dict) -> dict:
         
         # Convert to dict keyed by character name
         identity_data = {}
+        filtered_count = 0
+        all_names = [char.name for char in result.characters]
+        print(f"[IDENTITY] LLM extracted names: {all_names}")
+        
         for char in result.characters:
+            # Filter out items that LLM incorrectly identified as characters
+            if is_likely_item(char.name):
+                print(f"[IDENTITY] Filtered out item: '{char.name}' (not a character)")
+                filtered_count += 1
+                continue
             identity_data[char.name] = char.model_dump()
+        
+        if filtered_count > 0:
+            print(f"[IDENTITY] Filtered {filtered_count} items from character list")
         
         # === Method 2: Name Normalization ===
         identity_data = normalize_character_names(identity_data, state["content"])

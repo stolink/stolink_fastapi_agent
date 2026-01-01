@@ -16,13 +16,13 @@ from app.agents.llm import get_structured_llm
 
 # === Simplified Schema ===
 class Relationship(BaseModel):
-    """Single relationship entry - simplified for reliable extraction."""
+    """Single relationship entry - matches result.json schema."""
     target: str = Field(..., description="Target character name")
-    type: str = Field(..., description="FRIEND/ENEMY/FAMILY/ROMANTIC/MENTOR/RIVAL/ALLY/BETRAYER/NEUTRAL")
+    type: str = Field(..., description="ALLY/ENEMY/RIVAL/NEUTRAL")
     strength: int = Field(5, ge=1, le=10, description="Relationship intensity 1-10")
     description: Optional[str] = Field(None, description="Brief description of relationship")
     public_stance: Optional[str] = Field(None, description="Outward: ALLY/NEUTRAL/ENEMY/RESPECT")
-    private_feeling: Optional[str] = Field(None, description="Inner: TRUST/DISTRUST/LOVE/HATE/GUILT")
+    private_feeling: Optional[str] = Field(None, description="Inner: TRUST/DISTRUST/LOVE/HATE/FEAR/GUILT/CURIOSITY/ANGER")
 
 
 class CharacterRelations(BaseModel):
@@ -100,29 +100,43 @@ RELATIONS_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
 
 ### RULES ###
 1. Output in the SAME language as the input
-2. Use ONLY Korean names when character is "베라(Vera)" → use "베라"
+2. Use ONLY Korean names when character has format "베라(Vera)" → use "베라"
 3. Create SEPARATE entries for each direction (A→B and B→A)
 4. ONLY extract relationships that are EXPLICITLY shown in the text
+5. You MUST extract relationships for ALL characters listed in "Available Characters"
 
 ### RELATIONSHIP TYPES ###
-FRIEND, ENEMY, FAMILY, ROMANTIC, MENTOR, RIVAL, ALLY, BETRAYER, NEUTRAL
+ALLY, ENEMY, RIVAL, NEUTRAL
 
 ### PUBLIC vs PRIVATE ###
 - public_stance: What they SHOW (ALLY/NEUTRAL/ENEMY/RESPECT)
-- private_feeling: What they FEEL (TRUST/DISTRUST/LOVE/HATE/GUILT)
+- private_feeling: What they FEEL (TRUST/DISTRUST/LOVE/HATE/FEAR/GUILT/CURIOSITY/ANGER)
 
-### OUTPUT FORMAT ###
-For each character, list their relationships with:
-- target: Who they relate to
-- type: Relationship type
-- strength: 1-10
-- description: Brief description
-- public_stance: External behavior
-- private_feeling: Internal emotion"""),
+### OUTPUT EXAMPLE ###
+{{
+  "characters": [
+    {{
+      "name": "진하",
+      "relations": [
+        {{"target": "세라", "type": "ALLY", "strength": 7, "description": "의뢰인을 보호하려 함", "public_stance": "ALLY", "private_feeling": "CURIOSITY"}},
+        {{"target": "유민재", "type": "ENEMY", "strength": 8, "description": "적대적 대립", "public_stance": "ENEMY", "private_feeling": "ANGER"}}
+      ]
+    }},
+    {{
+      "name": "세라",
+      "relations": [
+        {{"target": "진하", "type": "ALLY", "strength": 7, "description": "자신을 도와주는 탐정", "public_stance": "ALLY", "private_feeling": "TRUST"}}
+      ]
+    }}
+  ]
+}}"""),
     ("human", """Story text:
 {story_text}
 
-Extract relationships for ALL characters who interact.
+Available Characters:
+{character_list}
+
+Extract relationships for ALL characters in the list who interact.
 Keep descriptions SHORT (under 20 words).
 Create BOTH directions (A→B and B→A) for each relationship.""")
 ])
@@ -134,9 +148,17 @@ async def relations_extraction_node(state: dict) -> dict:
     structured_llm = get_structured_llm(CharacterRelationsResult, tier="standard")
     chain = RELATIONS_EXTRACTION_PROMPT | structured_llm
     
+    # Get available characters from state (extracted by identity agent)
+    identities = state.get("char_identity", {})
+    character_names = list(identities.keys()) if identities else []
+    char_list_str = ", ".join(character_names) if character_names else "Detect from text"
+    
+    print(f"[RELATIONS] Available characters: {char_list_str}")
+    
     try:
         result: CharacterRelationsResult = await chain.ainvoke({
-            "story_text": state["content"]
+            "story_text": state["content"],
+            "character_list": char_list_str
         })
         
         relations_data = {}

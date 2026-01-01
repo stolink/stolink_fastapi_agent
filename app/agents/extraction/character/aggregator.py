@@ -456,6 +456,7 @@ def build_name_merge_map(all_raw_names: set, dynamic_mapping: dict = None) -> di
 
 
 
+
 def apply_safe_defaults(data: dict, defaults: dict) -> dict:
     """Apply safe defaults for null values."""
     result = {}
@@ -468,6 +469,34 @@ def apply_safe_defaults(data: dict, defaults: dict) -> dict:
     return result
 
 
+def _simplify_inventory(inv_data: dict) -> list[dict]:
+    """Simplify inventory to a single array with only item_id, name, description.
+    
+    Merges equipped_items, bag_items, quest_items into one list.
+    """
+    if not inv_data:
+        return []
+    
+    simplified = []
+    item_counter = 1
+    
+    # Merge all inventory categories
+    all_items = []
+    all_items.extend(inv_data.get("equipped_items", []))
+    all_items.extend(inv_data.get("bag_items", []))
+    all_items.extend(inv_data.get("quest_items", []))
+    
+    for item in all_items:
+        if isinstance(item, dict):
+            simplified.append({
+                "item_id": item.get("item_id") or f"item-{item_counter:03d}",
+                "name": item.get("name", "Unknown Item"),
+                "description": item.get("description", "")
+            })
+            item_counter += 1
+    
+    return simplified
+
 def merge_character_data(
     identity: dict,
     appearance: dict,
@@ -476,7 +505,8 @@ def merge_character_data(
     dialogue_mood: dict,
     inventory: dict = None,
     existing_characters: list = None,
-    story_text: str = None
+    story_text: str = None,
+    extracted_events: list = None
 ) -> list[dict]:
     """Merge sub-agent results by character name into FullCharacter format.
     
@@ -498,6 +528,19 @@ def merge_character_data(
     if story_text:
         dynamic_mapping = extract_name_pairs_from_text(story_text)
         print(f"[AGGREGATOR] Dynamic name mapping from story: {dynamic_mapping}")
+    
+    # === BUILD CHARACTER -> EVENT_IDS MAPPING ===
+    char_to_events = {}
+    if extracted_events:
+        for event in extracted_events:
+            event_id = event.get("event_id")
+            if event_id:
+                for participant in event.get("participants", []):
+                    if participant not in char_to_events:
+                        char_to_events[participant] = []
+                    if event_id not in char_to_events[participant]:
+                        char_to_events[participant].append(event_id)
+        print(f"[AGGREGATOR] Character-Event mapping: {len(char_to_events)} characters mapped")
     
     # Build existing character lookup
     existing_lookup = {}
@@ -611,7 +654,12 @@ def merge_character_data(
                 "gender": id_data.get("gender"),
                 "race": id_data.get("race"),
                 "mbti": None,
-                "personality": per_data.get("core_traits", []),
+                # personality as object with core_traits, flaws, values
+                "personality": {
+                    "core_traits": per_data.get("core_traits", []),
+                    "flaws": per_data.get("flaws", []),
+                    "values": per_data.get("values", []),
+                },
                 "backstory": id_data.get("backstory"),
                 # === FACTION: Use defaults (stats agent removed) ===
                 "faction": {
@@ -642,15 +690,10 @@ def merge_character_data(
                     # Removed: rendering_engine
                 },
             },
-            "personality": {
-                "core_traits": per_data.get("core_traits", []),
-                "flaws": per_data.get("flaws", []),
-                "values": per_data.get("values", []),
-            },
-            # Removed: visual
+            # Removed: duplicate personality field (now in profile.personality)
             "relations": {
                 "graph": rel_data.get("relations", []),
-                "event_refs": [],  # Simplified schema - events handled separately
+                "event_refs": char_to_events.get(name, []),  # Populated from events
                 "location_context": rel_data.get("location_context") or "Unknown",
             },
             "current_mood": dm_data.get("current_mood", {
@@ -660,11 +703,8 @@ def merge_character_data(
             }),
             # Removed: dialogue
             # Removed: stats, state, combat, social, economy, final_stats
-            "inventory": {
-                "equipped_items": inv_data.get("equipped_items", []),
-                "bag_items": inv_data.get("bag_items", []),
-                "quest_items": inv_data.get("quest_items", []),
-            },
+            # === SIMPLIFIED INVENTORY: Single array with item_id, name, description only ===
+            "inventory": _simplify_inventory(inv_data),
             "meta": {
                 "created_at": None,
                 "updated_at": None,
@@ -704,18 +744,52 @@ async def character_aggregator_node(state: dict) -> dict:
     # Extract story_text for dynamic name mapping (Korean/English pairs)
     story_text = state.get("story_text") or state.get("content") or ""
     
+    # Extract events for event_refs population
+    extracted_events = state.get("extracted_events") or []
+    
     characters = merge_character_data(
         identity, appearance, personality, relations, dialogue_mood, inventory,
         existing_characters=existing_characters,
-        story_text=story_text
+        story_text=story_text,
+        extracted_events=extracted_events
     )
     
+    # === FINAL FILTER: Remove items that were wrongly identified as characters ===
+    ITEM_KEYWORDS = [
+        "트렌치코트", "홀로그램 방패", "뇌 임플란트", "기계 팔", "메모리 칩", 
+        "검은 슈트", "플라즈마 건", "홀로그램 인터페이스", "임플란트", "칩",
+        "방패", "총", "건", "슈트", "코트", "칼", "검", "갑옷", "무기",
+        "shield", "gun", "suit", "coat", "sword", "armor", "weapon", "implant", "chip"
+    ]
+    
+    def is_likely_item(name: str) -> bool:
+        if not name:
+            return False
+        name_normalized = name.replace(" ", "").lower()
+        for keyword in ITEM_KEYWORDS:
+            keyword_lower = keyword.lower()
+            if keyword in name or keyword_lower in name_normalized:
+                return True
+        return False
+    
+    original_count = len(characters)
+    filtered_characters = []
+    for char in characters:
+        char_name = char.get("profile", {}).get("name", "") or ""
+        if is_likely_item(char_name):
+            print(f"[AGGREGATOR] Filtered out item: '{char_name}' (not a character)")
+            continue
+        filtered_characters.append(char)
+    
+    if len(filtered_characters) < original_count:
+        print(f"[AGGREGATOR] Filtered {original_count - len(filtered_characters)} non-character entries")
+    
     return {
-        "extracted_characters": characters,
+        "extracted_characters": filtered_characters,
         "completed_agents": (state.get("completed_agents") or []) + ["aggregator"],
         "messages": [{
             "role": "aggregator",
-            "content": f"Merged {len(characters)} characters from 7 sub-agents"
+            "content": f"Merged {len(filtered_characters)} characters from 7 sub-agents"
         }]
     }
 

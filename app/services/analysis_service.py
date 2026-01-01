@@ -195,13 +195,68 @@ async def run_analysis(
             status = "COMPLETED"
         
         # Compile result for callback - matches Spring Boot FullAnalysisResult
+        
+        # Extract relationships from multiple sources
+        extracted_characters = final_state.get("extracted_characters", [])
+        
+        # Source 1: relationship_graph (from relationship_analysis_node)
+        relationships = final_state.get("relationship_graph", {}).get("relationships", [])
+        
+        # Source 2: Extract from characters' relations.graph if relationship_graph is empty
+        if not relationships:
+            for char in extracted_characters:
+                char_name = char.get("name") or (char.get("profile", {}) or {}).get("name", "Unknown")
+                relations = char.get("relations", {})
+                graph = relations.get("graph", [])
+                for rel in graph:
+                    if isinstance(rel, dict):
+                        relationships.append({
+                            "source": char_name,
+                            "target": rel.get("target", ""),
+                            "type": rel.get("type", "ALLY"),
+                            "strength": rel.get("strength", 5),
+                            "description": rel.get("description", ""),
+                            "public_stance": rel.get("public_stance"),
+                            "private_feeling": rel.get("private_feeling"),
+                        })
+        
+        # Reverse mapping: Populate each character's relations.graph from relationships
+        if relationships:
+            # Build a lookup: character_name -> list of their relationships
+            char_relations_map = {}
+            for rel in relationships:
+                source = rel.get("source", "")
+                if source:
+                    if source not in char_relations_map:
+                        char_relations_map[source] = []
+                    char_relations_map[source].append({
+                        "target": rel.get("target", ""),
+                        "type": rel.get("type", "ALLY"),
+                        "strength": rel.get("strength", 5),
+                        "description": rel.get("description", ""),
+                        "public_stance": rel.get("public_stance"),
+                        "private_feeling": rel.get("private_feeling"),
+                    })
+            
+            # Update each character's relations.graph
+            for char in extracted_characters:
+                char_name = char.get("name") or (char.get("profile", {}) or {}).get("name", "")
+                if char_name and char_name in char_relations_map:
+                    # Ensure relations dict exists
+                    if "relations" not in char:
+                        char["relations"] = {"graph": [], "event_refs": [], "location_context": "Unknown"}
+                    # Only populate if graph is empty
+                    if not char["relations"].get("graph"):
+                        char["relations"]["graph"] = char_relations_map[char_name]
+                        print(f"[ANALYSIS] Populated {len(char_relations_map[char_name])} relations for '{char_name}'")
+        
         result = {
             # Level 1 Extraction Results
-            "characters": final_state.get("extracted_characters", []),
+            "characters": extracted_characters,
             "events": final_state.get("extracted_events", []),
             # extracted_settings is now a list (fixed from dict)
             "settings": final_state.get("extracted_settings", []),
-            "relationships": final_state.get("relationship_graph", {}).get("relationships", []),
+            "relationships": relationships,
             
 
             

@@ -173,6 +173,35 @@ async def extraction_node(state: dict) -> dict:
     
     event_count = len(updates.get("extracted_events", []))
     print(f"[EXTRACTION] Phase 2 완료: Events={event_count}")
+    
+    # === POST-PROCESSING: Link events to characters via event_refs ===
+    extracted_characters = updates.get("extracted_characters", [])
+    extracted_events = updates.get("extracted_events", [])
+    
+    if extracted_characters and extracted_events:
+        print(f"[EXTRACTION] Post-processing: Linking {len(extracted_events)} events to {len(extracted_characters)} characters")
+        
+        # Build character name -> event_ids mapping
+        char_to_events = {}
+        for event in extracted_events:
+            event_id = event.get("event_id")
+            if event_id:
+                for participant in event.get("participants", []):
+                    if participant not in char_to_events:
+                        char_to_events[participant] = []
+                    if event_id not in char_to_events[participant]:
+                        char_to_events[participant].append(event_id)
+        
+        # Update each character's event_refs
+        for char in extracted_characters:
+            char_name = char.get("profile", {}).get("name") or char.get("name", "")
+            if char_name and char_name in char_to_events:
+                if "relations" in char:
+                    char["relations"]["event_refs"] = char_to_events[char_name]
+                print(f"[EXTRACTION] Linked {len(char_to_events[char_name])} events to {char_name}")
+        
+        updates["extracted_characters"] = extracted_characters
+    
     print(f"[EXTRACTION] Done: chars={char_count}, settings={setting_count}, events={event_count}")
     return updates
 

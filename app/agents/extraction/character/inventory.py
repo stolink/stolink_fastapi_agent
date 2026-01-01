@@ -13,7 +13,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional
 
-from app.agents.llm import get_structured_llm
+import json
+import re
+from app.agents.llm import get_structured_llm, get_bedrock_llm
 
 
 # === Slot Inference Rules ===
@@ -58,18 +60,18 @@ class ItemStats(BaseModel):
 
 class InventoryItem(BaseModel):
     """Single item entry with stats and inferred values."""
-    item_id: Optional[str] = Field(None, description="Item ID if mentioned (e.g., 'SWORD_001')")
+    item_id: Optional[str] = Field(None, description="Item ID")
     name: str = Field(..., description="Item name")
     # Removed: item_type
-    quantity: int = Field(1, ge=1, description="Number of items")
+    quantity: int = Field(1, description="Number of items")
     
-    # Rarity and Value
-    rarity: str = Field("COMMON", description="COMMON/UNCOMMON/RARE/EPIC/LEGENDARY")
-    estimated_value: Optional[int] = Field(None, ge=0, description="Estimated gold value")
+    # Rarity and Value - permissive types
+    rarity: Optional[str] = Field("COMMON", description="COMMON/UNCOMMON/RARE/EPIC/LEGENDARY")
+    estimated_value: Optional[int] = Field(None, description="Estimated gold value")
     
     # Equipment state
     equipped: bool = Field(False, description="Whether currently equipped")
-    slot: Optional[str] = Field(None, description="MAIN_HAND/OFF_HAND/HEAD/BODY/LEGS/FEET/HANDS/ACCESSORY/QUICK_SLOT")
+    slot: Optional[str] = Field(None, description="Equipment slot")
     
     # Removed: stats
     
@@ -78,12 +80,12 @@ class InventoryItem(BaseModel):
     @model_validator(mode='after')
     def infer_value(self):
         """Calculate estimated_value based on rarity."""
-        # Value estimation based on rarity only (item_type removed)
         if self.estimated_value is None:
-            rarity = self.rarity or "COMMON"
-            base_prices = BASE_PRICES.get(rarity, BASE_PRICES["COMMON"])
+            # Safer access to rarity
+            rarity_val = self.rarity if self.rarity else "COMMON"
+            # Basic fallback logic
+            base_prices = BASE_PRICES.get(rarity_val, BASE_PRICES["COMMON"])
             self.estimated_value = base_prices.get("MISC", 5)
-        
         return self
 
 
@@ -173,100 +175,150 @@ class CharacterInventoryResult(BaseModel):
 INVENTORY_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """You are an expert story analyst and game item specialist. Extract ITEMS and EQUIPMENT for characters.
 
-### CRITICAL: ANTI-HALLUCINATION RULES ###
-⚠️ NEVER invent or imagine items that are NOT explicitly mentioned in the text.
-⚠️ If NO items are mentioned, return has_inventory_data=false and EMPTY lists.
-⚠️ "검은 머리카락" (black hair) is NOT an item - it's a physical description.
-⚠️ "경계심" (vigilance) is NOT an item - it's an emotion.
-⚠️ Only extract PHYSICAL OBJECTS that characters POSSESS or USE.
+### CRITICAL: ITEM EXTRACTION RULES ###
+⚠️ Extract ANY physical object that characters POSSESS, WEAR, USE, or CARRY.
+⚠️ Items include: weapons, clothing, tech devices, implants, tools, accessories
 
 ### WHAT IS AN ITEM? ###
-✅ Items: 검, 갑옷, 물약, 반지, 골드, 지팡이, 활, 방패
-❌ NOT Items: 머리카락, 눈빛, 감정, 신체 부위, 날씨, 장소
+✅ Items: 검, 갑옷, 트렌치코트, 임플란트, 권총, 칩, 홀로그램 방패, 단검, 증강 의안
+✅ Cyberpunk Items: 뇌 임플란트, 증강 의안, 기계 팔, 플라즈마 건, 메모리 칩
+❌ NOT Items: 머리카락, 눈빛, 감정, 신체 부위(자연적인), 날씨, 장소
 
 ### LANGUAGE CONSISTENCY RULE ###
 Output ALL text in the SAME language as the input.
-If the story is in Korean, ALL item names must be in Korean:
-❌ BAD: "Dagger", "Storm Staff", "Red Velvet Coat"  
-✅ GOOD: "단검", "폭풍의 지팡이", "붉은 벨벳 코트"
-Do NOT translate Korean item names to English.
-
-### ITEM TYPES ###
-- WEAPON: Swords, bows, staffs, daggers (단검, 검, 지팡이, 활)
-- ARMOR: Helmets, chestplates, gauntlets, boots
-- ACCESSORY: Rings, necklaces, cloaks, pocket watches (회중시계)
-- CONSUMABLE: Potions, food
-- QUEST: Key story items, magical scrolls (황금빛 두루마리), ritual objects (영원의 성배)
-- MATERIAL: Crafting materials, ingredients
-- MISC: Other items
-
-### CRITICAL: QUEST ITEMS ###
-Important named items mentioned in the story should be QUEST items:
-- 황금빛 두루마리 → QUEST item (베라 소유)
-- 영원의 성배 → QUEST item (if possessed)
-- Named scrolls, artifacts, or MacGuffins → QUEST
-
-### WEAPON EXTRACTION ###
-단검을 잡다/들다/뽑다 → WEAPON equipped_items
-Example: "리안은 이를 악물며 단검을 고쳐 잡았다" → 리안 has 단검 in equipped_items
-
-### RARITY INFERENCE ###
-- LEGENDARY: "전설의", "신화의", "legendary"
-- EPIC: "영웅의", "고대의", "epic"
-- RARE: "희귀한", "빛나는", "rare"
-- UNCOMMON: "강화된", "uncommon"
-- COMMON: Default if no special modifiers
-
-### EXTRACTION RULES ###
-1. **has_inventory_data**: Set to true ONLY if physical items/equipment are mentioned
-2. If no items → has_inventory_data=false, equipped_items=[], bag_items=[]
-3. Do NOT extract body parts, clothing descriptions without item context
-4. "검은 갑옷을 입고 있었다" → YES, this is armor
-5. "검은 머리카락을 휘날리며" → NO, this is NOT an item
+If the story is in Korean, ALL item names must be in Korean.
 
 ### OWNERSHIP INFERENCE RULES ###
-1. If a character USES an item (e.g., throws bag, drinks potion), they OWN it.
-2. Example: "Tio threw his bag full of explosives" → Tio has "bag" and "explosives" in inventory.
-3. Don't assign items to the target of an attack unless the text says they caught/took it.
+1. If a character WEARS clothing (코트, 슈트) → EQUIPPED
+2. If a character HAS implants/enhancements → EQUIPPED  
+3. If a character USES weapons → EQUIPPED
+4. If a character CARRIES items → BAG
+5. Example: "낡은 트렌치코트를 입은 진하" → 진하 has "트렌치코트" equipped
+6. Example: "기계 팔을 가진 유민재" → 유민재 has "기계 팔" equipped
 
-### CRITICAL: NO DUPLICATION RULE ###
-⚠️ An item can ONLY be in ONE place:
-- If character is HOLDING/WEARING/USING an item → equipped_items ONLY
-- If item is IN A BAG/POCKET/STORED → bag_items ONLY  
-❌ BAD: Same item in both equipped_items AND bag_items
-✅ GOOD: Each item appears in exactly one list"""),
+### OUTPUT EXAMPLE ###
+{{
+  "has_inventory_data": true,
+  "characters": [
+    {{
+      "name": "진하",
+      "equipped_items": [
+        {{"name": "낡은 트렌치코트", "description": "오래된 탐정 코트", "rarity": "COMMON", "equipped": true}},
+        {{"name": "리볼버", "description": "구식 38구경 권총", "rarity": "COMMON", "equipped": true}}
+      ],
+      "bag_items": [
+        {{"name": "라이터", "description": "금속 지포 라이터", "rarity": "COMMON", "equipped": false}}
+      ]
+    }},
+    {{
+      "name": "세라",
+      "equipped_items": [
+        {{"name": "기계 팔", "description": "최신형 사이버네틱 의수", "rarity": "RARE", "equipped": true}},
+        {{"name": "홀로그램 방패", "description": "손목 내장형 방어 장치", "rarity": "UNCOMMON", "equipped": true}}
+      ],
+      "bag_items": [
+        {{"name": "메모리 칩", "description": "암호화된 데이터 칩", "rarity": "EPIC", "equipped": false}}
+      ]
+    }}
+  ]
+}}
+
+### EXTRACTION PATTERN ###
+Look for these patterns:
+- "~을 입은/입고", "~을 쥔/잡은", "~이 있는"
+- "그의/그녀의 ~", "~를 들고"
+- Descriptions of cybernetic enhancements, weapons, clothing"""),
     ("human", """Story text:
 {story_text}
 
-IMPORTANT: 
-- If NO physical items (weapons, armor, potions, gold) are mentioned, return has_inventory_data=false with EMPTY lists.
-- Do NOT hallucinate items from character descriptions like hair color or expressions.""")
+Available Characters:
+{character_list}
+
+Extract ALL physical items (weapons, clothing, implants, devices, accessories) that characters possess.
+IMPORTANT: If an item is mentioned near a character or being used by them, assume OWNERSHIP.""")
 ])
 
 
 # === Node Function ===
 async def inventory_extraction_node(state: dict) -> dict:
-    """Inventory Agent - Extracts items and equipment."""
-    # Use standard tier (Claude 3.5 Haiku) for better ownership inference
-    structured_llm = get_structured_llm(CharacterInventoryResult, tier="standard")
-    chain = INVENTORY_EXTRACTION_PROMPT | structured_llm
+    """Inventory Agent - Extracts items and equipment using Raw LLM to avoid Pydantic validation issues."""
+    
+    # Use standard tier for speed/stability
+    llm = get_bedrock_llm(tier="standard")
+    chain = INVENTORY_EXTRACTION_PROMPT | llm
+    
+    # Get available characters from state
+    identities = state.get("char_identity", {})
+    character_names = list(identities.keys()) if identities else []
+    char_list_str = ", ".join(character_names) if character_names else "Detect from text"
+    
+    print(f"[INVENTORY] Available characters: {char_list_str}")
     
     try:
-        result: CharacterInventoryResult = await chain.ainvoke({
-            "story_text": state["content"]
+        print("[INVENTORY] Invoking Raw LLM chain...")
+        # Invoke and get AIMessage
+        response = await chain.ainvoke({
+            "story_text": state["content"],
+            "character_list": char_list_str
         })
         
+        # Parse JSON from content
+        content = response.content
+        # Remove potential markdown code blocks
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0]
+        elif "```" in content:
+             content = content.split("```")[1].split("```")[0]
+        
+        content = content.strip()
+        print(f"[INVENTORY] Raw response length: {len(content)}")
+        
+        try:
+            import json
+            data = json.loads(content)
+        except json.JSONDecodeError as e:
+            print(f"[INVENTORY] JSON Decode Error: {e}")
+            print(f"[INVENTORY] Failed content snippet: {content[:100]}...")
+            return {
+                "char_inventory": {},
+                "completed_agents": (state.get("completed_agents") or []) + ["inventory"],
+                "errors": (state.get("errors") or []) + [f"Inventory JSON Error: {str(e)}"]
+            }
+
+        # Convert raw dict to expected structure if needed, or pass as is
+        # Schema: {"characters": [{"name":..., "equipped_items": [], "bag_items": []}]}
+        
         inventory_data = {}
-        for char in result.characters:
-            inventory_data[char.name] = char.model_dump()
+        if isinstance(data, dict) and "characters" in data:
+            for char in data["characters"]:
+                char_name = char.get("name")
+                if char_name:
+                    # Validate/Clean items
+                    char["equipped_items"] = char.get("equipped_items", [])
+                    char["bag_items"] = char.get("bag_items", [])
+                    inventory_data[char_name] = char
+                    
+                    # Quick log
+                    e_count = len(char["equipped_items"])
+                    b_count = len(char["bag_items"])
+                    if e_count + b_count > 0:
+                        print(f"[INVENTORY] Extracted for '{char_name}': {e_count} E, {b_count} B")
+
+        has_data = len(inventory_data) > 0
+        print(f"[INVENTORY] Total characters with inventory data: {len(inventory_data)}")
         
         return {
             "char_inventory": inventory_data,
             "completed_agents": (state.get("completed_agents") or []) + ["inventory"],
-            "messages": [{"role": "inventory_agent", "content": f"Extracted inventory for {len(inventory_data)} characters (has_data: {result.has_inventory_data})"}]
+            "messages": [{"role": "inventory_agent", "content": f"Extracted inventory for {len(inventory_data)} characters"}]
         }
+        
     except Exception as e:
+        print(f"[INVENTORY] Critical Exception: {e}")
+        import traceback
+        traceback.print_exc()
         return {
             "char_inventory": {},
-            "errors": (state.get("errors") or []) + [f"Inventory extraction failed: {str(e)}"]
+            "completed_agents": (state.get("completed_agents") or []) + ["inventory"],
+            "errors": (state.get("errors") or []) + [f"Inventory Agent Failed: {str(e)}"]
         }
