@@ -16,7 +16,7 @@ from .personality import personality_extraction_node
 from .relations import relations_extraction_node
 from .dialogue_mood import dialogue_mood_extraction_node
 # Removed: stats_extraction_node
-from .inventory import inventory_extraction_node
+
 from .aggregator import character_aggregator_node
 
 
@@ -27,7 +27,7 @@ PARALLEL_AGENTS = {
     "relations": relations_extraction_node,
     "dialogue_mood": dialogue_mood_extraction_node,
     # Removed: stats
-    "inventory": inventory_extraction_node,
+
 }
 
 
@@ -54,7 +54,7 @@ async def parallel_extraction_node(state: CharacterTeamState) -> dict:
     # Method 3: Skip agents for pure AI characters (no physical body)
     if all_ai:
         # All characters are AI - skip physical agents
-        skip_agents = {"appearance", "inventory", "stats"}
+        skip_agents = {"appearance", "stats"}
         target_agents = [a for a in target_agents if a not in skip_agents]
         print(f"[Character Team] All AI characters - skipping: {skip_agents}")
     else:

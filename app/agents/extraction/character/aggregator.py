@@ -16,7 +16,7 @@ import boto3
 import json
 from typing import Any
 
-from app.schemas.character_full import FullCharacter, FullCharacterExtractionResult
+from app.schemas.characters import FullCharacter, FullCharacterExtractionResult
 
 
 # === Embedding Generation ===
@@ -503,7 +503,6 @@ def merge_character_data(
     personality: dict,
     relations: dict,
     dialogue_mood: dict,
-    inventory: dict = None,
     existing_characters: list = None,
     story_text: str = None,
     extracted_events: list = None
@@ -558,8 +557,7 @@ def merge_character_data(
     all_raw_names.update(personality.keys())
     all_raw_names.update(relations.keys())
     all_raw_names.update(dialogue_mood.keys())
-    if inventory:
-        all_raw_names.update(inventory.keys())
+    all_raw_names.update(dialogue_mood.keys())
     
     # === DEDUPLICATION: Build canonical name mapping ===
     # This merges "Vera" and "베라" into a single character
@@ -605,7 +603,6 @@ def merge_character_data(
         per_data = get_merged_data(personality)
         rel_data = get_merged_data(relations)
         dm_data = get_merged_data(dialogue_mood)
-        inv_data = get_merged_data(inventory) if inventory else {}
         
         # Debug: Log relations data for each character
         rel_graph = rel_data.get("relations", [])
@@ -613,18 +610,6 @@ def merge_character_data(
         
         # Use canonical name for the character
         name = canonical_name
-        
-        # Calculate item bonuses for display
-        item_attack_bonus = 0
-        item_defense_bonus = 0
-        item_hp_bonus = 0
-        
-        for item in inv_data.get("equipped_items", []):
-            item_stats = item.get("stats", {})
-            if isinstance(item_stats, dict):
-                item_attack_bonus += item_stats.get("attack_bonus", 0) or 0
-                item_defense_bonus += item_stats.get("defense_bonus", 0) or 0
-                item_hp_bonus += item_stats.get("hp_bonus", 0) or 0
         
         # Build FullCharacter structure with improvements
         # Role inference: ALWAYS run and override if strong evidence exists
@@ -703,8 +688,7 @@ def merge_character_data(
             }),
             # Removed: dialogue
             # Removed: stats, state, combat, social, economy, final_stats
-            # === SIMPLIFIED INVENTORY: Single array with item_id, name, description only ===
-            "inventory": _simplify_inventory(inv_data),
+
             "meta": {
                 "created_at": None,
                 "updated_at": None,
@@ -732,7 +716,7 @@ async def character_aggregator_node(state: dict) -> dict:
     relations = state.get("char_relations") or {}
     dialogue_mood = state.get("char_dialogue_mood") or {}
     # Removed: stats = state.get("char_stats") or {}
-    inventory = state.get("char_inventory") or {}
+    # Removed: inventory = state.get("char_inventory") or {}
     
     # Extract existing_characters from context if available (from message context)
     # OR directly from state (from graph initial state)
@@ -748,7 +732,8 @@ async def character_aggregator_node(state: dict) -> dict:
     extracted_events = state.get("extracted_events") or []
     
     characters = merge_character_data(
-        identity, appearance, personality, relations, dialogue_mood, inventory,
+        identity, appearance, personality, relations,
+        dialogue_mood=dialogue_mood,
         existing_characters=existing_characters,
         story_text=story_text,
         extracted_events=extracted_events
