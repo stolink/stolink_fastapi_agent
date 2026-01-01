@@ -243,23 +243,16 @@ def validate_character_richness(state: dict) -> tuple:
             char.get("char_personality")
         )
         
-        # Check Inventory
-        has_inventory = bool(char.get("inventory") or char.get("char_inventory"))
-        
         # Check Stats
         has_stats = bool(char.get("stats") or char.get("char_stats"))
         
-        total_checks += 3
+        total_checks += 2
         if has_personality: richness_score += 1
-        if has_inventory: richness_score += 1
         if has_stats: richness_score += 1
         
         if not has_personality:
             warnings.append(f"Character '{name}' missing personality data")
             penalty += 2
-        if not has_inventory:
-            warnings.append(f"Character '{name}' missing inventory data")
-            penalty += 1 # Less critical
     
     # Cap penalty
     penalty = min(penalty, 15)
