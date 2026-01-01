@@ -72,8 +72,8 @@ def get_bedrock_llm(
         
     Tiers (Cost vs Performance):
         - basic: Claude 3 Haiku - Fast, cheap. For routing, simple classification.
-        - standard: Claude 3.5 Sonnet - Balanced. For extraction, summarization.
-        - advanced: Claude 3.5 Sonnet v2 - Best reasoning. For complex analysis, role inference.
+        - standard: Claude 3.5 Haiku - Balanced. For extraction, summarization.
+        - advanced: Claude 4.5 Haiku - Best reasoning. For complex analysis, role inference.
     """
     model_configs = {
         "basic": {
@@ -150,7 +150,7 @@ def get_basic_llm() -> ChatBedrockConverse:
 
 
 def get_standard_llm() -> ChatBedrockConverse:
-    """Get Standard tier LLM (Claude 3 Haiku)."""
+    """Get Standard tier LLM (Claude 3.5 Haiku)."""
     global STANDARD_LLM
     if STANDARD_LLM is None:
         STANDARD_LLM = get_bedrock_llm("standard")
@@ -158,7 +158,7 @@ def get_standard_llm() -> ChatBedrockConverse:
 
 
 def get_advanced_llm() -> ChatBedrockConverse:
-    """Get Advanced tier LLM (Claude 3 Haiku)."""
+    """Get Advanced tier LLM (Claude 4.5 Haiku)."""
     global ADVANCED_LLM
     if ADVANCED_LLM is None:
         ADVANCED_LLM = get_bedrock_llm("advanced")

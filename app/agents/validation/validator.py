@@ -235,8 +235,13 @@ def validate_character_richness(state: dict) -> tuple:
     for idx, char in enumerate(characters[:5]): # Check top 5 characters
         name = char.get("name") or (char.get("profile", {}) or {}).get("name") or f"Char_{idx}"
         
-        # Check Personality
-        has_personality = bool(char.get("personality") or char.get("char_personality"))
+        # Check Personality - Support new schema (profile.personality) and legacy (personality)
+        profile = char.get("profile", {}) or {}
+        has_personality = bool(
+            profile.get("personality") or 
+            char.get("personality") or 
+            char.get("char_personality")
+        )
         
         # Check Inventory
         has_inventory = bool(char.get("inventory") or char.get("char_inventory"))

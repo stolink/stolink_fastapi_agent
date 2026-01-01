@@ -5,11 +5,18 @@ from pydantic import BaseModel, Field
 
 
 class RelationType(str, Enum):
-    """Relationship type classification."""
-    ROMANCE = "Romance"
-    NORMAL = "Normal"
-    FRIENDLY = "Friendly"
-    HOSTILE = "Hostile"
+    """Relationship type classification - matches result.json schema."""
+    # Primary types used in result.json
+    ALLY = "ALLY"
+    ENEMY = "ENEMY"
+    RIVAL = "RIVAL"
+    NEUTRAL = "NEUTRAL"
+    # Extended types for Neo4j analysis
+    FRIENDLY = "FRIENDLY"
+    FAMILY = "FAMILY"
+    ROMANTIC = "ROMANTIC"
+    MENTOR = "MENTOR"
+    BETRAYED = "BETRAYED"
     UNKNOWN = "Unknown"
 
 
