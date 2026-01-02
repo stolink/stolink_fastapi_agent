@@ -1,6 +1,6 @@
 # StoLink AI Backend - Troubleshooting Guide
 
-> **Last Updated**: 2025-12-31
+> **Last Updated**: 2026-01-01
 
 이 문서는 개발 과정에서 발생한 주요 문제와 해결책을 기록합니다.
 
@@ -26,8 +26,11 @@
 16. [Appearance Agent - Production Level 업그레이드](#16-appearance-agent---production-level-업그레이드)
 17. [Story Extraction - 한글/영문 캐릭터 중복 및 추출 품질 개선](#17-story-extraction---한글영문-캐릭터-중복-및-추출-품질-개선)
 18. [Schema v2.0 리팩토링 및 Neo4j RAG 구현](#18-schema-v20-리팩토링-및-neo4j-rag-구현)
+19. [대용량 데이터 처리 아키텍처 재설계](#19-대용량-데이터-처리-아키텍처-재설계-architecture-redesign)
 
 ---
+
+
 
 ## 1. Setting Agent - 인물/사건 혼입 문제
 
@@ -2352,3 +2355,317 @@ OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 
 [결과]
 ```
 
+---
+
+## 19. 대용량 데이터 처리 아키텍처 재설계 (Architecture Redesign)
+
+### 📅 날짜
+2026-01-01
+
+### 🎯 목표
+365개 챕터(대용량 소설) 업로드 시 **0.5초 이내 초기 응답** + **비동기 AI 분석** 아키텍처 설계
+
+---
+
+## 1️⃣ 제안된 워크플로우 (Original Workflow)
+
+### 시스템 아키텍처 (3단계)
+1. **Ingestion (Spring)**: 원본 저장 및 1차 물리 분할 (초고속)
+2. **Processing (Python)**: 2차 논리/의미 분할 및 AI 분석 (정밀)
+3. **Serving (Client)**: 결과 시각화 (지연 로딩)
+
+### Phase 1: 업로드 및 초고속 초기화 (Client → Spring) - **0.5초 목표**
+| 단계 | 작업 | 설명 |
+|------|------|------|
+| 1 | 파일 수신 | `POST /api/projects/upload` |
+| 2 | S3 저장 | `raw/{uuid}.txt` 즉시 업로드 (Safety First) |
+| 3 | Project 생성 | DB `project` 테이블 레코드 생성 |
+| 4 | Regex 분할 | Java 정규식으로 365개 챕터 분할 |
+| 5 | Bulk Insert | `chapter` 테이블에 365개 레코드 한 번에 저장 |
+| 6 | 메시지 발행 | RabbitMQ에 365개 메시지 Fan-out |
+| 7 | 응답 리턴 | `200 OK + projectId` (사용자는 즉시 챕터 목록 확인 가능) |
+
+### Phase 2: 비동기 정밀 분석 (RabbitMQ → Python)
+| 단계 | 작업 | 설명 |
+|------|------|------|
+| 1 | 메시지 수신 | 워커(1~10)가 `chapterId` 가져감 |
+| 2 | DB 조회 | `chapter` 테이블에서 content 조회 |
+| 3 | Semantic Chunking | 문장 임베딩 → 의미 단위 분할 |
+| 4 | AI 요약 | LLM으로 `nav_title` 생성 |
+| 5 | 섹션 저장 | `section` 테이블에 Bulk Insert |
+| 6 | 상태 갱신 | `chapter.status = COMPLETED` |
+
+### Phase 3: 결과 조회 (Client ↔ Spring)
+- SSE/폴링으로 챕터 상태 실시간 갱신
+- 완료된 챕터 클릭 시 `GET /api/chapters/{id}/sections` 호출
+
+---
+
+## 2️⃣ 사용자 질문 및 시니어 개발자 응답
+
+### Q1: RabbitMQ에 content를 담는 것 vs DB 조회?
+
+**응답: DB 조회 방식 압도적 유리 (Claim Check Pattern)**
+
+| 기준 | Content 포함 | ID만 전송 |
+|------|-------------|-----------|
+| RabbitMQ 부하 | 높음 (OOM 위험) | 낮음 |
+| 재시도 비용 | 높음 | 낮음 (ID만 재전송) |
+| 데이터 일관성 | 메시지 시점 고정 | 항상 최신 |
+
+**권장 Flow:**
+```
+RabbitMQ: {"projectId": 1, "chapterId": 101}  (가벼움)
+     ↓
+Python: SELECT content FROM chapter WHERE id=101
+```
+
+### Q2: 문장 임베딩 vs Neo4j 활용?
+
+**응답: 하이브리드 전략 추천**
+
+1. **문장 임베딩 기반 Semantic Chunking** (Base)
+   - 앞/뒷 문장 유사도 급락점 = 장면 전환점
+   - 사람이 느끼는 "문단 전환"을 기계적으로 탐지
+
+2. **Neo4j 메타데이터 태깅** (Enrichment)
+   - 분할된 Section에 캐릭터/이벤트 키워드 매핑
+   - `relates_to: ['철수', '영희']` 태그 추가
+   - RAG 검색 시 메타데이터 필터 활용
+
+---
+
+## 3️⃣ 추가 고려사항 및 질문 (Antigravity 분석)
+
+### A. 챕터 간 캐릭터 일관성 문제
+
+**질문**: 1장에서 추출된 `char-이안-001`이 50장에서도 동일 인물로 인식되나?
+
+**분석 결과**: ✅ **이미 지원됨**
+```python
+# aggregator.py (라인 546-580)
+existing_char = existing_lookup.get(canonical_name)
+if existing_char:
+    char_id = existing_char.get("id", ...)  # ID 재사용
+```
+
+**조건**: `existing_characters`로 이전 챕터 캐릭터 전달 필요
+
+### B. 순차 vs 병렬 처리
+
+| 방식 | 장점 | 단점 |
+|------|------|------|
+| 순차 처리 | 맥락 정확 | 느림 (180분+) |
+| 병렬 처리 | 빠름 | "그녀" 등 대명사 해석 불가 |
+
+### C. 0.5초 목표 달성 가능성
+
+**RabbitMQ 기본 설정**: 365개 메시지 개별 발행 → **불가능**
+**Batch 모드 필요**: 네트워크 왕복 1회로 365개 발행 → **가능**
+
+### D. 실시간 상태 폴링
+
+**추천**: SSE + Redis Pub/Sub
+- 폴링보다 DB 부하 감소
+- WebSocket보다 구현 간단
+
+### E. 챕터 분할 Fallback
+
+**문제**: 모든 소설이 `제1장`, `Chapter 1` 패턴을 따르지 않음
+
+### F. Section 임베딩 저장소
+
+**질문**: 캐릭터/이벤트는 Neo4j, Section 임베딩은 어디에?
+
+---
+
+## 4️⃣ 사용자 후속 질문에 대한 답변
+
+### Q1: 챕터별 분석 시 동일 캐릭터 인식 테스트?
+
+**답변**: 현재 시스템 이미 `existing_characters` 기반 ID 재사용 지원
+
+**워크플로우:**
+```
+챕터 N 분석 완료 → DB에 캐릭터 저장
+     ↓
+챕터 N+1 분석 요청 → DB에서 기존 캐릭터 조회 → context.existing_characters로 전달
+     ↓
+Python이 이름 매칭 + ID 재사용
+```
+
+### Q2: 캐릭터 ID 일관성 유지 전략?
+
+**추천: 순차-증분 분석**
+```json
+POST /api/analysis/chapter/{chapterId}
+{
+  "content": "챕터 50 텍스트...",
+  "context": {
+    "existing_characters": [
+      {"id": "char-이안-001", "name": "이안", "aliases": ["Ian"]}
+    ]
+  }
+}
+```
+
+### Q3: 순차 vs 병렬?
+
+**추천: 2-Pass 하이브리드 전략**
+
+| Pass | 방식 | 목적 | 속도 |
+|------|------|------|------|
+| 1차 | 병렬 (10 워커) | 기본 추출 | 빠름 (~20분) |
+| 2차 | 순차 + 병합 | ID 통합, 관계 연결 | 느림 (~5분) |
+
+**총 25분** (순차만 할 경우 180분+)
+
+### Q4: 0.5초 메시지 발행?
+
+**RabbitMQ Batch 모드로 가능:**
+```java
+rabbitTemplate.invoke(operations -> {
+    for (ChapterMessage msg : messages) {
+        operations.convertAndSend(EXCHANGE, ROUTING_KEY, msg);
+    }
+    operations.waitForConfirms(5000);
+    return true;
+});
+```
+
+**다른 MQ 불필요** - RabbitMQ Batch로 충분
+
+### Q5: SSE 추천 이유?
+
+| 기준 | 폴링 | SSE | WebSocket |
+|------|------|-----|-----------|
+| 서버 부하 | 높음 | 낮음 | 낮음 |
+| HTTP 호환 | ✅ | ✅ | ❌ |
+| 양방향 | ❌ | ❌ | ✅ |
+| 복잡도 | 쉬움 | 보통 | 어려움 |
+
+**SSE 추천 이유:**
+1. 상태 알림은 **서버→클라이언트 단방향**이면 충분
+2. HTTP 기반으로 **프록시/로드밸런서 친화적**
+3. WebSocket보다 **구현 간단**
+
+### Q6: 챕터 분할 Fallback?
+
+**Cascading Fallback 추천:**
+```java
+public List<Chapter> splitChapters(String rawText) {
+    // 1차: 명시적 마커 (제1장, Chapter 1)
+    List<Chapter> chapters = splitByExplicitMarkers(rawText);
+    if (!chapters.isEmpty()) return chapters;
+    
+    // 2차: 빈 줄 + 제목 패턴 (### 또는 **굵은**)
+    chapters = splitByParagraphHeaders(rawText);
+    if (!chapters.isEmpty()) return chapters;
+    
+    // 3차: 빈 줄 기반
+    chapters = splitByDoubleNewline(rawText);
+    if (chapters.size() >= 10) return chapters;
+    
+    // 4차: 고정 글자 수 + 문장 경계 존중 (10,000자)
+    return splitByCharacterCount(rawText, 10000, true);
+}
+```
+
+### Q7: Section 임베딩 저장소?
+
+**추천: PostgreSQL + pgvector**
+
+| 옵션 | 장점 | 단점 |
+|------|------|------|
+| **PostgreSQL + pgvector** | 운영 단순, 기존 인프라 | 10M+ 시 성능 한계 |
+| Neo4j Vector | 그래프 통합 | 느림 |
+| Qdrant | 최고 성능 | 추가 인프라 |
+
+**역할 분리:**
+- **Neo4j**: 캐릭터/이벤트 관계 (그래프 쿼리)
+- **PostgreSQL(pgvector)**: Section 임베딩 (의미 검색)
+
+**Section 테이블 설계:**
+```sql
+CREATE TABLE section (
+    id BIGSERIAL PRIMARY KEY,
+    chapter_id BIGINT NOT NULL,
+    project_id BIGINT NOT NULL,
+    nav_title VARCHAR(100),
+    content TEXT NOT NULL,
+    sequence_order INT NOT NULL,
+    embedding vector(1536),              -- pgvector
+    related_characters TEXT[],           -- Neo4j 메타데이터 태깅
+    related_events TEXT[]
+);
+
+CREATE INDEX idx_section_embedding ON section 
+USING ivfflat (embedding vector_cosine_ops) 
+WITH (lists = 100);
+```
+
+---
+
+## 5️⃣ 최종 추천 요약
+
+### 아키텍처 결정
+
+| 항목 | 추천 |
+|------|------|
+| 메시지 전송 | **Claim Check Pattern** (ID만 전송, DB에서 content 조회) |
+| 챕터 분할 | **Cascading Fallback** (명시적 마커 → 빈 줄 → 고정 글자수) |
+| 처리 방식 | **2-Pass 하이브리드** (병렬 추출 → 글로벌 병합) |
+| 메시지 큐 | **RabbitMQ Batch 모드** (변경 불필요) |
+| 상태 폴링 | **SSE + Redis Pub/Sub** |
+| 임베딩 저장 | **PostgreSQL + pgvector** (Section) / **Neo4j** (Character/Event) |
+
+### 최종 데이터 흐름
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Phase 1: Ingestion (Spring) - 0.5초 목표                         │
+│                                                                 │
+│  Client → Spring → S3 (원본) + PostgreSQL (chapters) + RabbitMQ │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ Phase 2: Processing (Python) - 비동기                            │
+│                                                                 │
+│  1차 Pass (병렬): 10 워커 × 365 챕터 → 기본 추출 (~20분)          │
+│  2차 Pass (순차): ID 통합 + 관계 연결 + 모순 감지 (~5분)          │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ Phase 3: Serving (Client)                                       │
+│                                                                 │
+│  SSE로 상태 수신 → 완료된 챕터 클릭 → Section 텍스트 + 메타데이터 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 저장소 역할 분리
+
+```
+┌───────────────────────────────────────────────────────┐
+│                    저장소 역할 분리                     │
+│                                                       │
+│  ┌─────────────────┐    ┌─────────────────┐          │
+│  │   PostgreSQL    │    │     Neo4j       │          │
+│  │   + pgvector    │    │                 │          │
+│  └─────────────────┘    └─────────────────┘          │
+│          ↑                      ↑                    │
+│   - project, chapter      - Character Node          │
+│   - section + embedding   - Event Node              │
+│   - 의미 검색 (RAG)        - Relationships          │
+│                           - 그래프 쿼리              │
+└───────────────────────────────────────────────────────┘
+```
+
+---
+
+### 📁 관련 파일 (향후 구현 시)
+- `app/agents/extraction/character/aggregator.py` - existing_characters 활용 로직
+- `app/services/section_service.py` - 신규 (Section 저장 + 임베딩)
+- `app/services/chunking_service.py` - 신규 (Semantic Chunking)
+- Spring Boot: `ChapterSplitService.java`, `RabbitMQBatchPublisher.java`
+
+---

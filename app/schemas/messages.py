@@ -147,3 +147,80 @@ class AnalysisTaskMessage(BaseModel):
                 "trace_id": "trace-abc-123"
             }
         }
+
+
+# ============================================================
+# 대용량 문서 분석 아키텍처 (Document Analysis Architecture)
+# ============================================================
+
+class DocumentAnalysisMessage(BaseModel):
+    """Spring → Python: 문서 분석 요청 메시지.
+    
+    Claim Check Pattern: content는 DB에서 조회
+    """
+    message_type: str = Field(default="DOCUMENT_ANALYSIS")
+    document_id: str = Field(..., description="Document(TEXT) UUID - 분석 대상")
+    project_id: str = Field(..., description="Project UUID")
+    parent_folder_id: Optional[str] = Field(None, description="상위 FOLDER UUID")
+    chapter_title: Optional[str] = Field(None, description="챕터 제목 (네비게이션용)")
+    document_order: Optional[int] = Field(None, description="문서 순서")
+    total_documents_in_chapter: Optional[int] = Field(None, description="챕터 내 총 문서 수")
+    analysis_pass: int = Field(default=1, description="분석 단계 (1차 Pass, 2차 Pass)")
+    callback_url: str = Field(..., description="결과 콜백 URL")
+    context: Optional[AnalysisContext] = Field(None, description="기존 데이터 컨텍스트")
+    trace_id: Optional[str] = Field(None, description="추적 ID")
+
+
+class GlobalMergeMessage(BaseModel):
+    """Spring → Python: 2차 Pass 글로벌 병합 요청."""
+    message_type: str = Field(default="GLOBAL_MERGE")
+    project_id: str = Field(..., description="Project UUID")
+    callback_url: str = Field(..., description="결과 콜백 URL")
+    trace_id: Optional[str] = Field(None, description="추적 ID")
+
+
+class SectionOutput(BaseModel):
+    """Python → Spring: Section 데이터."""
+    sequence_order: int = Field(..., description="섹션 순서")
+    nav_title: str = Field(..., description="네비게이션 제목")
+    content: str = Field(..., description="섹션 내용")
+    embedding: Optional[list[float]] = Field(None, description="임베딩 벡터 (1024차원)")
+    related_characters: list[str] = Field(default_factory=list, description="관련 캐릭터 이름")
+    related_events: list[str] = Field(default_factory=list, description="관련 이벤트 ID")
+
+
+class DocumentAnalysisCallback(BaseModel):
+    """Python → Spring: 문서 분석 결과 콜백."""
+    message_type: str = Field(default="DOCUMENT_ANALYSIS_RESULT")
+    document_id: str = Field(..., description="분석된 Document UUID")
+    parent_folder_id: Optional[str] = Field(None, description="상위 FOLDER UUID")
+    status: str = Field(..., description="COMPLETED 또는 FAILED")
+    error: Optional[dict] = Field(None, description="에러 정보")
+    sections: list[SectionOutput] = Field(default_factory=list, description="생성된 Section 목록")
+    characters: list[dict] = Field(default_factory=list, description="추출된 캐릭터")
+    events: list[dict] = Field(default_factory=list, description="추출된 이벤트")
+    settings: list[dict] = Field(default_factory=list, description="추출된 배경/장소")
+    processing_time_ms: Optional[int] = Field(None, description="처리 시간(ms)")
+    trace_id: Optional[str] = Field(None, description="추적 ID")
+
+
+class CharacterMergeResult(BaseModel):
+    """Python → Spring: 캐릭터 병합 결과."""
+    primary_id: str = Field(..., description="주 캐릭터 ID")
+    merged_ids: list[str] = Field(default_factory=list, description="병합된 캐릭터 ID들")
+    canonical_name: str = Field(..., description="표준 이름")
+    merged_aliases: list[str] = Field(default_factory=list, description="통합된 별칭")
+    confidence: float = Field(..., ge=0, le=1, description="병합 신뢰도 (0-1)")
+
+
+class GlobalMergeCallback(BaseModel):
+    """Python → Spring: 글로벌 병합 결과 콜백."""
+    message_type: str = Field(default="GLOBAL_MERGE_RESULT")
+    project_id: str = Field(..., description="Project UUID")
+    status: str = Field(..., description="COMPLETED 또는 FAILED")
+    error: Optional[dict] = Field(None, description="에러 정보")
+    character_merges: list[CharacterMergeResult] = Field(default_factory=list, description="캐릭터 병합 결과")
+    consistency_report: Optional[dict] = Field(None, description="일관성 보고서")
+    processing_time_ms: Optional[int] = Field(None, description="처리 시간(ms)")
+    trace_id: Optional[str] = Field(None, description="추적 ID")
+

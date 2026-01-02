@@ -104,15 +104,15 @@ IDENTITY_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
 ✅ CHARACTERS: 진하, 세라, ARIA, 유민재, 리사 (people/beings with names who act in the story)
 ❌ NOT CHARACTERS: 트렌치코트, 홀로그램 방패, 뇌 임플란트, 기계 팔, 메모리 칩, 검은 슈트, 플라즈마 건
 
-### EXCLUSION EXAMPLES ###
-- "낡은 트렌치코트" → This is CLOTHING, not a character
-- "홀로그램 방패" → This is a DEVICE, not a character
-- "뇌 임플란트" → This is an IMPLANT, not a character
-- "기계 팔" → This is a PROSTHETIC, not a character
-- "플라즈마 건" → This is a WEAPON, not a character
+	### EXCLUSION EXAMPLES (NOT CHARACTERS) ###
+	- "낡은 트렌치코트" → CLOTHING (Item)
+	- "전설의 검" → WEAPON (Item)
+	- "스마트폰" → DEVICE (Item)
+	- "기계 팔" → PROSTHETIC (Body part/Item)
+	- "마법 지팡이" → WEAPON (Item)
 
-### LANGUAGE CONSISTENCY RULE ###
-Output ALL text in the SAME language as the input.
+	### LANGUAGE CONSISTENCY RULE ###
+	Output ALL text in the SAME language as the input.
 If the story is in Korean, all values must be in Korean.
 Do NOT translate (e.g., "암흑회" not "Dark Order").
 
@@ -221,15 +221,18 @@ async def identity_extraction_node(state: dict) -> dict:
     
     # === ITEM FILTER: Names that should NOT be characters ===
     ITEM_KEYWORDS = [
-        # Cyberpunk items
-        "트렌치코트", "홀로그램 방패", "뇌 임플란트", "기계 팔", "메모리 칩", 
-        "검은 슈트", "플라즈마 건", "홀로그램 인터페이스", "임플란트", "칩",
-        # Generic items
-        "방패", "총", "건", "슈트", "코트", "칼", "검", "갑옷", "무기",
-        # English items
-        "shield", "gun", "suit", "coat", "sword", "armor", "weapon", "implant", "chip"
-    ]
+    # Generic Items (Weapons/Armor)
+    "검", "칼", "창", "활", "방패", "갑옷", "투구", "무기",
+    "sword", "blade", "spear", "bow", "shield", "armor", "helm", "weapon",
     
+    # Modern/Sci-Fi Items
+    "총", "건", "라이플", "권총", "슈트", "코트", "임플란트", "칩", "디바이스", "폰",
+    "gun", "rifle", "pistol", "suit", "coat", "implant", "chip", "device", "phone",
+    
+    # Common Objects
+    "책", "지팡이", "반지", "목걸이", "가방",
+    "book", "staff", "ring", "necklace", "bag"
+]    
     def is_likely_item(name: str) -> bool:
         """Check if name looks like an item rather than a character."""
         # Normalize name (remove spaces) for matching

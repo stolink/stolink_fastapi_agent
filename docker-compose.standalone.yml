@@ -84,8 +84,9 @@ services:
     image: rabbitmq:3.13-management-alpine
     container_name: stolink-rabbitmq
     environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_DEFAULT_USER: stolink
+      RABBITMQ_DEFAULT_PASS: stolink123
+      RABBITMQ_DEFAULT_VHOST: stolink
     ports:
       - "5672:5672" # AMQP
       - "15672:15672" # Management UI
@@ -115,11 +116,16 @@ services:
       # RabbitMQ
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
-      RABBITMQ_USER: guest
-      RABBITMQ_PASSWORD: guest
+      RABBITMQ_USER: stolink
+      RABBITMQ_PASSWORD: stolink123
+      RABBITMQ_VHOST: stolink
       RABBITMQ_ANALYSIS_QUEUE: stolink.analysis.queue
-      RABBITMQ_VHOST: /
+      # Document Analysis Architecture
+      DOCUMENT_ANALYSIS_QUEUE: document_analysis_queue
+      GLOBAL_MERGE_QUEUE: global_merge_queue
+      CONSUMER_PREFETCH_COUNT: 10
       # Spring Backend (external)
+      SPRING_BACKEND_URL: ${SPRING_BACKEND_URL:-http://host.docker.internal:8080}
       SPRING_CALLBACK_URL: ${SPRING_CALLBACK_URL:-http://host.docker.internal:8080}
       # PostgreSQL
       POSTGRES_HOST: postgres

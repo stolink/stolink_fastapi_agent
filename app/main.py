@@ -41,23 +41,46 @@ logger = structlog.get_logger()
 async def lifespan(app: FastAPI):
     """Application lifespan handler.
     
-    Starts RabbitMQ consumer on startup and disconnects on shutdown.
+    Starts RabbitMQ consumers on startup and disconnects on shutdown.
     """
     logger.info("Starting StoLink AI Backend")
     
-    # Start RabbitMQ consumer
+    # Start legacy RabbitMQ consumer (기존 분석)
     consumer = get_consumer()
     consumer.set_message_handler(handle_analysis_message)
-    
-    # Start consuming in background task
     consumer_task = asyncio.create_task(consumer.consume_forever())
+    logger.info("Legacy RabbitMQ consumer started")
     
-    logger.info("RabbitMQ consumer started")
+    # Start Document Analysis Consumer (대용량 분석)
+    from app.services.document_analysis_consumer import (
+        start_document_analysis_consumer,
+        start_global_merge_consumer,
+        stop_all_consumers
+    )
+    
+    try:
+        doc_consumer = await start_document_analysis_consumer()
+        logger.info("Document Analysis Consumer started")
+    except Exception as e:
+        logger.warning(f"Failed to start Document Analysis Consumer: {e}")
+        doc_consumer = None
+    
+    try:
+        merge_consumer = await start_global_merge_consumer()
+        logger.info("Global Merge Consumer started")
+    except Exception as e:
+        logger.warning(f"Failed to start Global Merge Consumer: {e}")
+        merge_consumer = None
     
     yield
     
     # Shutdown
     logger.info("Shutting down StoLink AI Backend")
+    
+    # Stop new consumers
+    await stop_all_consumers()
+    
+    # Stop legacy consumer
     consumer_task.cancel()
     try:
         await consumer_task

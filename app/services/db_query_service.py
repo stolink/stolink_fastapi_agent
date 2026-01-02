@@ -510,6 +510,152 @@ class DatabaseQueryService:
         except Exception as e:
             logger.error("Failed to query world rules", error=str(e))
             return []
+    
+    # ============================================================
+    # 대용량 문서 분석 아키텍처 (Document Analysis Architecture)
+    # ============================================================
+    
+    async def get_document_content(
+        self,
+        document_id: str
+    ) -> Optional[dict[str, Any]]:
+        """Get document content by ID (Claim Check Pattern).
+        
+        Spring에서 document_id만 전송하고, Python이 content를 직접 조회합니다.
+        
+        Args:
+            document_id: Document UUID
+            
+        Returns:
+            Document dict with content, or None if not found
+        """
+        if not self._pg_pool:
+            logger.warning("PostgreSQL pool not initialized")
+            return None
+        
+        query = """
+            SELECT 
+                d.id, d.title, d.content, d.type, d.order,
+                d.parent_id, d.project_id, d.word_count
+            FROM documents d
+            WHERE d.id = $1 AND d.type = 'TEXT'
+        """
+        
+        try:
+            async with self._pg_pool.acquire() as conn:
+                row = await conn.fetchrow(query, document_id)
+                if row:
+                    return dict(row)
+                logger.warning("Document not found", document_id=document_id)
+                return None
+        except Exception as e:
+            logger.error("Failed to query document content", error=str(e), document_id=document_id)
+            return None
+    
+    async def get_document_with_parent_info(
+        self,
+        document_id: str
+    ) -> Optional[dict[str, Any]]:
+        """Get document with parent folder information.
+        
+        Args:
+            document_id: Document UUID
+            
+        Returns:
+            Document dict with parent info
+        """
+        if not self._pg_pool:
+            return None
+        
+        query = """
+            SELECT 
+                d.id, d.title, d.content, d.type, d.order,
+                d.parent_id, d.project_id,
+                parent.title AS parent_title,
+                parent.order AS parent_order
+            FROM documents d
+            LEFT JOIN documents parent ON d.parent_id = parent.id
+            WHERE d.id = $1
+        """
+        
+        try:
+            async with self._pg_pool.acquire() as conn:
+                row = await conn.fetchrow(query, document_id)
+                if row:
+                    return dict(row)
+                return None
+        except Exception as e:
+            logger.error("Failed to query document with parent", error=str(e))
+            return None
+    
+    async def get_all_project_characters_for_merge(
+        self,
+        project_id: str
+    ) -> list[dict[str, Any]]:
+        """Get all characters for a project for Entity Resolution.
+        
+        2차 Pass(GlobalMerger)에서 사용합니다.
+        
+        Args:
+            project_id: Project UUID
+            
+        Returns:
+            List of character dicts with aliases
+        """
+        if not self._pg_pool:
+            return []
+        
+        query = """
+            SELECT 
+                c.id, c.name, c.role, c.aliases_json,
+                c.description, c.created_at
+            FROM characters c
+            WHERE c.project_id = $1
+            ORDER BY c.created_at
+        """
+        
+        try:
+            async with self._pg_pool.acquire() as conn:
+                rows = await conn.fetch(query, project_id)
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error("Failed to query project characters for merge", error=str(e))
+            return []
+    
+    async def get_project_analysis_status(
+        self,
+        project_id: str
+    ) -> dict[str, Any]:
+        """Get analysis status summary for a project.
+        
+        Args:
+            project_id: Project UUID
+            
+        Returns:
+            Dict with counts by status
+        """
+        if not self._pg_pool:
+            return {"total": 0, "completed": 0, "failed": 0, "pending": 0}
+        
+        query = """
+            SELECT 
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE analysis_status = 'COMPLETED') AS completed,
+                COUNT(*) FILTER (WHERE analysis_status = 'FAILED') AS failed,
+                COUNT(*) FILTER (WHERE analysis_status IN ('PENDING', 'QUEUED', 'PROCESSING')) AS pending
+            FROM documents
+            WHERE project_id = $1 AND type = 'TEXT'
+        """
+        
+        try:
+            async with self._pg_pool.acquire() as conn:
+                row = await conn.fetchrow(query, project_id)
+                if row:
+                    return dict(row)
+                return {"total": 0, "completed": 0, "failed": 0, "pending": 0}
+        except Exception as e:
+            logger.error("Failed to query analysis status", error=str(e))
+            return {"total": 0, "completed": 0, "failed": 0, "pending": 0}
 
 
 # ===== Singleton Instance =====

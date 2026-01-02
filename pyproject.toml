@@ -27,6 +27,12 @@ dependencies = [
     "asyncpg>=0.30.0",
     "neo4j>=5.26.0",
     
+    # Fuzzy Matching (Entity Resolution)
+    "rapidfuzz>=3.9.0",
+    
+    # Retry Logic
+    "tenacity>=8.2.0",
+    
     # Data Validation
     "pydantic>=2.9.0",
     "pydantic-settings>=2.5.0",
