@@ -203,41 +203,69 @@ async def setting_extraction_node(state: dict) -> dict:
 
 
 def create_fallback_settings(content: str) -> list[dict]:
-    """Create basic settings from story keywords when LLM fails."""
-    import re
-    
+    """Create generic fallback settings if extraction fails."""
     settings = []
     
-    # Common location patterns (Korean)
+    # Generic location matching (Genre Agnostic)
     location_patterns = [
-        (r"(네오서울|neo-?seoul)", "네오서울", "city", "Cyberpunk megacity with neon lights, towering skyscrapers, rain-slicked streets"),
-        (r"(하층.?거주구|빈민가|슬럼)", "하층 거주구", "city", "Dark urban slums, cramped alleyways, flickering neon signs, steam rising from vents"),
-        (r"(클럽|블루.?드래곤)", "블루 드래곤 클럽", "indoor", "Dimly lit nightclub, red and blue neon lighting, VIP booths, smoky atmosphere"),
-        (r"(골목|뒷골목)", "뒷골목", "outdoor", "Narrow alleyway, wet pavement, graffiti walls, dim streetlights"),
-        (r"(숲|삼림)", "숲", "forest", "Dense forest with tall trees, fog covering the ground, filtered sunlight"),
-        (r"(성|궁전|왕궁)", "성", "castle", "Ancient stone castle, tall towers, banners flying, torchlit corridors"),
+        # City/Urban
+        (r"(도시|시내|거리|city|street|town)", "도심", "city", "Bustling city streets with diverse architecture and ambient lighting"),
+        (r"(빈민가|슬럼|slum|alley)", "뒷골목", "city", "Narrow, shadowed alleyways with worn textures and dim lighting"),
+        
+        # Nature/Forest
+        (r"(숲|산|나무|forest|mountain|woods)", "숲", "forest", "Dense forest with organic textures, natural lighting filtering through canopy"),
+        (r"(바다|해변|물가|sea|beach|coast)", "해변", "sea", "Open water with rhythmic waves, horizon line, and natural atmospheric lighting"),
+        
+        # Indoor
+        (r"(방|집|실내|room|house|indoor)", "실내", "indoor", "Enclosed interior space with functional furniture and controlled lighting"),
+        (r"(가게|상점|store|shop)", "상점", "indoor", "Commercial space with display counters and warm interior lighting"),
+        
+        # Abstract/Other
+        (r"(어둠|공간|void|darkness)", "알 수 없는 공간", "other", "Abstract space with minimal visual features and mysterious atmosphere")
     ]
     
-    content_lower = content.lower()
+    found_locations = set()
     
     for pattern, name, loc_type, visual in location_patterns:
         if re.search(pattern, content, re.IGNORECASE):
-            setting_id = f"loc_{name.replace(' ', '_').lower()}_{len(settings)+1:02d}"
+            if name in found_locations:
+                continue
+                
+            found_locations.add(name)
+            
+            # Create neutral setting
             settings.append({
-                "setting_id": setting_id,
+                "setting_id": f"loc_fallback_{len(settings)+1}",
                 "name": name,
                 "location_name": name,
                 "location_type": loc_type,
                 "visual_background": visual,
-                "atmosphere": "cyberpunk, noir" if "사이버" in content or "네오" in content else "mysterious",
-                "time_of_day": "night" if "밤" in content or "야간" in content else "unknown",
-                "lighting": "neon lights" if "네온" in content else "dim",
-                "weather": "rain" if "비" in content or "산성비" in content else None,
-                "description": f"Location mentioned in story: {name}",
+                "atmosphere": "mysterious" if "어둠" in content else "neutral",
+                "time_of_day": "unknown",
+                "lighting": "dim" if "어둠" in content else "natural",
+                "weather": "rainy" if "비" in content else None,
+                "description": f"Auto-generated generic setting for {name}",
                 "notable_features": [],
-                "significance": "Story location",
-                "is_primary": True
+                "significance": "Background location",
+                "is_primary": False
             })
-    
+            
+    # Default if nothing found
+    if not settings:
+        settings.append({
+            "setting_id": "loc_default_01",
+            "name": "Unknown Location",
+            "location_name": "Unknown Location",
+            "location_type": "other",
+            "visual_background": "Generic environment with neutral lighting and standard textures",
+            "atmosphere": "neutral",
+            "time_of_day": "unknown",
+            "lighting": "neutral",
+            "weather": None,
+            "description": "Default fallback location",
+            "notable_features": [],
+            "significance": "Default setting",
+            "is_primary": True
+        })
+        
     return settings
-

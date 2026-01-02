@@ -102,15 +102,21 @@ RELATIONS_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
 1. Output in the SAME language as the input
 2. Use ONLY Korean names when character has format "베라(Vera)" → use "베라"
 3. Create SEPARATE entries for each direction (A→B and B→A)
-4. ONLY extract relationships that are EXPLICITLY shown in the text
+4. Extract relationships that are EXPLICITLY shown OR IMPLIED in the text
 5. You MUST extract relationships for ALL characters listed in "Available Characters"
+6. Include relationships for characters who are MENTIONED but don't directly appear (e.g., family members, past acquaintances)
 
 ### RELATIONSHIP TYPES ###
-ALLY, ENEMY, RIVAL, NEUTRAL
+ALLY, ENEMY, RIVAL, NEUTRAL, FAMILY
 
 ### PUBLIC vs PRIVATE ###
 - public_stance: What they SHOW (ALLY/NEUTRAL/ENEMY/RESPECT)
 - private_feeling: What they FEEL (TRUST/DISTRUST/LOVE/HATE/FEAR/GUILT/CURIOSITY/ANGER)
+
+### IMPORTANT ###
+- If character A has a relationship with character B, character B MUST also have a relationship with A
+- For FAMILY relationships, both directions must be extracted (e.g., if A is B's sibling, B is also A's sibling)
+- Characters who don't directly appear but are mentioned (sick relative, distant friend, etc.) should still have relationships extracted
 
 ### OUTPUT EXAMPLE ###
 {{
@@ -136,10 +142,89 @@ ALLY, ENEMY, RIVAL, NEUTRAL
 Available Characters:
 {character_list}
 
-Extract relationships for ALL characters in the list who interact.
+Extract relationships for ALL characters in the list.
+Include relationships for characters who are MENTIONED but don't directly appear in scenes.
 Keep descriptions SHORT (under 20 words).
-Create BOTH directions (A→B and B→A) for each relationship.""")
+Create BOTH directions (A→B and B→A) for EVERY relationship.""")
 ])
+
+
+def ensure_bidirectional_relations(relations_data: dict) -> dict:
+    """Post-process to ensure all relationships are bidirectional.
+    
+    If A has a relationship with B, but B doesn't have one with A,
+    automatically create the reverse relationship.
+    """
+    # Collect all existing relationships
+    existing_rels = {}  # {(source, target): relationship_data}
+    
+    for char_name, char_data in relations_data.items():
+        relations = char_data.get("relations", [])
+        for rel in relations:
+            target = rel.get("target")
+            if target:
+                existing_rels[(char_name, target)] = rel
+    
+    # Find missing reverse relationships
+    missing_reverse = []
+    for (source, target), rel_data in existing_rels.items():
+        if (target, source) not in existing_rels:
+            # Need to create reverse relationship
+            missing_reverse.append({
+                "source": target,
+                "target": source,
+                "original": rel_data
+            })
+    
+    # Add missing reverse relationships
+    for missing in missing_reverse:
+        source = missing["source"]
+        target = missing["target"]
+        original = missing["original"]
+        
+        # Determine reverse relationship type
+        rel_type = original.get("type", "NEUTRAL")
+        
+        # Determine reverse private feeling
+        original_feeling = original.get("private_feeling", "NEUTRAL")
+        reverse_feeling_map = {
+            "LOVE": "LOVE",
+            "TRUST": "TRUST", 
+            "HATE": "HATE",
+            "ANGER": "ANGER",
+            "FEAR": "FEAR",
+            "GUILT": "GUILT",
+            "CURIOSITY": "CURIOSITY",
+            "DISTRUST": "DISTRUST"
+        }
+        reverse_feeling = reverse_feeling_map.get(original_feeling, original_feeling)
+        
+        # Create reverse relationship
+        reverse_rel = {
+            "target": target,
+            "type": rel_type,
+            "strength": original.get("strength", 5),
+            "description": f"Relationship with {target}",
+            "public_stance": original.get("public_stance", "NEUTRAL"),
+            "private_feeling": reverse_feeling
+        }
+        
+        # Add to source character's relations
+        if source in relations_data:
+            if "relations" not in relations_data[source]:
+                relations_data[source]["relations"] = []
+            relations_data[source]["relations"].append(reverse_rel)
+            print(f"[RELATIONS] Added reverse: {source} → {target}")
+        else:
+            # Source character doesn't exist in relations_data, create entry
+            relations_data[source] = {
+                "name": source,
+                "relations": [reverse_rel],
+                "location_context": None
+            }
+            print(f"[RELATIONS] Created new entry for {source} with reverse relation to {target}")
+    
+    return relations_data
 
 
 # === Node Function ===
@@ -172,7 +257,11 @@ async def relations_extraction_node(state: dict) -> dict:
                 for rel in char.relations:
                     print(f"  - → {rel.target}: {rel.type} (strength={rel.strength})")
         
-        print(f"[RELATIONS] Total: {len(relations_data)} characters extracted")
+        # Post-process to ensure bidirectional relationships
+        print(f"[RELATIONS] Ensuring bidirectional relationships...")
+        relations_data = ensure_bidirectional_relations(relations_data)
+        
+        print(f"[RELATIONS] Total: {len(relations_data)} characters extracted (after bidirectional sync)")
         
         return {
             "char_relations": relations_data,

@@ -25,7 +25,13 @@ class Settings(BaseSettings):
     rabbitmq_vhost: str = "stolink"
     rabbitmq_analysis_queue: str = "stolink.analysis.queue"
     
+    # Document Analysis Architecture (대용량 분석)
+    document_analysis_queue: str = "document_analysis_queue"
+    global_merge_queue: str = "global_merge_queue"
+    consumer_prefetch_count: int = 10
+    
     # Spring Backend
+    spring_backend_url: str = "http://localhost:8080"
     spring_callback_url: str = "http://localhost:8080"
     
     # PostgreSQL

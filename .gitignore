@@ -14,7 +14,6 @@ ENV/
 *.http
 
 # --- User Custom Rules (아까 요청하신 Spring md 파일 제외) ---
-SPRING*.md
 PROJECT_ARCHITECTURE.md
 *.json
 queries.cypher
@@ -23,9 +22,6 @@ FASTAPI_SCHEMA_REQUEST.md
 AI_BACKEND*.md
 JOB*.md
 ref.md
-docs
-
-
 
 # --- Python Compiled Files (자동 생성되는 파일들) ---
 __pycache__/
