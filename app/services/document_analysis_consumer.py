@@ -353,61 +353,30 @@ class DocumentAnalysisConsumer:
             )
     
     async def _create_sections(self, content: str) -> list[dict]:
-        """Semantic Chunking으로 Section 생성.
-        
-        단락 기준으로 분할하고 각 섹션에 임베딩을 생성합니다.
-        """
+        """Semantic Chunking for Sections using ChunkingService."""
         from app.services.embedding_service import get_embedding_service
+        from app.services.chunking_service import ChunkingService
         
-        # 단락 기준으로 분할 (빈 줄 2개 기준)
-        paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
-        
-        # 너무 짧은 단락은 이전 단락과 병합
-        merged_paragraphs = []
-        current_paragraph = ""
-        MIN_PARAGRAPH_LENGTH = 100  # 최소 100자
-        
-        for p in paragraphs:
-            if len(current_paragraph) + len(p) < MIN_PARAGRAPH_LENGTH:
-                current_paragraph = (current_paragraph + "\n\n" + p).strip()
-            else:
-                if current_paragraph:
-                    merged_paragraphs.append(current_paragraph)
-                current_paragraph = p
-        
-        if current_paragraph:
-            merged_paragraphs.append(current_paragraph)
-        
-        # 최대 20개 섹션으로 제한
-        paragraphs_to_process = merged_paragraphs[:20]
-        
-        sections = []
         embedding_service = get_embedding_service()
+        chunking_service = ChunkingService(embedding_service)
         
-        for i, paragraph in enumerate(paragraphs_to_process, start=1):
-            # 네비게이션 제목 생성 (첫 줄 또는 첫 50자)
-            first_line = paragraph.split('\n')[0]
-            nav_title = first_line[:50] + "..." if len(first_line) > 50 else first_line
-            
-            # 임베딩 생성 (1024차원)
-            embedding = None
-            try:
-                embedding = await embedding_service.generate_embedding_async(paragraph)
-                logger.debug(f"Embedding generated for section {i}", dim=len(embedding) if embedding else 0)
-            except Exception as e:
-                logger.warning(f"Failed to generate embedding for section {i}", error=str(e))
-            
-            sections.append({
+        # 1. Semantic Chunking 실행
+        semantic_sections = await chunking_service.create_semantic_sections(content)
+        
+        # 2. 결과 형식을 ProcessingResult에 맞게 변환
+        final_sections = []
+        for i, sec in enumerate(semantic_sections, start=1):
+            final_sections.append({
                 "sequence_order": i,
-                "nav_title": nav_title,
-                "content": paragraph,
-                "embedding": embedding,
-                "related_characters": [],  # TODO: Extract from content
-                "related_events": []       # TODO: Extract from content
+                "nav_title": sec["title"],
+                "content": sec["content"],
+                "embedding": sec["embedding"],
+                "related_characters": [],
+                "related_events": []
             })
-        
-        logger.info(f"Created {len(sections)} sections with embeddings")
-        return sections
+            
+        logger.info(f"Created {len(final_sections)} sections via Semantic Chunking")
+        return final_sections
     
     async def _send_callback(self, url: str, callback: DocumentAnalysisCallback) -> None:
         """Spring에 Callback 전송"""
