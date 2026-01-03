@@ -656,6 +656,114 @@ class DatabaseQueryService:
         except Exception as e:
             logger.error("Failed to query analysis status", error=str(e))
             return {"total": 0, "completed": 0, "failed": 0, "pending": 0}
+    
+    # ===== Vector Similarity Search =====
+    
+    async def search_similar_sections(
+        self,
+        embedding: list[float],
+        project_id: Optional[str] = None,
+        limit: int = 5,
+        threshold: float = 0.7
+    ) -> list[dict[str, Any]]:
+        """Search for similar sections using pgvector cosine similarity.
+        
+        Args:
+            embedding: Query embedding vector (1024 dimensions)
+            project_id: Optional project filter
+            limit: Maximum number of results
+            threshold: Minimum similarity threshold (0-1)
+            
+        Returns:
+            List of similar sections with similarity scores
+        """
+        if not self._pg_pool:
+            logger.warning("PostgreSQL pool not initialized")
+            return []
+        
+        # Convert embedding list to pgvector format
+        embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
+        
+        # Query with optional project filter
+        if project_id:
+            query = """
+                SELECT 
+                    s.id, s.nav_title, s.content, s.sequence_order,
+                    s.document_id, d.title as document_title,
+                    1 - (s.embedding <=> $1::vector) as similarity
+                FROM sections s
+                JOIN documents d ON s.document_id = d.id
+                WHERE d.project_id = $2
+                    AND s.embedding IS NOT NULL
+                    AND 1 - (s.embedding <=> $1::vector) >= $3
+                ORDER BY s.embedding <=> $1::vector
+                LIMIT $4
+            """
+            params = [embedding_str, project_id, threshold, limit]
+        else:
+            query = """
+                SELECT 
+                    s.id, s.nav_title, s.content, s.sequence_order,
+                    s.document_id,
+                    1 - (s.embedding <=> $1::vector) as similarity
+                FROM sections s
+                WHERE s.embedding IS NOT NULL
+                    AND 1 - (s.embedding <=> $1::vector) >= $2
+                ORDER BY s.embedding <=> $1::vector
+                LIMIT $3
+            """
+            params = [embedding_str, threshold, limit]
+        
+        try:
+            async with self._pg_pool.acquire() as conn:
+                rows = await conn.fetch(query, *params)
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error("Failed to search similar sections", error=str(e))
+            return []
+    
+    async def get_context_sections_for_document(
+        self,
+        document_id: str,
+        limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """Get related context sections for consistency checking.
+        
+        Returns sections from the same project that might be relevant for
+        checking narrative consistency.
+        
+        Args:
+            document_id: Current document being analyzed
+            limit: Maximum sections to return
+            
+        Returns:
+            List of context sections with embeddings
+        """
+        if not self._pg_pool:
+            return []
+        
+        query = """
+            SELECT 
+                s.id, s.nav_title, s.content, s.sequence_order,
+                s.document_id, d.title as document_title,
+                s.related_characters_json, s.related_events_json
+            FROM sections s
+            JOIN documents d ON s.document_id = d.id
+            WHERE d.project_id = (
+                SELECT project_id FROM documents WHERE id = $1
+            )
+            AND s.document_id != $1
+            ORDER BY s.created_at DESC
+            LIMIT $2
+        """
+        
+        try:
+            async with self._pg_pool.acquire() as conn:
+                rows = await conn.fetch(query, document_id, limit)
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error("Failed to get context sections", error=str(e))
+            return []
 
 
 # ===== Singleton Instance =====
