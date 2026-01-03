@@ -203,8 +203,8 @@ class DocumentAnalysisConsumer:
                 except Exception as cb_error:
                     logger.error("Failed to send error callback", error=str(cb_error))
             
-            # 메시지 NACK (재시도 가능)
-            await message.nack(requeue=True)
+            # 실패 시 requeue하지 않음 (무한 루프 방지)
+            await message.nack(requeue=False)
     
     async def _update_status(self, document_id: str, status: str, trace_id: str) -> None:
         """Spring API로 상태 업데이트"""
@@ -530,8 +530,8 @@ class GlobalMergeConsumer:
                     await self._send_callback(callback_url, error_callback)
                 except Exception:
                     pass
-            
-            await message.nack(requeue=True)
+            # 실패 시 requeue하지 않음 (무한 루프 방지)
+            await message.nack(requeue=False)
     
     async def _perform_entity_resolution(
         self,

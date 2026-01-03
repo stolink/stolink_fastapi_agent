@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.api.health import router as health_router
 from app.api.analysis import router as analysis_router
+from app.api.search import router as search_router
 from app.services.rabbitmq_consumer import get_consumer
 from app.services.analysis_service import handle_analysis_message
 
@@ -113,6 +114,7 @@ app.add_middleware(
 # Include routers
 app.include_router(health_router)
 app.include_router(analysis_router)
+app.include_router(search_router)
 
 
 @app.get("/")
