@@ -722,7 +722,7 @@ public class AICallbackPayload {
 ```java
 public void saveCharacterToNeo4j(Map<String, Object> character) {
     String cypher = """
-        MERGE (c:Character {character_id: $id, project_id: $projectId})
+        MERGE (c:Character {characterId: $id, projectId: $projectId})
         SET c.name = $name,
             c.role = $role,
             c.status = $status,
@@ -747,10 +747,10 @@ public void saveCharacterToNeo4j(Map<String, Object> character) {
 ```java
 public void saveRelationshipToNeo4j(Map<String, Object> relationship) {
     String cypher = """
-        MATCH (a:Character {name: $source, project_id: $projectId})
-        MATCH (b:Character {name: $target, project_id: $projectId})
+        MATCH (a:Character {name: $source, projectId: $projectId})
+        MATCH (b:Character {name: $target, projectId: $projectId})
         MERGE (a)-[r:RELATED_TO]->(b)
-        SET r.relation_type = $relationType,
+        SET r.relationType = $relationType,
             r.strength = $strength,
             r.description = $description,
             r.bidirectional = $bidirectional
@@ -774,9 +774,9 @@ public void saveRelationshipToNeo4j(Map<String, Object> relationship) {
 public void saveEventToNeo4j(Map<String, Object> event) {
     // 1. Event 노드 생성
     String createEvent = """
-        MERGE (e:Event {event_id: $eventId, project_id: $projectId})
-        SET e.narrative_summary = $summary,
-            e.event_type = $eventType,
+        MERGE (e:Event {eventId: $eventId, projectId: $projectId})
+        SET e.narrativeSummary = $summary,
+            e.eventType = $eventType,
             e.importance = $importance
     """;
     
@@ -792,8 +792,8 @@ public void saveEventToNeo4j(Map<String, Object> event) {
     List<String> participants = (List<String>) event.getOrDefault("participants", List.of());
     for (String participant : participants) {
         String linkCharacter = """
-            MATCH (c:Character {name: $name, project_id: $projectId})
-            MATCH (e:Event {event_id: $eventId, project_id: $projectId})
+            MATCH (c:Character {name: $name, projectId: $projectId})
+            MATCH (e:Event {eventId: $eventId, projectId: $projectId})
             MERGE (c)-[:PARTICIPATES_IN]->(e)
         """;
         neo4jTemplate.query(linkCharacter, Map.of(
@@ -807,8 +807,8 @@ public void saveEventToNeo4j(Map<String, Object> event) {
     String prevEventId = (String) event.get("prev_event_id");
     if (prevEventId != null) {
         String linkPrevEvent = """
-            MATCH (prev:Event {event_id: $prevId, project_id: $projectId})
-            MATCH (curr:Event {event_id: $currId, project_id: $projectId})
+            MATCH (prev:Event {eventId: $prevId, projectId: $projectId})
+            MATCH (curr:Event {eventId: $currId, projectId: $projectId})
             MERGE (prev)-[:NEXT]->(curr)
         """;
         neo4jTemplate.query(linkPrevEvent, Map.of(
