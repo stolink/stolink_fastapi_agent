@@ -104,7 +104,7 @@ class AnalysisTaskMessage(BaseModel):
     document_id: str = Field(..., description="Document UUID being analyzed")
     
     # Story content
-    content: str = Field(..., description="Story text content to analyze")
+    content: Optional[str] = Field(None, description="Story text content to analyze (Optional, can be fetched from DB)")
     
     # Context (optional, for enhanced analysis)
     context: Optional[AnalysisContext] = Field(
@@ -172,6 +172,11 @@ class DocumentAnalysisMessage(BaseModel):
     total_documents_in_chapter: Optional[int] = Field(None, description="챕터 내 총 문서 수")
     analysis_pass: int = Field(default=1, description="분석 단계 (1차 Pass, 2차 Pass)")
     requires_deep_analysis: bool = Field(default=False, alias="requiresDeepAnalysis", description="1차 분석 시에도 심층 분석(복선, 플롯, 일관성) 수행 여부")
+    analysis_type: str = Field(
+        default="full_manuscript",
+        alias="analysisType",
+        description="분석 유형: 'full_manuscript' (원문 전체 업로드) | 'partial_snippet' (작가 일부 텍스트 분석)"
+    )
     callback_url: str = Field(..., description="결과 콜백 URL")
     context: Optional[AnalysisContext] = Field(None, description="기존 데이터 컨텍스트")
     trace_id: Optional[str] = Field(None, description="추적 ID")

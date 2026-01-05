@@ -98,11 +98,15 @@ def should_retry_extraction(state: dict) -> tuple[bool, str]:
         print(f"[{trace_id}] Max extraction retries ({MAX_EXTRACTION_RETRIES}) reached")
         return False, "max_retries_exceeded"
     
+    if state.get("is_short_text"):
+        print(f"[{trace_id}] Short text / Interactive mode: Skipping re-extraction.")
+        return False, "interactive_mode_skip"
+
     validation_result = state.get("validation_result") or {}
     if validation_result.get("action") == "retry_extraction":
         print(f"[{trace_id}] Validation requested retry (attempt {retry_count + 1}/{MAX_EXTRACTION_RETRIES})")
         return True, "validation_rejected"
-    
+        
     consistency_report = state.get("consistency_report") or {}
     if consistency_report.get("requires_reextraction"):
         print(f"[{trace_id}] Consistency requires re-extraction (score: {consistency_report.get('overall_score')})")

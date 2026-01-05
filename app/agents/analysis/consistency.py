@@ -164,6 +164,7 @@ async def consistency_check_node(state: dict) -> dict:
     events = state.get("extracted_events", [])
     relationships = state.get("relationship_graph", {}).get("relationships", [])
     project_id = state.get("project_id")
+    is_short_text = state.get("is_short_text", False)
     
     # Support both legacy (c["name"]) and FullCharacter (c["profile"]["name"]) formats
     available_names = set()
@@ -172,11 +173,12 @@ async def consistency_check_node(state: dict) -> dict:
         if name:
             available_names.add(name)
     
-    print(f"[CONSISTENCY] Validating: {len(characters)} chars, {len(events)} events, {len(relationships)} rels")
+    print(f"[CONSISTENCY] Validating: {len(characters)} chars, {len(events)} events, {len(relationships)} rels (Short Text: {is_short_text})")
     
     # === RAG: Retrieve historical context ===
     historical_context = {"characters": [], "events": [], "search_performed": False}
-    if project_id:
+    # Skip RAG for short texts to prevent Cross-Chapter false positives
+    if project_id and not is_short_text:
         try:
             db_service = await get_db_service()
             historical_context = await db_service.retrieve_relevant_history(

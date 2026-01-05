@@ -47,7 +47,9 @@ class GlobalResolutionAgent:
     def __init__(self):
         self.llm = get_gemini_llm(tier="premium") # Use Premium for high reasoning
         self.embedding_service = get_embedding_service()
-        self.similarity_threshold = 0.70 # Lowered for better deduplication of generic descriptors
+        # Increased threshold to prevent incorrect merging of distinct characters
+        # 0.90 requires near-identical semantic content (same person, different mentions)
+        self.similarity_threshold = 0.90 # Increased to prevent incorrect merges (e.g. Heze vs Claire)
 
     async def resolve_entities(self, characters: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Resolve and merge duplicate characters using semantic similarity."""
@@ -197,11 +199,17 @@ class GlobalResolutionAgent:
             return {}
             
         # Base on the first character or the one matching primary name
-        primary_char = next((c for c in chars if c.get("name") == primary_name), chars[0])
+        # Use profile.name (FullCharacter format) for matching
+        def get_name(c):
+            return c.get("profile", {}).get("name") or c.get("name")
+        
+        primary_char = next((c for c in chars if get_name(c) == primary_name), chars[0])
         merged = primary_char.copy()
-        merged["name"] = primary_name
+        # Do NOT add top-level "name" field - profile.name is the canonical location
+        # merged["name"] = primary_name  # REMOVED: causes duplicate name field
         merged["aliases"] = list(set(merged.get("aliases", []) + aliases))
         
         # Merge other fields (events, relations) - overly simplified for now
         # Ideally we union event_refs and re-map relation targets
         return merged
+

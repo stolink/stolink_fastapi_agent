@@ -9,6 +9,7 @@ Implements:
 import asyncio
 from typing import Any, TypedDict, Annotated, Literal
 import operator
+import time
 
 from langgraph.graph import StateGraph, START, END
 
@@ -21,7 +22,7 @@ from app.agents.extraction.setting import setting_extraction_node
 from app.agents.analysis.relationship import relationship_analysis_node
 from app.agents.analysis.consistency import consistency_check_node
 from app.agents.analysis.plot import plot_node
-from app.agents.analysis.global_resolution import GlobalResolutionAgent
+from app.agents.analysis.global_resolution import GlobalResolutionAgent, GlobalResolutionResult
 from app.agents.validation.validator import validator_node
 
 
@@ -32,9 +33,9 @@ class AnalysisState(TypedDict, total=False):
     project_id: str
     document_id: str
     job_id: str
-    job_id: str
     callback_url: str
     requires_deep_analysis: bool
+    is_short_text: bool  # 🆕 Fast Track flag
     
     # Tracing
     trace_id: str
@@ -198,9 +199,12 @@ async def extraction_node(state: dict) -> dict:
         # Update each character's event_refs
         for char in extracted_characters:
             char_name = char.get("profile", {}).get("name") or char.get("name", "")
-            if char_name and char_name in char_to_events:
-                if "relations" in char:
-                    char["relations"]["event_refs"] = char_to_events[char_name]
+            if char_name and char_to_events.get(char_name):
+                # Ensure relations dict exists
+                if "relations" not in char:
+                    char["relations"] = {"graph": [], "event_refs": [], "location_context": None}
+                
+                char["relations"]["event_refs"] = char_to_events[char_name]
                 print(f"[EXTRACTION] Linked {len(char_to_events[char_name])} events to {char_name}", flush=True)
         
         updates["extracted_characters"] = extracted_characters
@@ -212,14 +216,15 @@ async def extraction_node(state: dict) -> dict:
 async def analysis_node(state: dict) -> dict:
     """Execute all analysis agents in parallel."""
     requires_deep = state.get("requires_deep_analysis", False)
-    print(f"[ANALYSIS] Starting - requires_deep_analysis={requires_deep}", flush=True)
+    is_short_text = state.get("is_short_text", False)
+    print(f"[ANALYSIS] Starting - requires_deep_analysis={requires_deep}, is_short_text={is_short_text}", flush=True)
     
     tasks = [
         asyncio.create_task(relationship_analysis_node(state)),
     ]
     
     # Conditional Deep Analysis
-    if state.get("requires_deep_analysis", False):
+    if requires_deep:
         print("[ANALYSIS] Deep Analysis triggering: Plot + Consistency", flush=True)
         tasks.append(asyncio.create_task(consistency_check_node(state)))
         tasks.append(asyncio.create_task(plot_node(state)))
@@ -365,15 +370,14 @@ async def run_analysis_pipeline(
     existing_events: list = None,
     existing_relationships: list = None,
     existing_settings: list = None,
-
     trace_id: str = "",
     requires_deep_analysis: bool = False,
+    is_short_text: bool = False, # 🆕 Add parameter
 ) -> dict[str, Any]:
     """Run the complete analysis pipeline with Supervisor."""
-    import time
     
     # 🆕 디버그 로그
-    print(f"[PIPELINE] run_analysis_pipeline called with requires_deep_analysis={requires_deep_analysis}", flush=True)
+    print(f"[PIPELINE] run_analysis_pipeline called with requires_deep_analysis={requires_deep_analysis}, is_short_text={is_short_text}", flush=True)
     
     initial_state: AnalysisState = {
         "content": content,
@@ -383,6 +387,7 @@ async def run_analysis_pipeline(
         "callback_url": callback_url,
         "trace_id": trace_id,
         "requires_deep_analysis": requires_deep_analysis,
+        "is_short_text": is_short_text, # 🆕 Add to state
         "existing_characters": existing_characters or [],
         "existing_events": existing_events or [],
         "existing_relationships": existing_relationships or [],

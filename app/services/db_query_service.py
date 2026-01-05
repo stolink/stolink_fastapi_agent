@@ -712,6 +712,20 @@ class DatabaseQueryService:
         except Exception as e:
             logger.error("Failed to search similar sections", error=str(e))
             return []
+
+    async def get_document_content(self, document_id: str) -> Optional[str]:
+        """Fetch raw content of a document."""
+        if not self._pg_pool:
+            return None
+        
+        query = "SELECT content FROM documents WHERE id = $1"
+        
+        try:
+            async with self._pg_pool.acquire() as conn:
+                return await conn.fetchval(query, document_id)
+        except Exception as e:
+            logger.error("Failed to fetch document content", error=str(e))
+            return None
     
     async def get_document_with_parent_info(
         self,
