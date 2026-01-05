@@ -46,11 +46,11 @@ async def lifespan(app: FastAPI):
     """
     logger.info("Starting StoLink AI Backend")
     
-    # Start legacy RabbitMQ consumer (기존 분석)
-    consumer = get_consumer()
-    consumer.set_message_handler(handle_analysis_message)
-    consumer_task = asyncio.create_task(consumer.consume_forever())
-    logger.info("Legacy RabbitMQ consumer started")
+    # Start legacy RabbitMQ consumer (기존 분석) -> Disabled for Schema Migration
+    # consumer = get_consumer()
+    # consumer.set_message_handler(handle_analysis_message)
+    # consumer_task = asyncio.create_task(consumer.consume_forever())
+    # logger.info("Legacy RabbitMQ consumer started")
     
     # Start Document Analysis Consumer (대용량 분석)
     from app.services.document_analysis_consumer import (
@@ -82,12 +82,12 @@ async def lifespan(app: FastAPI):
     await stop_all_consumers()
     
     # Stop legacy consumer
-    consumer_task.cancel()
-    try:
-        await consumer_task
-    except asyncio.CancelledError:
-        pass
-    await consumer.disconnect()
+    # consumer_task.cancel()
+    # try:
+    #     await consumer_task
+    # except asyncio.CancelledError:
+    #     pass
+    # await consumer.disconnect()
 
 
 # Create FastAPI app

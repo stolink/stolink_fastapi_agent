@@ -47,7 +47,7 @@ class RabbitMQConsumer:
             prefetch_count: Number of messages to prefetch (controls concurrency)
         """
         self.rabbitmq_url = rabbitmq_url or settings.rabbitmq_url
-        self.queue_name = queue_name or settings.rabbitmq_analysis_queue
+        self.queue_name = queue_name or settings.document_analysis_queue
         self.prefetch_count = prefetch_count
         self.connection = None
         self.channel = None

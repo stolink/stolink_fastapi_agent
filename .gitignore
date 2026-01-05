@@ -14,14 +14,16 @@ ENV/
 *.http
 
 # --- User Custom Rules (아까 요청하신 Spring md 파일 제외) ---
-PROJECT_ARCHITECTURE.md
 *.json
+*.txt
+PROJECT_ARCHITECTURE.md
 queries.cypher
 FASTAPI*.md
 FASTAPI_SCHEMA_REQUEST.md
 AI_BACKEND*.md
 JOB*.md
 ref.md
+FUTURE_TASKS.md
 
 # --- Python Compiled Files (자동 생성되는 파일들) ---
 __pycache__/

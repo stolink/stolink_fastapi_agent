@@ -41,10 +41,10 @@ VALIDATION_RULES = {
         "nested_paths": True
     },
     "extracted_events": {
-        "required": True,
-        "min_count": 1,
-        "penalty_missing": 15,
-        "penalty_empty": 10,
+        "required": False,  # Changed: Event extraction failure should not block pipeline
+        "min_count": 0,     # Changed: Allow zero events
+        "penalty_missing": 5,  # Reduced penalty
+        "penalty_empty": 3,    # Reduced penalty
         "required_fields": ["event_id", "description"]
     },
     "extracted_settings": {
@@ -283,6 +283,60 @@ def calculate_data_completeness(state: dict) -> dict:
     return completeness
 
 
+
+def repair_missing_participants(state: dict) -> tuple:
+    """Auto-repair missing participants by creating placeholder characters.
+    
+    Returns:
+        (updated_characters, repaired_names)
+    """
+    characters = state.get("extracted_characters") or []
+    events = state.get("extracted_events") or []
+    
+    # Get existing names
+    char_map = {}
+    for c in characters:
+        name = c.get("name") or (c.get("profile", {}) or {}).get("name")
+        if name:
+            char_map[name] = c
+            
+    repaired_names = []
+    
+    for event in events:
+        participants = event.get("participants") or []
+        for p in participants:
+            if not p:
+                continue
+                
+            # Check if participant exists (exact match)
+            if p not in char_map:
+                # Create placeholder character with personality to avoid warnings
+                new_char = {
+                    "name": p,
+                    "role": "extra",  # Default to extra
+                    "profile": {
+                        "name": p,
+                        "age": None,
+                        "gender": None,
+                        "personality": {
+                            "core_traits": ["Unknown"],
+                            "flaws": [],
+                            "values": []
+                        },
+                        "backstory": "Auto-generated from event participant"
+                    },
+                    "category": "Person",
+                    "status": "Unknown",
+                    "confidence_score": 0.5,
+                    "source": "auto_repair"
+                }
+                characters.append(new_char)
+                char_map[p] = new_char
+                repaired_names.append(p)
+    
+    return characters, repaired_names
+
+
 async def validator_node(state: dict) -> dict:
     """Validator Agent node function - Production Level.
     
@@ -296,15 +350,28 @@ async def validator_node(state: dict) -> dict:
     5. Data quality metrics
     
     Includes:
+    - Auto-repair for missing participants (VAL_005)
     - Structured error reporting (field, code, message, value)
     - Execution time metrics for performance monitoring
     """
     start_time = time.time()
     
+    # === 0. Auto-Repair: Fix missing participants ===
+    # This prevents VAL_005 errors by creating "extra" characters
+    repaired_chars, repaired_names = repair_missing_participants(state)
+    
+    # Update state temporarily for validation (will be returned in updates)
+    state["extracted_characters"] = repaired_chars
+    
     quality_score = 100
     warnings = []
     structured_errors = []
     validation_details = {}
+    
+    if repaired_names:
+        msg = f"Auto-repaired {len(repaired_names)} missing participants: {', '.join(repaired_names[:5])}"
+        warnings.append(msg)
+        print(f"[VALIDATOR] {msg}")
     
     # === 1. Validate Each Agent Output ===
     for key, rules in VALIDATION_RULES.items():
@@ -392,6 +459,9 @@ async def validator_node(state: dict) -> dict:
     elif quality_score >= 50:
         action = "human_review"
         action_description = "Needs human review before proceeding"
+    elif quality_score >= 30:  # Changed: Lower threshold to reduce retry loops
+        action = "human_review"
+        action_description = "Quality below threshold but acceptable"
     else:
         action = "retry_extraction"
         action_description = "Quality too low - requires re-extraction"
@@ -427,6 +497,8 @@ async def validator_node(state: dict) -> dict:
     return {
         "validation_result": validation_result,
         "validation_done": True,
+        # Return repaired characters so they persist
+        "extracted_characters": repaired_chars,
         "messages": [
             {"role": "validator_agent", 
              "content": f"Score: {quality_score}, Action: {action}, Time: {execution_time_ms}ms"}

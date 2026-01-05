@@ -12,26 +12,18 @@ Improvements:
 - Optimization: event_refs for Event IDs instead of full text
 - Embedding: Generate embedding for Neo4j vector search
 """
-import boto3
+# import boto3  <-- Removed AWS dependency
 import json
 from typing import Any
 
 from app.schemas.characters import FullCharacter, FullCharacterExtractionResult
+from app.services.embedding_service import get_embedding_service
+from app.agents.extraction.character.identity import NON_CHARACTER_KEYWORDS, is_likely_item
 
 
-# === Embedding Generation ===
-_bedrock_client = None
 
-def get_bedrock_client():
-    """Get or create Bedrock client singleton."""
-    global _bedrock_client
-    if _bedrock_client is None:
-        _bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
-    return _bedrock_client
-
-
-def generate_character_embedding(name: str, traits: list, role: str) -> list[float]:
-    """Generate embedding for character using AWS Bedrock Titan.
+async def generate_character_embedding(name: str, traits: list, role: str) -> list[float]:
+    """Generate embedding for character using Gemini (3072 dim).
     
     Creates embedding from character name + traits + role for vector search.
     Returns empty list if generation fails (non-blocking).
@@ -39,15 +31,11 @@ def generate_character_embedding(name: str, traits: list, role: str) -> list[flo
     try:
         # Build text to embed
         trait_str = ", ".join(traits[:5]) if traits else ""
-        text_to_embed = f"{name} ({role}): {trait_str}"
+        text_to_embed = f"Character: {name}. Role: {role}. Traits: {trait_str}"
         
-        client = get_bedrock_client()
-        response = client.invoke_model(
-            modelId='amazon.titan-embed-text-v1',
-            body=json.dumps({"inputText": text_to_embed})
-        )
-        result = json.loads(response['body'].read())
-        return result.get('embedding', [])
+        service = get_embedding_service()
+        # Use async wrapper for embedding generation
+        return await service.generate_embedding_async(text_to_embed)
     except Exception as e:
         print(f"[AGGREGATOR] Embedding generation failed for {name}: {e}")
         return []  # Non-blocking - return empty list
@@ -444,13 +432,80 @@ def build_name_merge_map(all_raw_names: set, dynamic_mapping: dict = None) -> di
     
     # Build merge map
     merge_map = {}
-    canonical_names = set()
     
+    # 1. Initialize with strict mappings
     for name in all_raw_names:
         canonical = normalize_character_name(name, full_mapping)
         merge_map[name] = canonical
-        canonical_names.add(canonical)
+
+    # 2. Advanced Fuzzy Merging (Jaro-Winkler + Substring)
+    # Sort canonical names by length (longest first) to prefer "Elara Vance" over "Elara"
+    unique_canonicals = list(set(merge_map.values()))
+    unique_canonicals.sort(key=len, reverse=True)
     
+    final_canonical_map = {}  # {current_name: merged_targer}
+    
+    # Simple implementation of Jaro-Winkler-like similarity
+    def get_similarity(s1, s2):
+        s1, s2 = s1.lower(), s2.lower()
+        if s1 == s2: return 1.0
+        if s1 in s2 or s2 in s1: return 0.9  # Substring match
+        
+        # Count matching characters
+        matches = 0
+        len1, len2 = len(s1), len(s2)
+        match_window = max(len1, len2) // 2 - 1
+        
+        s1_matches = [False] * len1
+        s2_matches = [False] * len2
+        
+        for i in range(len1):
+            start = max(0, i - match_window)
+            end = min(i + match_window + 1, len2)
+            for j in range(start, end):
+                if s2_matches[j]: continue
+                if s1[i] == s2[j]:
+                    s1_matches[i] = True
+                    s2_matches[j] = True
+                    matches += 1
+                    break
+        
+        if matches == 0: return 0.0
+        
+        # Simple Jaro score approximation
+        return (matches / len1 + matches / len2 + (matches - 0) / matches) / 3
+
+    processed = set()
+    
+    for i, name1 in enumerate(unique_canonicals):
+        if name1 in processed: continue
+        
+        final_canonical_map[name1] = name1
+        processed.add(name1)
+        
+        for j in range(i + 1, len(unique_canonicals)):
+            name2 = unique_canonicals[j]
+            if name2 in processed: continue
+            
+            # Skip if different scripts (e.g. Korean vs English) unless mapped
+            if is_korean(name1) != is_korean(name2) and not is_english_only(name1) == is_english_only(name2):
+                 continue
+
+            sim = get_similarity(name1, name2)
+            
+            # Merge condition: High similarity or nice substring
+            # e.g. "Elara Vance" (name1) vs "Elara" (name2) -> sim 0.9 via substring
+            if sim > 0.85:
+                print(f"[AGGREGATOR] Merging '{name2}' -> '{name1}' (Similarity: {sim:.2f})")
+                final_canonical_map[name2] = name1
+                processed.add(name2)
+    
+    # 3. Update original merge map
+    for raw, canon in merge_map.items():
+        if canon in final_canonical_map:
+            merge_map[raw] = final_canonical_map[canon]
+    
+    canonical_names = set(merge_map.values())
     print(f"[AGGREGATOR] Name merge map: {len(all_raw_names)} raw → {len(canonical_names)} canonical")
     return merge_map
 
@@ -497,7 +552,7 @@ def _simplify_inventory(inv_data: dict) -> list[dict]:
     
     return simplified
 
-def merge_character_data(
+async def merge_character_data(
     identity: dict,
     appearance: dict,
     personality: dict,
@@ -696,7 +751,7 @@ def merge_character_data(
                 "lock_version": 0,
             },
             # === Embedding for Neo4j Vector Search ===
-            "embedding": generate_character_embedding(
+            "embedding": await generate_character_embedding(
                 name=name,
                 traits=per_data.get("core_traits", []),
                 role=final_role
@@ -731,7 +786,7 @@ async def character_aggregator_node(state: dict) -> dict:
     # Extract events for event_refs population
     extracted_events = state.get("extracted_events") or []
     
-    characters = merge_character_data(
+    characters = await merge_character_data(
         identity, appearance, personality, relations,
         dialogue_mood=dialogue_mood,
         existing_characters=existing_characters,
@@ -739,42 +794,69 @@ async def character_aggregator_node(state: dict) -> dict:
         extracted_events=extracted_events
     )
     
-    # === FINAL FILTER: Remove items that were wrongly identified as characters ===
-    ITEM_KEYWORDS = [
-        "트렌치코트", "홀로그램 방패", "뇌 임플란트", "기계 팔", "메모리 칩", 
-        "검은 슈트", "플라즈마 건", "홀로그램 인터페이스", "임플란트", "칩",
-        "방패", "총", "건", "슈트", "코트", "칼", "검", "갑옷", "무기",
-        "shield", "gun", "suit", "coat", "sword", "armor", "weapon", "implant", "chip"
-    ]
+    # === FINAL FILTER: Remove items AND non-characters ===
+    # Using the comprehensive NON_CHARACTER_KEYWORDS list from identity.py
+    # This acts as the final gatekeeper against leakage from any agent
     
-    def is_likely_item(name: str) -> bool:
-        if not name:
-            return False
-        name_normalized = name.replace(" ", "").lower()
-        for keyword in ITEM_KEYWORDS:
-            keyword_lower = keyword.lower()
-            if keyword in name or keyword_lower in name_normalized:
-                return True
-        return False
+    # helper is imported from identity.py: is_likely_item(name) -> uses NON_CHARACTER_KEYWORDS
     
     original_count = len(characters)
     filtered_characters = []
+    
     for char in characters:
         char_name = char.get("profile", {}).get("name", "") or ""
+        
+        # 1. Check if it's a non-character (item, place, generic descriptor)
         if is_likely_item(char_name):
-            print(f"[AGGREGATOR] Filtered out item: '{char_name}' (not a character)")
+            print(f"[AGGREGATOR] Filtered out non-character: '{char_name}'")
             continue
+            
+        # 2. Check for empty name
+        if not char_name.strip():
+            print(f"[AGGREGATOR] Filtered out empty name character")
+            continue
+            
         filtered_characters.append(char)
     
     if len(filtered_characters) < original_count:
         print(f"[AGGREGATOR] Filtered {original_count - len(filtered_characters)} non-character entries")
     
+    # === SETTINGS AGGREGATION ===
+    # Extract unique settings from events and character contexts
+    extracted_settings = {}
+    
+    # 1. From Events
+    events = state.get("extracted_events", [])
+    for event in events:
+        loc = event.get("location_ref")
+        if loc and loc not in extracted_settings:
+            extracted_settings[loc] = {
+                "name": loc,
+                "type": "location",
+                "description": f"Extracted from event context: {event.get('description', '')[:50]}...",
+                "source": "event_location_ref"
+            }
+            
+    # 2. From Character Contexts
+    for char in filtered_characters:
+        loc = char.get("relations", {}).get("location_context")
+        if loc and loc not in extracted_settings and loc != "Unknown":
+             extracted_settings[loc] = {
+                "name": loc,
+                "type": "location",
+                "description": f"Associated with character {char.get('profile', {}).get('name')}",
+                "source": "character_location_context"
+            }
+
+    settings_list = list(extracted_settings.values())
+    print(f"[AGGREGATOR] Aggregated {len(settings_list)} settings.")
+
     return {
         "extracted_characters": filtered_characters,
+        "extracted_settings": settings_list,
         "completed_agents": (state.get("completed_agents") or []) + ["aggregator"],
         "messages": [{
             "role": "aggregator",
-            "content": f"Merged {len(filtered_characters)} characters from 7 sub-agents"
+            "content": f"Merged {len(filtered_characters)} characters and {len(settings_list)} settings"
         }]
     }
-

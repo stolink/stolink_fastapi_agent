@@ -1,73 +1,108 @@
-"""Embedding service using Amazon Bedrock Titan.
+"""Embedding service using Google Gemini.
 
-Amazon Titan Text Embeddings V2를 사용하여 텍스트 임베딩을 생성합니다.
-- 모델: amazon.titan-embed-text-v2:0
-- 출력 차원: 1024 (기본값, 저장 효율성과 정확도 균형)
+Google Gemini Text Embeddings를 사용하여 텍스트 임베딩을 생성합니다.
+- 모델: gemini-embedding-001
+- 출력 차원: 3072
 - Rate Limit 대응: 지수 백오프 재시도
+- 네트워크 오류 복구: 자동 재연결
 """
-import json
 import asyncio
 from typing import Optional
-from functools import lru_cache
 
-import boto3
 import structlog
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from botocore.exceptions import ClientError, ReadTimeoutError
+import httpx
+import httpcore
+from tenacity import (
+    retry, 
+    stop_after_attempt, 
+    wait_exponential, 
+    retry_if_exception_type,
+    before_sleep_log
+)
+from google import genai
+from google.genai import types
 
 from app.config import settings
 
 logger = structlog.get_logger()
 
+# 재시도 가능한 네트워크 에러 타입
+RETRYABLE_ERRORS = (
+    httpx.ConnectError,
+    httpx.ReadError,
+    httpx.TimeoutException,
+    httpcore.ConnectError,
+    httpcore.ReadError,
+    ConnectionError,
+    TimeoutError,
+)
+
 
 class EmbeddingService:
-    """Amazon Bedrock Titan 임베딩 서비스.
+    """Google Gemini 임베딩 서비스.
     
-    사용 모델: amazon.titan-embed-text-v2:0
-    - 입력: 최대 8,192 토큰
-    - 출력: 1024차원 (256, 512, 1024 선택 가능)
+    사용 모델: gemini-embedding-001
+    - 입력: 최대 2,048 토큰
+    - 출력: 3072차원
     """
     
     # 모델 ID
-    MODEL_ID = "amazon.titan-embed-text-v2:0"
+    MODEL_ID = "gemini-embedding-001"
     
-    # 출력 차원 (1024 권장: 정확도와 저장 효율 균형)
-    EMBEDDING_DIMENSION = 1024
+    # 출력 차원
+    EMBEDDING_DIMENSION = 3072
     
     # 입력 토큰 제한
-    MAX_INPUT_TOKENS = 8192
+    MAX_INPUT_TOKENS = 2048
     
+
     def __init__(self):
         self._client = None
         self._initialized = False
+        self._redis = None
+        try:
+             import redis
+             self._redis = redis.Redis(
+                 host=settings.redis_host, 
+                 port=settings.redis_port, 
+                 db=settings.redis_db,
+                 decode_responses=False # We store bytes/json
+             )
+             self._redis.ping()
+             logger.info("Redis cache initialized for embeddings")
+        except Exception as e:
+             logger.warning(f"Redis cache init failed: {e}. Caching disabled.")
+             self._redis = None
     
-    def _get_client(self):
-        """Bedrock 클라이언트 반환 (lazy initialization)"""
-        if self._client is None:
-            self._client = boto3.client(
-                'bedrock-runtime',
-                region_name=settings.aws_region,
-                aws_access_key_id=settings.aws_access_key_id,
-                aws_secret_access_key=settings.aws_secret_access_key
-            )
+    def _get_client(self, force_refresh: bool = False):
+        """Gemini 클라이언트 반환 (lazy initialization)"""
+        if self._client is None or force_refresh:
+            self._client = genai.Client(api_key=settings.gemini_api_key)
             self._initialized = True
-            logger.info("Bedrock client initialized", region=settings.aws_region, model=self.MODEL_ID)
+            logger.info("Gemini embedding client initialized", model=self.MODEL_ID, refresh=force_refresh)
         return self._client
     
+    def _reset_client(self):
+        """클라이언트 재초기화 (네트워크 오류 복구용)"""
+        self._client = None
+        self._initialized = False
+        logger.warning("Gemini embedding client reset for reconnection")
+    
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=30),
-        retry=retry_if_exception_type((ClientError, ReadTimeoutError)),
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=2, max=60),
+        retry=retry_if_exception_type(RETRYABLE_ERRORS + (Exception,)),
         before_sleep=lambda retry_state: logger.warning(
-            "Embedding retry", attempt=retry_state.attempt_number
+            "Embedding retry", 
+            attempt=retry_state.attempt_number,
+            error=str(retry_state.outcome.exception()) if retry_state.outcome else "unknown"
         )
     )
-    def generate_embedding(self, text: str, dimension: int = None) -> list[float]:
+    def generate_embedding(self, text: str) -> list[float]:
         """동기 방식으로 텍스트 임베딩 생성.
         
         Args:
-            text: 임베딩할 텍스트 (최대 8,192 토큰)
-            dimension: 출력 차원 (256, 512, 1024 중 선택, 기본값 1024)
+            text: 임베딩할 텍스트 (최대 2,048 토큰)
         
         Returns:
             임베딩 벡터 (float 리스트)
@@ -81,26 +116,39 @@ class EmbeddingService:
         if len(text) > max_chars:
             text = text[:max_chars]
             logger.warning("Text truncated for embedding", original_length=len(text))
-        
-        dim = dimension or self.EMBEDDING_DIMENSION
-        
-        body = json.dumps({
-            "inputText": text,
-            "dimensions": dim,
-            "normalize": True  # 코사인 유사도 검색에 최적화
-        })
+            
+        # Cache Check
+        cache_key = f"emb:{hash(text)}"
+        if self._redis:
+            try:
+                cached = self._redis.get(cache_key)
+                if cached:
+                    import json
+                    logger.debug("Embedding cache hit")
+                    return json.loads(cached)
+            except Exception as e:
+                logger.warning(f"Redis get failed: {e}")
         
         try:
             client = self._get_client()
-            response = client.invoke_model(
-                modelId=self.MODEL_ID,
-                body=body,
-                contentType="application/json",
-                accept="application/json"
+            response = client.models.embed_content(
+                model=self.MODEL_ID,
+                contents=text,
             )
             
-            result = json.loads(response['body'].read())
-            embedding = result.get('embedding', [])
+            embedding = response.embeddings[0].values
+            
+            # Cache Set
+            if self._redis:
+                try:
+                    import json
+                    self._redis.setex(
+                        cache_key, 
+                        24*60*60, # 24 hours TTL
+                        json.dumps(list(embedding))
+                    )
+                except Exception as e:
+                    logger.warning(f"Redis set failed: {e}")
             
             logger.debug(
                 "Embedding generated",
@@ -108,21 +156,13 @@ class EmbeddingService:
                 embedding_dim=len(embedding)
             )
             
-            return embedding
+            return list(embedding)
             
-        except ClientError as e:
-            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-            logger.error(
-                "Bedrock API error",
-                error_code=error_code,
-                error=str(e)
-            )
-            raise
         except Exception as e:
             logger.error("Embedding generation failed", error=str(e))
             raise
     
-    async def generate_embedding_async(self, text: str, dimension: int = None) -> list[float]:
+    async def generate_embedding_async(self, text: str) -> list[float]:
         """비동기 방식으로 텍스트 임베딩 생성.
         
         동기 메서드를 asyncio executor에서 실행합니다.
@@ -130,14 +170,13 @@ class EmbeddingService:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
             None,
-            lambda: self.generate_embedding(text, dimension)
+            lambda: self.generate_embedding(text)
         )
     
     async def generate_embeddings_batch(
         self,
         texts: list[str],
-        dimension: int = None,
-        max_concurrent: int = 5
+        max_concurrent: int = 10  # Increased for better throughput
     ) -> list[list[float]]:
         """여러 텍스트에 대해 배치로 임베딩 생성.
         
@@ -145,7 +184,6 @@ class EmbeddingService:
         
         Args:
             texts: 임베딩할 텍스트 리스트
-            dimension: 출력 차원
             max_concurrent: 최대 동시 요청 수
         
         Returns:
@@ -156,7 +194,7 @@ class EmbeddingService:
         async def limited_embed(text: str) -> list[float]:
             async with semaphore:
                 try:
-                    return await self.generate_embedding_async(text, dimension)
+                    return await self.generate_embedding_async(text)
                 except Exception as e:
                     logger.error("Batch embedding failed for text", error=str(e))
                     return []

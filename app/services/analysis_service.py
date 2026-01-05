@@ -172,6 +172,7 @@ async def run_analysis(
             existing_events=initial_state.get("existing_events"),
             existing_relationships=initial_state.get("existing_relationships"),
             trace_id=trace_id,
+            requires_deep_analysis=task.requires_deep_analysis,  # 🆕 심층 분석 플래그 전달
         )
         
         # Update job status to VALIDATING

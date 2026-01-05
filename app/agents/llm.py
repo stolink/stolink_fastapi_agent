@@ -1,17 +1,16 @@
-"""AWS Bedrock LLM configuration with Structured Output support.
+"""Google Gemini LLM configuration with Structured Output support.
 
-Uses ChatBedrockConverse for:
+Uses ChatGoogleGenerativeAI for:
 - Tool Calling based structured output
 - Pydantic v2 schema binding
 - Guaranteed JSON format compliance
-- Exponential backoff retry for throttling
+- Exponential backoff retry for throttling and network errors
 """
 import asyncio
 import random
-import boto3
 from typing import Type, TypeVar
 from pydantic import BaseModel
-from langchain_aws import ChatBedrockConverse
+from langchain_google_genai import ChatGoogleGenerativeAI
 from app.config import settings
 
 T = TypeVar('T', bound=BaseModel)
@@ -19,13 +18,21 @@ T = TypeVar('T', bound=BaseModel)
 # Retry configuration
 MAX_RETRIES = 5
 BASE_DELAY = 1.0  # seconds
-MAX_DELAY = 30.0  # seconds
+MAX_DELAY = 60.0  # seconds
+
+# Retryable error patterns
+RETRYABLE_PATTERNS = [
+    "429", "Too many requests", "RESOURCE_EXHAUSTED",  # Rate limiting
+    "ConnectError", "ReadError", "TimeoutError",       # Network errors
+    "Server disconnected", "Connection reset",         # Connection errors
+    "UNAVAILABLE", "DEADLINE_EXCEEDED",                # gRPC errors
+]
 
 
 async def retry_with_backoff(func, *args, **kwargs):
     """Execute function with exponential backoff retry.
     
-    Handles ThrottlingException from AWS Bedrock.
+    Handles rate limiting and network errors from Google Gemini API.
     """
     last_exception = None
     
@@ -34,10 +41,12 @@ async def retry_with_backoff(func, *args, **kwargs):
             return await func(*args, **kwargs)
         except Exception as e:
             error_str = str(e)
-            if "ThrottlingException" in error_str or "Too many requests" in error_str:
+            is_retryable = any(pattern in error_str for pattern in RETRYABLE_PATTERNS)
+            
+            if is_retryable:
                 last_exception = e
                 delay = min(BASE_DELAY * (2 ** attempt) + random.uniform(0, 1), MAX_DELAY)
-                print(f"[LLM] Throttled, retrying in {delay:.1f}s (attempt {attempt + 1}/{MAX_RETRIES})")
+                print(f"[LLM] Retrying in {delay:.1f}s (attempt {attempt + 1}/{MAX_RETRIES}): {error_str[:80]}")
                 await asyncio.sleep(delay)
             else:
                 raise e
@@ -45,22 +54,12 @@ async def retry_with_backoff(func, *args, **kwargs):
     raise last_exception
 
 
-def get_bedrock_client():
-    """Create AWS Bedrock runtime client."""
-    return boto3.client(
-        service_name="bedrock-runtime",
-        region_name=settings.aws_region,
-        aws_access_key_id=settings.aws_access_key_id,
-        aws_secret_access_key=settings.aws_secret_access_key,
-    )
-
-
-def get_bedrock_llm(
+def get_gemini_llm(
     tier: str = "standard",
     temperature: float = 0.0,
     max_tokens: int = 4096
-) -> ChatBedrockConverse:
-    """Get Bedrock LLM instance by tier.
+) -> ChatGoogleGenerativeAI:
+    """Get Gemini LLM instance by tier.
     
     Args:
         tier: Model tier - "basic", "standard", or "advanced"
@@ -68,38 +67,44 @@ def get_bedrock_llm(
         max_tokens: Maximum tokens to generate
         
     Returns:
-        ChatBedrockConverse instance configured for the specified tier
+        ChatGoogleGenerativeAI instance configured for the specified tier
         
     Tiers (Cost vs Performance):
-        - basic: Claude 3 Haiku - Fast, cheap. For routing, simple classification.
-        - standard: Claude 3.5 Haiku - Balanced. For extraction, summarization.
-        - advanced: Claude 4.5 Haiku - Best reasoning. For complex analysis, role inference.
+        - basic: gemini-2.0-flash-lite - Fast, cheap. Warning: Low TPM stability under load.
+        - standard: gemini-2.5-flash-lite - Balanced. Warning: Low TPM stability under load.
+        - advanced: gemini-2.5-flash - Best reasoning. High Stability & TPM. Recommended for extraction.
+        - premium: gemini-3-flash - Latest model. Best for critical tasks.
     """
     model_configs = {
         "basic": {
-            "model_id": "anthropic.claude-3-haiku-20240307-v1:0",
-            "default_max_tokens": 1024,  # Faster for simple tasks
+            "model_id": "gemini-2.0-flash-lite",
+            "default_max_tokens": 2048,  # Faster for simple tasks
         },
         "standard": {
-            "model_id": "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+            "model_id": "gemini-2.5-flash-lite",
             "default_max_tokens": 2048,  # Balanced
         },
         "advanced": {
-            "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            "model_id": "gemini-2.5-flash",
             "default_max_tokens": 4096,  # Full capacity for complex tasks
+        },
+        "premium": {
+            "model_id": "gemini-3-flash-preview",
+            "default_max_tokens": 4096,  # Latest model for critical tasks
         }
     }
     
     config = model_configs.get(tier, model_configs["standard"])
+    print(f"[LLM] Initialized {tier} tier with model: {config['model_id']}")
     
     # Use tier-specific default if max_tokens not explicitly specified
     effective_max_tokens = max_tokens if max_tokens != 4096 else config.get("default_max_tokens", 4096)
     
-    return ChatBedrockConverse(
-        client=get_bedrock_client(),
+    return ChatGoogleGenerativeAI(
         model=config["model_id"],
+        google_api_key=settings.gemini_api_key,
         temperature=temperature,
-        max_tokens=effective_max_tokens,
+        max_output_tokens=effective_max_tokens,
     )
 
 
@@ -108,7 +113,7 @@ def get_structured_llm(
     tier: str = "standard",
     temperature: float = 0.0,
     max_tokens: int = 4096
-) -> ChatBedrockConverse:
+) -> ChatGoogleGenerativeAI:
     """Get LLM with structured output bound to a Pydantic schema.
     
     This uses Tool Calling to guarantee the output matches the schema.
@@ -131,7 +136,7 @@ def get_structured_llm(
         >>> result.settings[0].location_name
         'Dark Forest'
     """
-    base_llm = get_bedrock_llm(tier, temperature, max_tokens)
+    base_llm = get_gemini_llm(tier, temperature, max_tokens)
     return base_llm.with_structured_output(schema)
 
 
@@ -141,25 +146,34 @@ STANDARD_LLM = None
 ADVANCED_LLM = None
 
 
-def get_basic_llm() -> ChatBedrockConverse:
-    """Get Basic tier LLM (Claude 3 Haiku)."""
+def get_basic_llm() -> ChatGoogleGenerativeAI:
+    """Get Basic tier LLM (Gemini 2.0 Flash Lite)."""
     global BASIC_LLM
     if BASIC_LLM is None:
-        BASIC_LLM = get_bedrock_llm("basic")
+        BASIC_LLM = get_gemini_llm("basic")
     return BASIC_LLM
 
 
-def get_standard_llm() -> ChatBedrockConverse:
-    """Get Standard tier LLM (Claude 3.5 Haiku)."""
+def get_standard_llm() -> ChatGoogleGenerativeAI:
+    """Get Standard tier LLM (Gemini 2.0 Flash)."""
     global STANDARD_LLM
     if STANDARD_LLM is None:
-        STANDARD_LLM = get_bedrock_llm("standard")
+        STANDARD_LLM = get_gemini_llm("standard")
     return STANDARD_LLM
 
 
-def get_advanced_llm() -> ChatBedrockConverse:
-    """Get Advanced tier LLM (Claude 4.5 Haiku)."""
+def get_advanced_llm() -> ChatGoogleGenerativeAI:
+    """Get Advanced tier LLM (Gemini 2.5 Flash)."""
     global ADVANCED_LLM
     if ADVANCED_LLM is None:
-        ADVANCED_LLM = get_bedrock_llm("advanced")
+        ADVANCED_LLM = get_gemini_llm("advanced")
     return ADVANCED_LLM
+
+
+async def safe_ainvoke(runnable, input_data: dict):
+    """Execute runnable.ainvoke with retry logic.
+    
+    Wrapper for chains and LLMs to handle rate limits automatically.
+    """
+    return await retry_with_backoff(runnable.ainvoke, input_data)
+

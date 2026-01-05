@@ -10,12 +10,16 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",  # Allow legacy env vars like RABBITMQ_ANALYSIS_QUEUE
     )
     
-    # AWS Bedrock
-    aws_access_key_id: str
-    aws_secret_access_key: str
+    # AWS Bedrock (deprecated - kept for backward compatibility)
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
     aws_region: str = "us-east-1"
+    
+    # Google Gemini (primary LLM)
+    gemini_api_key: str = ""
     
     # RabbitMQ
     rabbitmq_host: str = "localhost"
@@ -23,7 +27,12 @@ class Settings(BaseSettings):
     rabbitmq_user: str = "guest"
     rabbitmq_password: str = "guest"
     rabbitmq_vhost: str = "stolink"
-    rabbitmq_analysis_queue: str = "stolink.analysis.queue"
+    # Note: rabbitmq_analysis_queue removed (legacy). Use document_analysis_queue instead.
+    
+    # Redis (Caching)
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_db: int = 0
     
     # Document Analysis Architecture (대용량 분석)
     document_analysis_queue: str = "document_analysis_queue"

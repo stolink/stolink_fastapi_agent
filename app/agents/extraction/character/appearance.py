@@ -12,7 +12,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
-from app.agents.llm import get_structured_llm
+from app.agents.llm import get_structured_llm, safe_ainvoke
 
 
 # === Color Mapping ===
@@ -298,7 +298,7 @@ async def appearance_extraction_node(state: dict) -> dict:
     - Prompt Aggregation: generates full_visual_prompt for Image AI
     """
     # Use standard tier for visual appearance extraction
-    structured_llm = get_structured_llm(CharacterAppearanceResult, tier="standard")
+    structured_llm = get_structured_llm(CharacterAppearanceResult, tier="advanced")
     chain = APPEARANCE_EXTRACTION_PROMPT | structured_llm
     
     # Get art style from state or auto-detect from content
@@ -309,7 +309,7 @@ async def appearance_extraction_node(state: dict) -> dict:
     rendering_engine = state.get("rendering_engine")
     
     try:
-        result: CharacterAppearanceResult = await chain.ainvoke({
+        result: CharacterAppearanceResult = await safe_ainvoke(chain, {
             "story_text": state["content"]
         })
         

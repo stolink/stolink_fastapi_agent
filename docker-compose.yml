@@ -12,15 +12,18 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_BEDROCK_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_BEDROCK_SECRET_ACCESS_KEY}
       AWS_REGION: us-east-1
-      # Gemini
+      # Gemini / Google AI
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
       # RabbitMQ (Agent)
       RABBITMQ_HOST: ${RABBITMQ_AGENT_HOST}
       RABBITMQ_PORT: ${RABBITMQ_AGENT_PORT:-5672}
       RABBITMQ_USER: ${RABBITMQ_AGENT_USER}
       RABBITMQ_PASSWORD: ${RABBITMQ_AGENT_PASSWORD}
       RABBITMQ_VHOST: ${RABBITMQ_AGENT_VHOST:-stolink}
-      RABBITMQ_ANALYSIS_QUEUE: stolink.analysis.queue
+      # Document Analysis Architecture
+      DOCUMENT_ANALYSIS_QUEUE: document_analysis_queue
+      GLOBAL_MERGE_QUEUE: global_merge_queue
       # Spring Backend (external)
       SPRING_CALLBACK_URL: ${SPRING_CALLBACK_URL}
       # PostgreSQL
@@ -38,13 +41,7 @@ services:
     ports:
       - "8000:8000"
     healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
-        ]
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
       interval: 30s
       timeout: 10s
       retries: 3

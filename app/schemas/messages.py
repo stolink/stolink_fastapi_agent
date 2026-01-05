@@ -115,6 +115,9 @@ class AnalysisTaskMessage(BaseModel):
     # Callback configuration
     callback_url: str = Field(..., description="Spring callback URL for results")
     
+    # 🆕 Deep Analysis Flag
+    requires_deep_analysis: bool = Field(default=True, description="Whether to run deep analysis (plot, consistency)")
+    
     # Tracing
     trace_id: Optional[str] = Field(
         None, 
@@ -159,16 +162,24 @@ class DocumentAnalysisMessage(BaseModel):
     Claim Check Pattern: content는 DB에서 조회
     """
     message_type: str = Field(default="DOCUMENT_ANALYSIS")
+    job_id: Optional[str] = Field(None, alias="jobId", description="Spring AnalysisJob UUID")
     document_id: str = Field(..., description="Document(TEXT) UUID - 분석 대상")
+    content: Optional[str] = Field(None, description="Optional content override (useful for testing/dev)")
     project_id: str = Field(..., description="Project UUID")
     parent_folder_id: Optional[str] = Field(None, description="상위 FOLDER UUID")
     chapter_title: Optional[str] = Field(None, description="챕터 제목 (네비게이션용)")
     document_order: Optional[int] = Field(None, description="문서 순서")
     total_documents_in_chapter: Optional[int] = Field(None, description="챕터 내 총 문서 수")
     analysis_pass: int = Field(default=1, description="분석 단계 (1차 Pass, 2차 Pass)")
+    requires_deep_analysis: bool = Field(default=False, alias="requiresDeepAnalysis", description="1차 분석 시에도 심층 분석(복선, 플롯, 일관성) 수행 여부")
     callback_url: str = Field(..., description="결과 콜백 URL")
     context: Optional[AnalysisContext] = Field(None, description="기존 데이터 컨텍스트")
     trace_id: Optional[str] = Field(None, description="추적 ID")
+
+    class Config:
+        populate_by_name = True
+        allow_population_by_field_name = True
+        extra = "ignore"  # Allow Spring to send additional fields
 
 
 class GlobalMergeMessage(BaseModel):
@@ -200,6 +211,11 @@ class DocumentAnalysisCallback(BaseModel):
     characters: list[dict] = Field(default_factory=list, description="추출된 캐릭터")
     events: list[dict] = Field(default_factory=list, description="추출된 이벤트")
     settings: list[dict] = Field(default_factory=list, description="추출된 배경/장소")
+    relationships: list[dict] = Field(default_factory=list, description="캐릭터 간 관계")  # 🆕
+    # 🆕 Level 2 Analysis Results (Spring 요청)
+    plot_integration: Optional[dict] = Field(None, description="플롯 분석 (복선, 서사 아크, 상징)")
+    consistency_report: Optional[dict] = Field(None, description="일관성 검증 결과")
+    validation: Optional[dict] = Field(None, description="검증 결과 (품질 점수, 액션 등)")
     processing_time_ms: Optional[int] = Field(None, description="처리 시간(ms)")
     trace_id: Optional[str] = Field(None, description="추적 ID")
 
@@ -211,6 +227,7 @@ class CharacterMergeResult(BaseModel):
     canonical_name: str = Field(..., description="표준 이름")
     merged_aliases: list[str] = Field(default_factory=list, description="통합된 별칭")
     confidence: float = Field(..., ge=0, le=1, description="병합 신뢰도 (0-1)")
+    conflicts: list[str] = Field(default_factory=list, description="속성 충돌 목록")
 
 
 class GlobalMergeCallback(BaseModel):

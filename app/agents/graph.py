@@ -21,6 +21,7 @@ from app.agents.extraction.setting import setting_extraction_node
 from app.agents.analysis.relationship import relationship_analysis_node
 from app.agents.analysis.consistency import consistency_check_node
 from app.agents.analysis.plot import plot_node
+from app.agents.analysis.global_resolution import GlobalResolutionAgent
 from app.agents.validation.validator import validator_node
 
 
@@ -31,7 +32,9 @@ class AnalysisState(TypedDict, total=False):
     project_id: str
     document_id: str
     job_id: str
+    job_id: str
     callback_url: str
+    requires_deep_analysis: bool
     
     # Tracing
     trace_id: str
@@ -83,10 +86,10 @@ async def extraction_node(state: dict) -> dict:
         - Dialogue Agent
         - Emotion Agent
     """
-    print(f"[EXTRACTION] Starting, content length: {len(state.get('content', ''))}")
+    print(f"[EXTRACTION] Starting, content length: {len(state.get('content', ''))}", flush=True)
     
     # === Phase 1: Master Data Extraction (병렬) ===
-    print("[EXTRACTION] Phase 1: Master Data (Character Team + Setting) - 병렬 실행")
+    print("[EXTRACTION] Phase 1: Master Data (Character Team + Setting) - 병렬 실행", flush=True)
     
     # Prepare CharacterTeamState for hierarchical character extraction
     async def run_character_team():
@@ -125,10 +128,10 @@ async def extraction_node(state: dict) -> dict:
     
     char_count = len(phase1_state.get("extracted_characters", []))
     setting_count = len(phase1_state.get("extracted_settings", []))
-    print(f"[EXTRACTION] Phase 1 완료: Characters={char_count}, Settings={setting_count}")
+    print(f"[EXTRACTION] Phase 1 완료: Characters={char_count}, Settings={setting_count}", flush=True)
     
     # === Phase 2: Narrative Flow Extraction (순차 - Phase 1 결과 참조) ===
-    print("[EXTRACTION] Phase 2: Narrative Flow (Event) - 순차 실행 (Character/Setting 참조)")
+    print("[EXTRACTION] Phase 2: Narrative Flow (Event) - 순차 실행 (Character/Setting 참조)", flush=True)
     phase2_tasks = [
         asyncio.create_task(event_extraction_node(phase1_state)),  # Phase 1 결과 참조!
         # Removed: dialogue_analysis_node, emotion_tracking_node
@@ -172,14 +175,14 @@ async def extraction_node(state: dict) -> dict:
                     updates[key] = value
     
     event_count = len(updates.get("extracted_events", []))
-    print(f"[EXTRACTION] Phase 2 완료: Events={event_count}")
+    print(f"[EXTRACTION] Phase 2 완료: Events={event_count}", flush=True)
     
     # === POST-PROCESSING: Link events to characters via event_refs ===
     extracted_characters = updates.get("extracted_characters", [])
     extracted_events = updates.get("extracted_events", [])
     
     if extracted_characters and extracted_events:
-        print(f"[EXTRACTION] Post-processing: Linking {len(extracted_events)} events to {len(extracted_characters)} characters")
+        print(f"[EXTRACTION] Post-processing: Linking {len(extracted_events)} events to {len(extracted_characters)} characters", flush=True)
         
         # Build character name -> event_ids mapping
         char_to_events = {}
@@ -198,23 +201,30 @@ async def extraction_node(state: dict) -> dict:
             if char_name and char_name in char_to_events:
                 if "relations" in char:
                     char["relations"]["event_refs"] = char_to_events[char_name]
-                print(f"[EXTRACTION] Linked {len(char_to_events[char_name])} events to {char_name}")
+                print(f"[EXTRACTION] Linked {len(char_to_events[char_name])} events to {char_name}", flush=True)
         
         updates["extracted_characters"] = extracted_characters
     
-    print(f"[EXTRACTION] Done: chars={char_count}, settings={setting_count}, events={event_count}")
+    print(f"[EXTRACTION] Done: chars={char_count}, settings={setting_count}, events={event_count}", flush=True)
     return updates
 
 
 async def analysis_node(state: dict) -> dict:
     """Execute all analysis agents in parallel."""
-    print(f"[ANALYSIS] Starting")
+    requires_deep = state.get("requires_deep_analysis", False)
+    print(f"[ANALYSIS] Starting - requires_deep_analysis={requires_deep}", flush=True)
     
     tasks = [
         asyncio.create_task(relationship_analysis_node(state)),
-        asyncio.create_task(consistency_check_node(state)),
-        asyncio.create_task(plot_node(state)),
     ]
+    
+    # Conditional Deep Analysis
+    if state.get("requires_deep_analysis", False):
+        print("[ANALYSIS] Deep Analysis triggering: Plot + Consistency", flush=True)
+        tasks.append(asyncio.create_task(consistency_check_node(state)))
+        tasks.append(asyncio.create_task(plot_node(state)))
+    else:
+        print("[ANALYSIS] Skipping Deep Analysis (Plot/Consistency)", flush=True)
     
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
@@ -238,15 +248,34 @@ async def analysis_node(state: dict) -> dict:
     
     # Log consistency score
     score = updates.get("consistency_report", {}).get("overall_score", "N/A")
-    print(f"[ANALYSIS] Done, consistency score: {score}")
+    print(f"[ANALYSIS] Done, consistency score: {score}", flush=True)
     return updates
 
 
+
+async def global_resolution_node(state: dict) -> dict:
+    """Resolve duplicate entities before analysis."""
+    print("[GLOBAL_RES] Executing Global Entity Resolution...", flush=True)
+    
+    agent = GlobalResolutionAgent()
+    characters = state.get("extracted_characters", [])
+    
+    # If no characters, just pass through
+    if not characters:
+        return {}
+        
+    resolved_characters = await agent.resolve_entities(characters)
+    
+    return {
+        "extracted_characters": resolved_characters, 
+        "messages": [{"role": "global_resolution", "content": f"Resolved {len(characters)} -> {len(resolved_characters)} characters"}]
+    }
+
 async def validation_node_wrapper(state: dict) -> dict:
-    """Wrapper for validator that sets validation_done."""
+    """Wrapper for validation node."""
     result = await validator_node(state)
     result["validation_done"] = True
-    print(f"[VALIDATION] Done, action: {result.get('validation_result', {}).get('action', 'N/A')}")
+    print(f"[VALIDATION] Done, action: {result.get('validation_result', {}).get('action', 'N/A')}", flush=True)
     return result
 
 
@@ -257,6 +286,7 @@ def create_analysis_graph():
     
     # Add nodes
     graph.add_node("extraction", extraction_node)
+    graph.add_node("global_resolution", global_resolution_node)
     graph.add_node("analysis", analysis_node)
     graph.add_node("validation", validation_node_wrapper)
     
@@ -266,7 +296,7 @@ def create_analysis_graph():
         supervisor_router,
         {
             "extraction": "extraction",
-            "analysis": "analysis",
+            "analysis": "global_resolution",
             "validation": "validation",
             "__end__": END,
         }
@@ -278,11 +308,13 @@ def create_analysis_graph():
         supervisor_router,
         {
             "extraction": "extraction",
-            "analysis": "analysis",
+            "analysis": "global_resolution",
             "validation": "validation",
             "__end__": END,
         }
     )
+    # After global_resolution: always go to analysis
+    graph.add_edge("global_resolution", "analysis")
     
     # After analysis: supervisor decides next (may loop back)
     graph.add_conditional_edges(
@@ -333,10 +365,15 @@ async def run_analysis_pipeline(
     existing_events: list = None,
     existing_relationships: list = None,
     existing_settings: list = None,
+
     trace_id: str = "",
+    requires_deep_analysis: bool = False,
 ) -> dict[str, Any]:
     """Run the complete analysis pipeline with Supervisor."""
     import time
+    
+    # 🆕 디버그 로그
+    print(f"[PIPELINE] run_analysis_pipeline called with requires_deep_analysis={requires_deep_analysis}", flush=True)
     
     initial_state: AnalysisState = {
         "content": content,
@@ -345,6 +382,7 @@ async def run_analysis_pipeline(
         "job_id": job_id,
         "callback_url": callback_url,
         "trace_id": trace_id,
+        "requires_deep_analysis": requires_deep_analysis,
         "existing_characters": existing_characters or [],
         "existing_events": existing_events or [],
         "existing_relationships": existing_relationships or [],

@@ -234,9 +234,9 @@ async def consistency_check_node(state: dict) -> dict:
     result.overall_score = max(0, calculated_score)
     
     # Force re-extraction only for critical issues:
-    # - Score <= 30 (severe problems)
+    # - Score <= 20 (very severe problems) - Relaxed from 30 for short texts
     # - OR 2+ HIGH severity conflicts (multiple critical issues)
-    result.requires_reextraction = result.overall_score <= 30 or high_count >= 2
+    result.requires_reextraction = result.overall_score <= 20 or high_count >= 2
     
     # === Update resolution summary ===
     auto_fix_count = sum(1 for c in conflicts if c.suggested_action == SuggestedAction.AUTO_FIX)

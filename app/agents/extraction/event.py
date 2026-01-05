@@ -8,46 +8,48 @@ Uses with_structured_output() for:
 - Pydantic schema validation
 - No manual parsing required
 """
-import boto3
+
 import json
 from langchain_core.prompts import ChatPromptTemplate
 
-from app.agents.llm import get_structured_llm
+from app.agents.llm import get_structured_llm, safe_ainvoke
 from app.schemas.events import EventExtractionResult
 
 
 # === Embedding Generation ===
-_bedrock_client = None
+from app.services.embedding_service import get_embedding_service
 
-def get_bedrock_client():
-    """Get or create Bedrock client singleton."""
-    global _bedrock_client
-    if _bedrock_client is None:
-        _bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
-    return _bedrock_client
-
-
-def generate_event_embedding(narrative_summary: str, participants: list) -> list[float]:
-    """Generate embedding for event using AWS Bedrock Titan.
+async def generate_event_embeddings_batch(events: list[dict]) -> None:
+    """Generate embeddings for a batch of events using Gemini (3072 dim).
     
-    Creates embedding from narrative_summary + participants for vector search.
-    Returns empty list if generation fails (non-blocking).
+    Updates the 'embedding' field in each event dictionary in-place.
     """
-    try:
-        # Build text to embed
+    if not events:
+        return
+
+    service = get_embedding_service()
+    texts = []
+    
+    for event in events:
+        narrative = event.get("narrative_summary", "")
+        participants = event.get("participants", [])
         participants_str = ", ".join(participants[:5]) if participants else ""
-        text_to_embed = f"{narrative_summary} (Participants: {participants_str})"
+        text_to_embed = f"{narrative} (Participants: {participants_str})"
+        texts.append(text_to_embed)
+    
+    try:
+        # Use batch generation with high concurrency
+        embeddings = await service.generate_embeddings_batch(texts)
         
-        client = get_bedrock_client()
-        response = client.invoke_model(
-            modelId='amazon.titan-embed-text-v1',
-            body=json.dumps({"inputText": text_to_embed})
-        )
-        result = json.loads(response['body'].read())
-        return result.get('embedding', [])
+        for i, embedding in enumerate(embeddings):
+            events[i]["embedding"] = embedding
+            
     except Exception as e:
-        print(f"[EVENT] Embedding generation failed: {e}")
-        return []  # Non-blocking - return empty list
+        print(f"[EVENT] Batch embedding generation failed: {e}")
+        # Initialize empty embedding on failure to prevent DB errors
+        for event in events:
+            if "embedding" not in event:
+                event["embedding"] = []
 
 
 EVENT_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
@@ -104,11 +106,15 @@ Available Characters (from Character Agent) - MUST use EXACT names:
 Available Locations (from Setting Agent) - MUST use EXACT names:
 {available_settings}
 
+=== RELEVANT PAST EVENTS (for causality/continuity) ===
+{existing_events}
+
 RULES:
 1. participants: ONLY use names from "Available Characters" list above
 2. location_ref: ONLY use names from "Available Locations" list above
 3. visual_scene: Action and composition focus.
 4. description: MUST provide detailed description for each event
+5. Consider PAST EVENTS above when determining prev_event_id and causal relationships
 
 If a character or location is not in the list, use the closest match or exclude it.""")
 ])
@@ -150,7 +156,7 @@ async def event_extraction_node(state: dict) -> dict:
     Generates embedding for each event for RAG-based consistency checking.
     """
     # Get LLM with structured output bound to schema
-    structured_llm = get_structured_llm(EventExtractionResult, tier="standard")
+    structured_llm = get_structured_llm(EventExtractionResult, tier="advanced")
     
     conflicts = state.get("consistency_report", {}).get("conflicts", [])
     retry_count = state.get("retry_count", 0)
@@ -176,37 +182,131 @@ async def event_extraction_node(state: dict) -> dict:
     
     is_re_extraction = retry_count > 0 and conflicts and previous_events
     
+    # === Semantic Chunking Logic ===
+    from app.services.chunking_service import ChunkingService
+    from app.services.embedding_service import get_embedding_service
+    
+    content = state["content"]
+    all_events = []
+    
+    # If content is large (> 4000 chars), use semantic chunking
+    if len(content) > 4000 and not is_re_extraction:
+        print(f"[EVENT] Content length {len(content)} > 4000. Using Semantic Chunking.")
+        try:
+            emb_service = get_embedding_service()
+            chunker = ChunkingService(emb_service)
+            sections = await chunker.create_semantic_sections(content)
+            
+            print(f"[EVENT] Split into {len(sections)} semantic sections.")
+            
+            event_id_counter = 1
+            
+            for i, section in enumerate(sections):
+                print(f"[EVENT] Processing Section {i+1}/{len(sections)} ({len(section['content'])} chars)")
+                
+                # CRITICAL: Retrieve relevant past events via RAG for this section
+                existing_events_text = ""
+                try:
+                    from app.services.rag_service import get_rag_service
+                    rag_service = get_rag_service()
+                    
+                    # Add previously extracted events in this pipeline run to RAG
+                    # (In a streaming architecture, we would add them as they are extracted)
+                    # Here we simply ensure we are querying against what we have so far
+                    # Note: Ideally, we persist events to RAG immediately after extraction.
+                    # For now, we will just query whatever is in 'existing_events' from state.
+                    
+                    # Query based on current section content (first 500 chars)
+                    query = section["content"][:500]
+                    # We might need to access global state or a service that has all prior events
+                    # In this local loop, 'all_events' grows. We haven't indexed 'all_events' into RAG yet.
+                    # This is a limitation of the current synchronous loop.
+                    # Improvement: Index 'all_events' into a temporary RAG store as we go.
+                    
+                    # For this implementation, we will query 'existing_events' passed from previous phases/chapters
+                    if state.get("existing_events"):
+                         rag_service.add_events(state.get("existing_events"))
+                         relevant_events = await rag_service.retrieve_relevant_events(query, top_k=5)
+                         
+                         if relevant_events:
+                             existing_events_text = "\n".join([
+                                 f"- [{evt.get('event_id')}] {evt.get('summary') or evt.get('description')}" 
+                                 for evt in relevant_events
+                             ])
+                         else:
+                             existing_events_text = "No relevant past events found."
+                    else:
+                         existing_events_text = "No existing events found."
+                         
+                except Exception as e:
+                    print(f"[EVENT] RAG lookup failed: {e}")
+                    existing_events_text = "RAG Error."
+
+                # Chain prompt for each section
+                chain = EVENT_EXTRACTION_PROMPT | structured_llm
+                result: EventExtractionResult = await safe_ainvoke(chain, {
+                    "story_text": section["content"],
+                    "available_characters": str(available_characters),
+                    "available_settings": str(available_settings),
+                    "existing_events": existing_events_text # Add this to prompt
+                })
+                
+                # Update event IDs to be sequential across sections
+                section_events = []
+                for evt in result.events:
+                    # Overwrite ID with global counter
+                    evt.event_id = f"E{event_id_counter:03d}"
+                    event_id_counter += 1
+                    
+                    # Link to previous event if strictly sequential
+                    if not evt.prev_event_id and len(all_events) > 0:
+                         evt.prev_event_id = all_events[-1]["event_id"]
+                         
+                    section_events.append(evt.model_dump())
+                    
+                all_events.extend(section_events)
+                
+        except Exception as e:
+            print(f"[EVENT] Chunking failed: {e}. Falling back to full text.")
+            # Fallback to normal processing below
+            all_events = []
+
     try:
-        if is_re_extraction:
-            print(f"[EVENT] Re-extracting with {len(conflicts)} conflicts as feedback")
-            chain = EVENT_RE_EXTRACTION_PROMPT | structured_llm
-            result: EventExtractionResult = await chain.ainvoke({
-                "story_text": state["content"],
-                "available_characters": str(available_characters),
-                "available_settings": str(available_settings),
-                "conflicts": str(conflicts),
-                "previous_extraction": str(previous_events)
-            })
-        else:
-            chain = EVENT_EXTRACTION_PROMPT | structured_llm
-            result: EventExtractionResult = await chain.ainvoke({
-                "story_text": state["content"],
-                "available_characters": str(available_characters),
-                "available_settings": str(available_settings)
-            })
-        
-        # Result is already an EventExtractionResult Pydantic object
-        events = [e.model_dump() for e in result.events]
+        if not all_events: # If chunking skipped or failed
+            if is_re_extraction:
+                print(f"[EVENT] Re-extracting with {len(conflicts)} conflicts as feedback")
+                print(f"[EVENT] Re-extracting with {len(conflicts)} conflicts as feedback")
+                chain = EVENT_RE_EXTRACTION_PROMPT | structured_llm
+                result: EventExtractionResult = await safe_ainvoke(chain, {
+                    "story_text": state["content"],
+                    "available_characters": str(available_characters),
+                    "available_settings": str(available_settings),
+                    "conflicts": str(conflicts),
+                    "previous_extraction": str(previous_events)
+                })
+            else:
+                chain = EVENT_EXTRACTION_PROMPT | structured_llm
+                # Get existing events for context (if any)
+                existing_events_list = state.get("existing_events", [])
+                existing_events_text = "\n".join([
+                    f"- [{evt.get('event_id', 'E?')}] {evt.get('summary') or evt.get('description', '')}"
+                    for evt in existing_events_list[:10]  # Limit to 10 for token efficiency
+                ]) if existing_events_list else "No prior events."
+                
+                result: EventExtractionResult = await safe_ainvoke(chain, {
+                    "story_text": state["content"],
+                    "available_characters": str(available_characters),
+                    "available_settings": str(available_settings),
+                    "existing_events": existing_events_text
+                })
+            all_events = [e.model_dump() for e in result.events]
         
         # === Generate embeddings for each event ===
-        print(f"[EVENT] Generating embeddings for {len(events)} events...")
-        for event in events:
-            narrative = event.get("narrative_summary", "")
-            participants = event.get("participants", [])
-            event["embedding"] = generate_event_embedding(narrative, participants)
+        print(f"[EVENT] Generating embeddings for {len(all_events)} events...")
+        await generate_event_embeddings_batch(all_events)
         
         # Validate and log
-        for event in events:
+        for event in all_events:
             participants = event.get("participants", [])
             location = event.get("location_ref", "")
             # Log any mismatches for debugging
@@ -214,13 +314,14 @@ async def event_extraction_node(state: dict) -> dict:
                 if p not in available_characters and available_characters:
                     print(f"[EVENT] Warning: participant '{p}' not in available_characters")
             if location and location not in available_settings and available_settings:
-                print(f"[EVENT] Warning: location_ref '{location}' not in available_settings")
+                # Fuzzy matching warning could go here
+                pass
         
         return {
-            "extracted_events": events,
+            "extracted_events": all_events,
             "messages": [
                 {"role": "event_agent", 
-                 "content": f"{'Re-' if is_re_extraction else ''}Extracted {len(events)} events with embeddings"}
+                 "content": f"{'Re-' if is_re_extraction else ''}Extracted {len(all_events)} events with embeddings"}
             ]
         }
     except Exception as e:

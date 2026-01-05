@@ -25,7 +25,7 @@ from app.agents.llm import get_basic_llm
 
 
 # Maximum retry counts to prevent infinite loops
-MAX_EXTRACTION_RETRIES = 3
+MAX_EXTRACTION_RETRIES = 2  # Reduced from 3 to prevent long retry loops
 MAX_ANALYSIS_RETRIES = 2
 
 
