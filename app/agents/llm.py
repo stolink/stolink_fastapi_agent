@@ -31,18 +31,18 @@ RETRYABLE_PATTERNS = [
 
 async def retry_with_backoff(func, *args, **kwargs):
     """Execute function with exponential backoff retry.
-    
+
     Handles rate limiting and network errors from Google Gemini API.
     """
     last_exception = None
-    
+
     for attempt in range(MAX_RETRIES):
         try:
             return await func(*args, **kwargs)
         except Exception as e:
             error_str = str(e)
             is_retryable = any(pattern in error_str for pattern in RETRYABLE_PATTERNS)
-            
+
             if is_retryable:
                 last_exception = e
                 delay = min(BASE_DELAY * (2 ** attempt) + random.uniform(0, 1), MAX_DELAY)
@@ -50,7 +50,7 @@ async def retry_with_backoff(func, *args, **kwargs):
                 await asyncio.sleep(delay)
             else:
                 raise e
-    
+
     raise last_exception
 
 
@@ -60,15 +60,15 @@ def get_gemini_llm(
     max_tokens: int = 4096
 ) -> ChatGoogleGenerativeAI:
     """Get Gemini LLM instance by tier.
-    
+
     Args:
         tier: Model tier - "basic", "standard", or "advanced"
         temperature: Sampling temperature (0.0 = deterministic)
         max_tokens: Maximum tokens to generate
-        
+
     Returns:
         ChatGoogleGenerativeAI instance configured for the specified tier
-        
+
     Tiers (Cost vs Performance):
         - basic: gemini-2.0-flash-lite - Fast, cheap. Warning: Low TPM stability under load.
         - standard: gemini-2.5-flash-lite - Balanced. Warning: Low TPM stability under load.
@@ -93,13 +93,17 @@ def get_gemini_llm(
             "default_max_tokens": 4096,  # Latest model for critical tasks
         }
     }
-    
+
     config = model_configs.get(tier, model_configs["standard"])
     print(f"[LLM] Initialized {tier} tier with model: {config['model_id']}")
-    
+
     # Use tier-specific default if max_tokens not explicitly specified
     effective_max_tokens = max_tokens if max_tokens != 4096 else config.get("default_max_tokens", 4096)
-    
+
+    if not settings.gemini_api_key:
+        print("[LLM] WARNING: GEMINI_API_KEY is not set. Google AI features will fail.")
+        # We don't raise here to allow app startup, but calls will fail with a clear message
+
     return ChatGoogleGenerativeAI(
         model=config["model_id"],
         google_api_key=settings.gemini_api_key,
@@ -115,19 +119,19 @@ def get_structured_llm(
     max_tokens: int = 4096
 ) -> ChatGoogleGenerativeAI:
     """Get LLM with structured output bound to a Pydantic schema.
-    
+
     This uses Tool Calling to guarantee the output matches the schema.
     No manual JSON parsing required.
-    
+
     Args:
         schema: Pydantic BaseModel class to bind
         tier: Model tier
         temperature: Sampling temperature
         max_tokens: Maximum tokens
-        
+
     Returns:
         LLM instance that returns schema instances directly
-        
+
     Example:
         >>> from app.schemas.settings import SettingExtractionResult
         >>> llm = get_structured_llm(SettingExtractionResult)
@@ -172,7 +176,7 @@ def get_advanced_llm() -> ChatGoogleGenerativeAI:
 
 async def safe_ainvoke(runnable, input_data: dict):
     """Execute runnable.ainvoke with retry logic.
-    
+
     Wrapper for chains and LLMs to handle rate limits automatically.
     """
     return await retry_with_backoff(runnable.ainvoke, input_data)
