@@ -310,25 +310,42 @@ def repair_missing_participants(state: dict) -> tuple:
                 
             # Check if participant exists (exact match)
             if p not in char_map:
-                # Create placeholder character with personality to avoid warnings
+                # Create placeholder character - minimal structure matching expected schema
+                # Note: No 'category', 'status', 'confidence_score', 'source' fields
                 new_char = {
-                    "name": p,
+                    # profile.name is the canonical location, but we also need top-level for legacy compatibility
                     "role": "extra",  # Default to extra
                     "profile": {
+                        "character_id": f"char-{p}-placeholder",
                         "name": p,
                         "age": None,
                         "gender": None,
+                        "race": None,
+                        "mbti": None,
                         "personality": {
                             "core_traits": ["Unknown"],
                             "flaws": [],
                             "values": []
                         },
-                        "backstory": "Auto-generated from event participant"
+                        "backstory": "Auto-generated from event participant",
+                        "faction": None
                     },
-                    "category": "Person",
-                    "status": "Unknown",
-                    "confidence_score": 0.5,
-                    "source": "auto_repair"
+                    "aliases": [],
+                    "status": "alive",  # Character status, not processing status
+                    "appearance": {},
+                    "relations": {
+                        "graph": [],
+                        "event_refs": [],
+                        "location_context": None
+                    },
+                    "current_mood": None,
+                    "meta": {
+                        "created_at": None,
+                        "updated_at": None,
+                        "data_version": "2.0.0",
+                        "lock_version": 0
+                    },
+                    "embedding": []
                 }
                 characters.append(new_char)
                 char_map[p] = new_char

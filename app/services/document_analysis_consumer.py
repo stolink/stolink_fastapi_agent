@@ -173,9 +173,9 @@ class DocumentAnalysisConsumer:
             
             # Use DB content if no override
             if not content:
-                document = await db_service.get_document_content(document_id)
-                if document and document.get("content"):
-                    content = document["content"]
+                fetched_content = await db_service.get_document_content(document_id)
+                if fetched_content:
+                    content = fetched_content
             
             # Fallbacks
             if not content:
@@ -219,7 +219,8 @@ class DocumentAnalysisConsumer:
                 context=msg.context,
 
                 trace_id=trace_id,
-                requires_deep_analysis=msg.requires_deep_analysis
+                requires_deep_analysis=msg.requires_deep_analysis,
+                analysis_type=getattr(msg, 'analysis_type', 'full_manuscript')  # 🆕 분석 유형 전달
             )
             
             processing_time_ms = int((time.time() - start_time) * 1000)
@@ -352,7 +353,8 @@ class DocumentAnalysisConsumer:
         context: Optional[dict],
 
         trace_id: str,
-        requires_deep_analysis: bool = False
+        requires_deep_analysis: bool = False,
+        analysis_type: str = "full_manuscript"  # 🆕 분석 유형 파라미터
     ) -> ProcessingResult:
         """Streaming Analysis Pipeline.
         
@@ -418,10 +420,20 @@ class DocumentAnalysisConsumer:
                 logger.info(f"Processing Batch {i+1}/{len(batches)}", size=len(batch_content))
                 
                 # 2. Run Pipeline for Batch
-                # We limit recursion and deep analysis for individual chunks?
-                # Maybe only do Deep Analysis on the LAST batch or aggregated?
-                # For now, disable deep analysis for intermediate chunks to save time?
-                # Or do it for all? 
+                # 🆕 analysis_type 기반 분석 모드 결정
+                # partial_snippet: Fast Track (경량 분석)
+                # full_manuscript: 무조건 심층 분석
+                if analysis_type == "full_manuscript":
+                    is_short_text = False  # 전체 원고: 무조건 심층 분석
+                    batch_requires_deep = True
+                elif analysis_type == "partial_snippet":
+                    is_short_text = True  # 작가 일부 분석 요청: 항상 Fast Track
+                    batch_requires_deep = False
+                else:
+                    is_short_text = len(batch_content) < 10000  # 길이 기반
+                    batch_requires_deep = requires_deep_analysis
+                    
+                logger.info(f"Running pipeline for batch {i+1}, analysis_type={analysis_type}, is_short_text={is_short_text}, deep_analysis={batch_requires_deep}")
                 
                 pipeline_result = await run_analysis_pipeline(
                     content=batch_content,
@@ -434,7 +446,8 @@ class DocumentAnalysisConsumer:
                     existing_relationships=current_context.get("existing_relationships", []),
                     existing_settings=current_context.get("existing_settings", []),
                     trace_id=trace_id,
-                    requires_deep_analysis=requires_deep_analysis # Maybe only true for last one?
+                    requires_deep_analysis=batch_requires_deep,  # 🆕 analysis_type 기반 심층 분석
+                    is_short_text=is_short_text  # Fast Track/Interactive flag
                 )
                 
                 # 3. Extract Results
@@ -617,6 +630,14 @@ class DocumentAnalysisConsumer:
         # job_id 결정: 인자로 받은 것 우선, 없으면 document_id (구버전)
         final_job_id = job_id or callback.document_id
         
+        # 🆕 Sanitize Payload: Remove complex fields that might cause 500 in Spring
+        if "characters" in result_payload and isinstance(result_payload["characters"], list):
+            for char in result_payload["characters"]:
+                # User requested to restore relations field
+                # if "relations" in char:
+                #    del char["relations"]
+                pass
+
         logger.info("Sending analysis callback", job_id=final_job_id, status=callback.status)
 
         await client.send_analysis_callback(
