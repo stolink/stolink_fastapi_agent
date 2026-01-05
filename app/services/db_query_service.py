@@ -7,12 +7,14 @@ Design Principle:
 - READ ONLY: FastAPI only reads, writes go through Spring Boot callback
 - On-demand: Only query when agents actually need the data
 - Cached: Use connection pooling for efficiency
+- Auto-recovery: Reconnect on connection failures
 """
 import asyncio
 from typing import Any, Optional
 import structlog
 import asyncpg
 from neo4j import AsyncGraphDatabase
+from neo4j.exceptions import ServiceUnavailable, SessionExpired
 
 from app.config import settings
 
@@ -25,38 +27,86 @@ class DatabaseQueryService:
     def __init__(self):
         self._pg_pool: Optional[asyncpg.Pool] = None
         self._neo4j_driver = None
+        self._connection_lock = asyncio.Lock()
     
     # ===== Connection Management =====
     
     async def connect(self) -> None:
         """Initialize database connections."""
-        # PostgreSQL connection pool
-        self._pg_pool = await asyncpg.create_pool(
-            host=settings.postgres_host,
-            port=settings.postgres_port,
-            database=settings.postgres_db,
-            user=settings.postgres_user,
-            password=settings.postgres_password,
-            min_size=2,
-            max_size=10,
-        )
-        logger.info("PostgreSQL connection pool created")
-        
-        # Neo4j async driver
-        self._neo4j_driver = AsyncGraphDatabase.driver(
-            settings.neo4j_uri,
-            auth=(settings.neo4j_user, settings.neo4j_password)
-        )
-        logger.info("Neo4j driver initialized")
+        await self._connect_postgres()
+        await self._connect_neo4j()
+    
+    async def _connect_postgres(self) -> None:
+        """Initialize PostgreSQL connection pool."""
+        try:
+            self._pg_pool = await asyncpg.create_pool(
+                host=settings.postgres_host,
+                port=settings.postgres_port,
+                database=settings.postgres_db,
+                user=settings.postgres_user,
+                password=settings.postgres_password,
+                min_size=2,
+                max_size=10,
+                command_timeout=30,
+            )
+            logger.info("PostgreSQL connection pool created")
+        except Exception as e:
+            logger.error("Failed to create PostgreSQL pool", error=str(e))
+            self._pg_pool = None
+    
+    async def _connect_neo4j(self) -> None:
+        """Initialize Neo4j driver."""
+        try:
+            self._neo4j_driver = AsyncGraphDatabase.driver(
+                settings.neo4j_uri,
+                auth=(settings.neo4j_user, settings.neo4j_password),
+                max_connection_lifetime=300,
+                connection_timeout=30,
+            )
+            logger.info("Neo4j driver initialized")
+        except Exception as e:
+            logger.error("Failed to initialize Neo4j driver", error=str(e))
+            self._neo4j_driver = None
+    
+    async def ensure_postgres_connected(self) -> bool:
+        """Ensure PostgreSQL pool is connected, reconnect if needed."""
+        if self._pg_pool is None:
+            async with self._connection_lock:
+                if self._pg_pool is None:
+                    logger.warning("PostgreSQL pool not initialized, attempting reconnect")
+                    await self._connect_postgres()
+        return self._pg_pool is not None
+    
+    async def ensure_neo4j_connected(self) -> bool:
+        """Ensure Neo4j driver is connected, reconnect if needed."""
+        if self._neo4j_driver is None:
+            async with self._connection_lock:
+                if self._neo4j_driver is None:
+                    logger.warning("Neo4j driver not initialized, attempting reconnect")
+                    await self._connect_neo4j()
+        return self._neo4j_driver is not None
+    
+    async def reconnect_neo4j(self) -> None:
+        """Force reconnect Neo4j driver (for connection recovery)."""
+        async with self._connection_lock:
+            if self._neo4j_driver:
+                try:
+                    await self._neo4j_driver.close()
+                except Exception:
+                    pass
+            await self._connect_neo4j()
+            logger.info("Neo4j driver reconnected")
     
     async def disconnect(self) -> None:
         """Close database connections."""
         if self._pg_pool:
             await self._pg_pool.close()
+            self._pg_pool = None
             logger.info("PostgreSQL connection pool closed")
         
         if self._neo4j_driver:
             await self._neo4j_driver.close()
+            self._neo4j_driver = None
             logger.info("Neo4j driver closed")
     
     # ===== Character Queries =====
@@ -116,9 +166,7 @@ class DatabaseQueryService:
         
         query = """
             SELECT 
-                c.id, c.name, c.role, c.description, c.traits,
-                c.visual_traits, c.personality_traits, c.status,
-                c.inventory, c.stats
+                c.id, c.name, c.role, c.description, c.aliases_json
             FROM characters c
             WHERE c.project_id = $1
             ORDER BY c.created_at
@@ -154,7 +202,7 @@ class DatabaseQueryService:
         query = """
             SELECT 
                 e.id, e.event_type, e.description, e.participants,
-                e.location_ref, e.chapter, e.sequence_order, e.importance
+                e.location_ref, e.chapter, e.sequence_order
             FROM events e
             WHERE e.project_id = $1
             ORDER BY e.chapter DESC, e.sequence_order DESC
@@ -199,7 +247,7 @@ class DatabaseQueryService:
                 rows = await conn.fetch(query, project_id)
                 return [dict(row) for row in rows]
         except Exception as e:
-            logger.error("Failed to query settings", error=str(e))
+            logger.warning("Failed to query settings (table might not exist)", error=str(e))
             return []
     
     # ===== Neo4j Relationship Queries =====
@@ -282,29 +330,18 @@ class DatabaseQueryService:
     # ===== Vector Search (RAG) =====
     
     async def get_embedding(self, text: str) -> list[float]:
-        """Generate embedding using AWS Bedrock Titan Embeddings.
+        """Generate embedding using Gemini Text Embeddings.
         
         Args:
             text: Text to embed
             
         Returns:
-            Embedding vector (1536 dimensions)
+            Embedding vector (768 dimensions)
         """
-        import boto3
-        import json
-        
-        bedrock = boto3.client(
-            'bedrock-runtime',
-            region_name='us-east-1'
-        )
+        from app.services.embedding_service import generate_embedding_async
         
         try:
-            response = bedrock.invoke_model(
-                modelId='amazon.titan-embed-text-v1',
-                body=json.dumps({"inputText": text})
-            )
-            result = json.loads(response['body'].read())
-            return result['embedding']
+            return await generate_embedding_async(text)
         except Exception as e:
             logger.error("Failed to generate embedding", error=str(e))
             return []
@@ -551,6 +588,130 @@ class DatabaseQueryService:
         except Exception as e:
             logger.error("Failed to query document content", error=str(e), document_id=document_id)
             return None
+
+    async def save_sections(self, document_id: str, sections: list[dict]) -> int:
+        """Save semantic sections and their embeddings to PostgreSQL.
+        
+        Args:
+            document_id: The source document UUID
+            sections: List of section dicts (content, embedding, title)
+            
+        Returns:
+            Number of sections saved
+        """
+        if not self._pg_pool:
+            logger.warning("PostgreSQL pool not initialized, skipping section save")
+            return 0
+            
+        if not sections:
+            return 0
+            
+        # First, delete existing sections for this document to avoid duplication
+        delete_query = "DELETE FROM sections WHERE document_id = $1"
+        
+        # Insert query
+        insert_query = """
+            INSERT INTO sections 
+            (id, document_id, content, embedding, sequence_order, nav_title, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+        """
+        
+        import uuid
+        
+        saved_count = 0
+        try:
+            async with self._pg_pool.acquire() as conn:
+                async with conn.transaction():
+                    # 1. Clean up old sections
+                    await conn.execute(delete_query, document_id)
+                    
+                    # 2. Batch insert new sections
+                    # Prepare list of params for executemany
+                    params = []
+                    for i, sec in enumerate(sections):
+                        sec_id = str(uuid.uuid4())
+                        embedding_vector = str(sec["embedding"]) if sec.get("embedding") else None
+                        
+                        params.append((
+                            sec_id,
+                            document_id,
+                            sec["content"],
+                            embedding_vector, # pgvector expects string representation like "[0.1, 0.2, ...]"
+                            i,
+                            sec.get("title", f"Section {i+1}")
+                        ))
+                    
+                    if params:
+                        await conn.executemany(insert_query, params)
+                        saved_count = len(params)
+                        logger.info(f"Saved {saved_count} semantic sections for doc {document_id}")
+                        
+        except Exception as e:
+            logger.error("Failed to save sections", error=str(e), document_id=document_id)
+            return 0
+            
+        return saved_count
+    
+        return saved_count
+
+    async def search_similar_sections(
+        self,
+        embedding: list[float],
+        project_id: Optional[str] = None,
+        limit: int = 5,
+        threshold: float = 0.7
+    ) -> list[dict[str, Any]]:
+        """Search for similar sections using vector similarity.
+        
+        Args:
+            embedding: Query embedding vector
+            project_id: Optional project filter
+            limit: Max results
+            threshold: Minimum similarity threshold (0-1)
+            
+        Returns:
+            List of section dicts with similarity score
+        """
+        if not self._pg_pool:
+            return []
+            
+        # pgvector cosine distance: <=> operator returns distance (0=same, 2=opposite)
+        # Similarity = 1 - (distance / 2) roughly, or just 1 - distance for normalized vectors
+        # For cosine distance on normalized vectors: distance = 1 - cosine_similarity
+        # So cosine_similarity = 1 - distance
+        
+        # We start with a base query
+        where_clause = "1=1"
+        params = [str(embedding)] # $1 = embedding vector string
+        
+        if project_id:
+            where_clause += f" AND d.project_id = ${len(params) + 1}"
+            params.append(project_id)
+            
+        # Add limit
+        params.append(limit)
+        limit_param_idx = len(params)
+        
+        query = f"""
+            SELECT 
+                s.id, s.nav_title, s.content, s.sequence_order, s.document_id,
+                d.title as document_title,
+                1 - (s.embedding <=> $1) as similarity
+            FROM sections s
+            JOIN documents d ON s.document_id = d.id
+            WHERE {where_clause}
+            AND (1 - (s.embedding <=> $1)) > {threshold}
+            ORDER BY similarity DESC
+            LIMIT ${limit_param_idx}
+        """
+        
+        try:
+            async with self._pg_pool.acquire() as conn:
+                rows = await conn.fetch(query, *params)
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error("Failed to search similar sections", error=str(e))
+            return []
     
     async def get_document_with_parent_info(
         self,
@@ -765,6 +926,183 @@ class DatabaseQueryService:
             logger.error("Failed to get context sections", error=str(e))
             return []
 
+    async def save_extraction_result(
+        self,
+        project_id: str,
+        characters: list[dict],
+        events: list[dict],
+        settings_list: list[dict]
+    ) -> None:
+        """Save extracted entities to DB immediately (for Streaming)."""
+        if not self._pg_pool:
+            logger.warning("PostgreSQL pool not available for save")
+            return
+
+        logger.info("Persisting batch to DB...", chars=len(characters), events=len(events))
+        
+        try:
+            async with self._pg_pool.acquire() as conn:
+                async with conn.transaction():
+                    # Save Characters (Upsert)
+                    for char in characters:
+                        await self._upsert_character(conn, project_id, char)
+                    
+                    # Save Settings (Upsert)
+                    for sitting in settings_list:
+                        await self._upsert_setting(conn, project_id, sitting)
+                        
+                    # Save Events (Insert)
+                    for evt in events:
+                        await self._insert_event(conn, project_id, evt)
+
+            # Sync to Neo4j
+            if self._neo4j_driver:
+                await self._sync_to_neo4j(project_id, characters, events, settings_list)
+                
+        except Exception as e:
+            logger.error("Failed to persist batch", error=str(e))
+
+    async def _upsert_character(self, conn, project_id, char):
+        query = """
+            INSERT INTO characters (id, project_id, name, role, description, aliases_json, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW(), NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                role = EXCLUDED.role,
+                description = EXCLUDED.description,
+                aliases_json = EXCLUDED.aliases_json,
+                updated_at = NOW()
+        """
+        import json
+        import uuid
+        
+        # Extract name from top-level or nested profile
+        char_name = char.get("name") or (char.get("profile", {}) or {}).get("name")
+        
+        # Skip characters without name (NOT NULL constraint)
+        if not char_name:
+            return
+        
+        # Validate or generate UUID
+        raw_id = char.get("id") or char.get("_id")
+        try:
+            char_uuid = str(uuid.UUID(raw_id)) if raw_id else str(uuid.uuid4())
+        except (ValueError, AttributeError):
+            # Invalid UUID format, generate new one
+            char_uuid = str(uuid.uuid4())
+            
+        aliases = json.dumps(char.get("aliases", []))
+        await conn.execute(
+            query, 
+            char_uuid,
+            project_id,
+            char_name,
+            char.get("role", "Unknown"),
+            char.get("description", ""),
+            aliases
+        )
+
+    async def _upsert_setting(self, conn, project_id, setting):
+        query = """
+            INSERT INTO settings (id, project_id, name, location_type, description, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                description = EXCLUDED.description,
+                updated_at = NOW()
+        """
+        import uuid
+        
+        # Validate or generate UUID
+        raw_id = setting.get("id")
+        try:
+            setting_uuid = str(uuid.UUID(raw_id)) if raw_id else str(uuid.uuid4())
+        except (ValueError, AttributeError):
+            setting_uuid = str(uuid.uuid4())
+            
+        await conn.execute(
+            query,
+            setting_uuid,
+            project_id,
+            setting.get("name"),
+            setting.get("location_type", "Unknown"),
+            setting.get("description", "")
+        )
+
+    async def _insert_event(self, conn, project_id, evt):
+        query = """
+            INSERT INTO events (id, project_id, document_id, event_type, description, chapter, sequence_order, participants, location_ref, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                description = EXCLUDED.description,
+                participants = EXCLUDED.participants,
+                chapter = EXCLUDED.chapter,
+                sequence_order = EXCLUDED.sequence_order,
+                updated_at = NOW()
+        """
+        import json
+        import uuid
+        
+        # Validate or generate UUID
+        raw_id = evt.get("event_id") or evt.get("id")
+        try:
+            evt_uuid = str(uuid.UUID(raw_id)) if raw_id else str(uuid.uuid4())
+        except (ValueError, AttributeError):
+            evt_uuid = str(uuid.uuid4())
+            
+        participants = json.dumps(evt.get("participants", []))
+        await conn.execute(
+            query,
+            evt_uuid,
+            project_id,
+            evt.get("document_id"),
+            evt.get("event_type", "Unknown"),
+            evt.get("description", "") or evt.get("summary", ""),
+            evt.get("chapter", 0),
+            evt.get("sequence_order", 0),
+            participants,
+            evt.get("location_ref", "")
+        )
+
+    async def _sync_to_neo4j(self, project_id, characters, events, settings_list):
+        async with self._neo4j_driver.session() as session:
+            # Characters
+            for char in characters:
+                # Validate ID before MERGE to avoid null property error
+                import uuid
+                raw_id = char.get("id") or char.get("_id")
+                try:
+                    char_uuid = str(uuid.UUID(raw_id)) if raw_id else None
+                except (ValueError, AttributeError):
+                    char_uuid = None
+                
+                # Skip if no valid ID
+                if not char_uuid:
+                    continue
+                    
+                await session.run(
+                    """
+                    MERGE (c:Character {id: $id})
+                    SET c.project_id = $pid, c.name = $name, c.role = $role 
+                    """,
+                    id=char_uuid,
+                    pid=project_id,
+                    name=char.get("name"),
+                    role=char.get("role")
+                )
+            # Events
+            for evt in events:
+                await session.run(
+                    """
+                    MERGE (e:Event {id: $id})
+                    SET e.project_id = $pid, e.description = $desc, e.chapter = $chapter
+                    """,
+                    id=evt.get("event_id") or evt.get("id"),
+                    pid=project_id,
+                    desc=evt.get("description", "") or evt.get("summary", ""),
+                    chapter=evt.get("chapter", 0)
+                )
+
 
 # ===== Singleton Instance =====
 
@@ -786,3 +1124,5 @@ async def close_db_service() -> None:
     if _db_service:
         await _db_service.disconnect()
         _db_service = None
+
+

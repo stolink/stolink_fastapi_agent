@@ -20,6 +20,7 @@ class ManualAnalysisRequest(BaseModel):
     context: Optional[AnalysisContext] = None  # 입력값 사용, 없으면 기본값
     callback_url: str = "http://localhost:8080/api/internal/ai/analysis/callback"
     trace_id: Optional[str] = None  # 입력값 사용, 없으면 자동 생성
+    requires_deep_analysis: bool = True  # 🆕 심층 분석 수행 여부 (기본값 True)
 
 
 @router.post("/trigger")

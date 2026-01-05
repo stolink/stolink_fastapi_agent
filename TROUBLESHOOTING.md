@@ -2,114 +2,115 @@
 
 > **Last Updated**: 2026-01-01
 
-이 문서는 개발 과정에서 발생한 주요 문제와 해결책을 기록합니다.
+ì´ ë¬¸ìë ê°ë° ê³¼ì ìì ë°ìí ì£¼ì ë¬¸ì ì í´ê²°ì±ì ê¸°ë¡í©ëë¤.
 
 ---
 
-## 목차
+## ëª©ì°¨
 
-1. [Setting Agent - 인물/사건 혼입 문제](#1-setting-agent---인물사건-혼입-문제)
-2. [Event Agent - 배경 묘사 혼입 및 참조 매칭 문제](#2-event-agent---배경-묘사-혼입-및-참조-매칭-문제)
-3. [Dialogue Agent - Production Level 업그레이드](#3-dialogue-agent---production-level-업그레이드)
-4. [Emotion Agent - Production Level 업그레이드](#4-emotion-agent---production-level-업그레이드)
-5. [Consistency Agent - Production Level 업그레이드](#5-consistency-agent---production-level-업그레이드)
-6. [Plot Integration Agent - Production Level 업그레이드](#6-plot-integration-agent---production-level-업그레이드)
-7. [Validator Agent - Production Level 업그레이드](#7-validator-agent---production-level-업그레이드)
-8. [Supervisor Agent - Production Level 업그레이드](#8-supervisor-agent---production-level-업그레이드)
-9. [Message Schema - 하이브리드 아키텍처 업그레이드](#9-message-schema---하이브리드-아키텍처-업그레이드)
-10. [JSON 파싱 오류 - Structured Output 도입](#10-json-파싱-오류-및-스키마-불일치---structured-output-도입)
-11. [Job 상태 업데이트 API 연동](#11-job-상태-업데이트-api-연동)
-12. [Character Agent - FullCharacter 스키마 확장](#12-character-agent---fullcharacter-스키마-확장)
-13. [FullCharacter 스키마 적용 - 전체 에이전트 호환성](#13-fullcharacter-스키마-적용---전체-에이전트-호환성)
-14. [Multi-Agent - JSON 파싱 오류 및 AWS Throttling](#14-multi-agent---json-파싱-오류-및-aws-throttling)
-15. [Character Agent - Hierarchical Multi-Agent System 리팩토링](#15-character-agent---hierarchical-multi-agent-system-리팩토링)
-16. [Appearance Agent - Production Level 업그레이드](#16-appearance-agent---production-level-업그레이드)
-17. [Story Extraction - 한글/영문 캐릭터 중복 및 추출 품질 개선](#17-story-extraction---한글영문-캐릭터-중복-및-추출-품질-개선)
-18. [Schema v2.0 리팩토링 및 Neo4j RAG 구현](#18-schema-v20-리팩토링-및-neo4j-rag-구현)
-19. [대용량 데이터 처리 아키텍처 재설계](#19-대용량-데이터-처리-아키텍처-재설계-architecture-redesign)
+1. [Setting Agent - ì¸ë¬¼/ì¬ê±´ í¼ì ë¬¸ì ](#1-setting-agent---ì¸ë¬¼ì¬ê±´-í¼ì-ë¬¸ì )
+2. [Event Agent - ë°°ê²½ ë¬ì¬ í¼ì ë° ì°¸ì¡° ë§¤ì¹­ ë¬¸ì ](#2-event-agent---ë°°ê²½-ë¬ì¬-í¼ì-ë°-ì°¸ì¡°-ë§¤ì¹­-ë¬¸ì )
+3. [Dialogue Agent - Production Level ìê·¸ë ì´ë](#3-dialogue-agent---production-level-ìê·¸ë ì´ë)
+4. [Emotion Agent - Production Level ìê·¸ë ì´ë](#4-emotion-agent---production-level-ìê·¸ë ì´ë)
+5. [Consistency Agent - Production Level ìê·¸ë ì´ë](#5-consistency-agent---production-level-ìê·¸ë ì´ë)
+6. [Plot Integration Agent - Production Level ìê·¸ë ì´ë](#6-plot-integration-agent---production-level-ìê·¸ë ì´ë)
+7. [Validator Agent - Production Level ìê·¸ë ì´ë](#7-validator-agent---production-level-ìê·¸ë ì´ë)
+8. [Supervisor Agent - Production Level ìê·¸ë ì´ë](#8-supervisor-agent---production-level-ìê·¸ë ì´ë)
+9. [Message Schema - íì´ë¸ë¦¬ë ìí¤íì² ìê·¸ë ì´ë](#9-message-schema---íì´ë¸ë¦¬ë-ìí¤íì²-ìê·¸ë ì´ë)
+10. [JSON íì± ì¤ë¥ - Structured Output ëì](#10-json-íì±-ì¤ë¥-ë°-ì¤í¤ë§-ë¶ì¼ì¹---structured-output-ëì)
+11. [Job ìí ìë°ì´í¸ API ì°ë](#11-job-ìí-ìë°ì´í¸-api-ì°ë)
+12. [Character Agent - FullCharacter ì¤í¤ë§ íì¥](#12-character-agent---fullcharacter-ì¤í¤ë§-íì¥)
+13. [FullCharacter ì¤í¤ë§ ì ì© - ì ì²´ ìì´ì í¸ í¸íì±](#13-fullcharacter-ì¤í¤ë§-ì ì©---ì ì²´-ìì´ì í¸-í¸íì±)
+14. [Multi-Agent - JSON íì± ì¤ë¥ ë° AWS Throttling](#14-multi-agent---json-íì±-ì¤ë¥-ë°-aws-throttling)
+15. [Character Agent - Hierarchical Multi-Agent System ë¦¬í©í ë§](#15-character-agent---hierarchical-multi-agent-system-ë¦¬í©í ë§)
+16. [Appearance Agent - Production Level ìê·¸ë ì´ë](#16-appearance-agent---production-level-ìê·¸ë ì´ë)
+17. [Story Extraction - íê¸/ìë¬¸ ìºë¦­í° ì¤ë³µ ë° ì¶ì¶ íì§ ê°ì ](#17-story-extraction---íê¸ìë¬¸-ìºë¦­í°-ì¤ë³µ-ë°-ì¶ì¶-íì§-ê°ì )
+18. [Schema v2.0 ë¦¬í©í ë§ ë° Neo4j RAG êµ¬í](#18-schema-v20-ë¦¬í©í ë§-ë°-neo4j-rag-êµ¬í)
+19. [ëì©ë ë°ì´í° ì²ë¦¬ ìí¤íì² ì¬ì¤ê³](#19-ëì©ë-ë°ì´í°-ì²ë¦¬-ìí¤íì²-ì¬ì¤ê³-architecture-redesign)
+20. [ì±ë¥ ë³ëª© ë¶ì ë° ìµì í](#20-ì±ë¥-ë³ëª©-ë¶ì-ë°-ìµì í)
 
 ---
 
 
 
-## 1. Setting Agent - 인물/사건 혼입 문제
+## 1. Setting Agent - ì¸ë¬¼/ì¬ê±´ í¼ì ë¬¸ì 
 
-### 📅 날짜
+### ð ë ì§
 2025-12-27
 
-### 🔴 문제 (Problem)
-Setting Agent가 배경만 추출해야 하는데, 캐릭터 이름과 행동을 포함함.
+### ð´ ë¬¸ì  (Problem)
+Setting Agentê° ë°°ê²½ë§ ì¶ì¶í´ì¼ íëë°, ìºë¦­í° ì´ë¦ê³¼ íëì í¬í¨í¨.
 
-**실패 출력 예시**:
+**ì¤í¨ ì¶ë ¥ ìì**:
 ```json
 {
   "visual_background": "Seojin standing in a dark forest holding a sword..."
 }
 ```
 
-**기대 출력**:
+**ê¸°ë ì¶ë ¥**:
 ```json
 {
   "visual_background": "Dark ancient forest, dense twisted trees, thick fog on ground..."
 }
 ```
 
-### 🟡 원인 분석 (Root Cause)
-1. LLM이 "Setting(배경)"과 "Scene(장면)"을 혼동
-2. 단순히 "하지 마(Don't)"라고만 지시하면 무시함
-3. Gemini Flash/Llama 3 등은 텍스트 요약 성향이 강함
+### ð¡ ìì¸ ë¶ì (Root Cause)
+1. LLMì´ "Setting(ë°°ê²½)"ê³¼ "Scene(ì¥ë©´)"ì í¼ë
+2. ë¨ìí "íì§ ë§(Don't)"ë¼ê³ ë§ ì§ìíë©´ ë¬´ìí¨
+3. Gemini Flash/Llama 3 ë±ì íì¤í¸ ìì½ ì±í¥ì´ ê°í¨
 
-### 🟢 해결책 (Solution)
+### ð¢ í´ê²°ì± (Solution)
 
-#### 1. Bad vs Good 예시 (Few-shot Learning)
+#### 1. Bad vs Good ìì (Few-shot Learning)
 ```
-❌ BAD: "Seojin standing in a dark forest holding a sword."
-✅ GOOD: "Dark ancient forest, dense twisted trees, thick fog on ground."
+â BAD: "Seojin standing in a dark forest holding a sword."
+â GOOD: "Dark ancient forest, dense twisted trees, thick fog on ground."
 ```
 
-#### 2. 필드명 변경
-| 변경 전 | 변경 후 |
+#### 2. íëëª ë³ê²½
+| ë³ê²½ ì  | ë³ê²½ í |
 |---------|---------|
 | `description` | `static_visual_prompt` |
 | `visual_background` | `static_visual_prompt` |
 
-#### 3. Chain of Thought 프로세스
+#### 3. Chain of Thought íë¡ì¸ì¤
 ```
-1. IDENTIFY: 텍스트에서 캐릭터 이름/행동 동사 찾기
-2. REMOVE: 완전히 제거
-3. FOCUS: 남은 물리적 환경에만 집중
-4. DESCRIBE: 텍스처, 재질, 조명, 색상으로 묘사
-5. CREATIVELY INFER: 간단한 묘사면 디테일 추가
+1. IDENTIFY: íì¤í¸ìì ìºë¦­í° ì´ë¦/íë ëì¬ ì°¾ê¸°
+2. REMOVE: ìì í ì ê±°
+3. FOCUS: ë¨ì ë¬¼ë¦¬ì  íê²½ìë§ ì§ì¤
+4. DESCRIBE: íì¤ì², ì¬ì§, ì¡°ëª, ììì¼ë¡ ë¬ì¬
+5. CREATIVELY INFER: ê°ë¨í ë¬ì¬ë©´ ëíì¼ ì¶ê°
 ```
 
-#### 4. 페널티 경고 추가
+#### 4. íëí° ê²½ê³  ì¶ê°
 ```
 PENALTY WARNING: If ANY character name or action verb is included, 
 the output is INVALID and will be REJECTED.
 ```
 
-### 📁 수정된 파일
-- `app/agents/extraction/setting.py` - 프롬프트 전면 개선
-- `app/schemas/settings.py` - `is_primary`, `art_style` 필드 추가
+### ð ìì ë íì¼
+- `app/agents/extraction/setting.py` - íë¡¬íí¸ ì ë©´ ê°ì 
+- `app/schemas/settings.py` - `is_primary`, `art_style` íë ì¶ê°
 
-### ✅ 결과
-- 인물/사건 완전 제거됨
-- 순수 배경 데이터(Clean Background Data) 생성 성공
-- 이미지 생성 AI에 직접 사용 가능한 프롬프트 품질 달성
+### â ê²°ê³¼
+- ì¸ë¬¼/ì¬ê±´ ìì  ì ê±°ë¨
+- ìì ë°°ê²½ ë°ì´í°(Clean Background Data) ìì± ì±ê³µ
+- ì´ë¯¸ì§ ìì± AIì ì§ì  ì¬ì© ê°ë¥í íë¡¬íí¸ íì§ ë¬ì±
 
 ---
 
-## 2. Event Agent - 배경 묘사 혼입 및 참조 매칭 문제
+## 2. Event Agent - ë°°ê²½ ë¬ì¬ í¼ì ë° ì°¸ì¡° ë§¤ì¹­ ë¬¸ì 
 
-### 📅 날짜
+### ð ë ì§
 2025-12-27
 
-### 🔴 문제 (Problem)
-1. `visual_scene`에 배경 묘사가 포함됨 (Setting Agent와 중복)
-2. `participants`가 Character Agent의 이름과 정확히 매칭되지 않음
-3. `location_ref`가 Setting Agent의 이름과 매칭되지 않음
+### ð´ ë¬¸ì  (Problem)
+1. `visual_scene`ì ë°°ê²½ ë¬ì¬ê° í¬í¨ë¨ (Setting Agentì ì¤ë³µ)
+2. `participants`ê° Character Agentì ì´ë¦ê³¼ ì íí ë§¤ì¹­ëì§ ìì
+3. `location_ref`ê° Setting Agentì ì´ë¦ê³¼ ë§¤ì¹­ëì§ ìì
 
-**실패 출력 예시**:
+**ì¤í¨ ì¶ë ¥ ìì**:
 ```json
 {
   "visual_scene": "A man holding a sword in a dark forest with tall trees and fog.",
@@ -118,72 +119,72 @@ the output is INVALID and will be REJECTED.
 }
 ```
 
-**기대 출력**:
+**ê¸°ë ì¶ë ¥**:
 ```json
 {
   "visual_scene": "A tall man with dark hair gripping a sword, tense posture, alert expression",
-  "participants": ["서진"],
+  "participants": ["ìì§"],
   "location_ref": "Dark Forest"
 }
 ```
 
-### 🟡 원인 분석 (Root Cause)
-1. Event Agent에게 Character/Setting 정보가 전달되지 않음
-2. 프롬프트에 명확한 역할 분리 지시 없음
-3. 참조용 데이터 없이 LLM이 자체 생성
+### ð¡ ìì¸ ë¶ì (Root Cause)
+1. Event Agentìê² Character/Setting ì ë³´ê° ì ë¬ëì§ ìì
+2. íë¡¬íí¸ì ëªíí ì­í  ë¶ë¦¬ ì§ì ìì
+3. ì°¸ì¡°ì© ë°ì´í° ìì´ LLMì´ ìì²´ ìì±
 
-### 🟢 해결책 (Solution)
+### ð¢ í´ê²°ì± (Solution)
 
-#### 1. Phase 분리 (graph.py)
+#### 1. Phase ë¶ë¦¬ (graph.py)
 ```python
-# Phase 1: Character + Setting (병렬)
-# Phase 2: Event (순차 - Phase 1 결과 참조)
+# Phase 1: Character + Setting (ë³ë ¬)
+# Phase 2: Event (ìì°¨ - Phase 1 ê²°ê³¼ ì°¸ì¡°)
 ```
 
-#### 2. Bad vs Good 예시 추가
+#### 2. Bad vs Good ìì ì¶ê°
 ```
-❌ BAD: visual_scene에 "dark forest with trees"
-✅ GOOD: visual_scene에 "intense eye contact, low angle shot" (구도만)
+â BAD: visual_sceneì "dark forest with trees"
+â GOOD: visual_sceneì "intense eye contact, low angle shot" (êµ¬ëë§)
 ```
 
-#### 3. 참조 데이터 전달
+#### 3. ì°¸ì¡° ë°ì´í° ì ë¬
 ```python
 response = await chain.ainvoke({
     "story_text": state["content"],
-    "available_characters": ["서진", "이민호", ...],  # Character Agent 결과
-    "available_settings": ["Dark Forest", ...],       # Setting Agent 결과
+    "available_characters": ["ìì§", "ì´ë¯¼í¸", ...],  # Character Agent ê²°ê³¼
+    "available_settings": ["Dark Forest", ...],       # Setting Agent ê²°ê³¼
 })
 ```
 
-#### 4. 페널티 경고
+#### 4. íëí° ê²½ê³ 
 ```
 If visual_scene contains "forest", "trees", "moon", "fog" - REJECTED
 ```
 
-### 📁 수정된 파일
-- `app/agents/graph.py` - 2-Phase Extraction 구현
-- `app/agents/extraction/event.py` - 프롬프트 전면 개선
-- `app/schemas/events.py` - (이미 Production Level)
+### ð ìì ë íì¼
+- `app/agents/graph.py` - 2-Phase Extraction êµ¬í
+- `app/agents/extraction/event.py` - íë¡¬íí¸ ì ë©´ ê°ì 
+- `app/schemas/events.py` - (ì´ë¯¸ Production Level)
 
-### ✅ 결과
-- Event의 `visual_scene`에서 배경 묘사 제거
-- `participants`가 Character Agent 이름과 정확히 매칭
-- `location_ref`가 Setting Agent 이름과 정확히 매칭
-- Neo4j 그래프 엣지 자동 생성 가능
+### â ê²°ê³¼
+- Eventì `visual_scene`ìì ë°°ê²½ ë¬ì¬ ì ê±°
+- `participants`ê° Character Agent ì´ë¦ê³¼ ì íí ë§¤ì¹­
+- `location_ref`ê° Setting Agent ì´ë¦ê³¼ ì íí ë§¤ì¹­
+- Neo4j ê·¸ëí ì£ì§ ìë ìì± ê°ë¥
 
 ---
 
-## 3. Dialogue Agent - Production Level 업그레이드
+## 3. Dialogue Agent - Production Level ìê·¸ë ì´ë
 
-### 📅 날짜
+### ð ë ì§
 2025-12-27
 
-### 🔴 문제 (Problem)
-1. 기본적인 프롬프트만 있어서 출력 구조가 단순함
-2. Character Agent와 이름 매칭이 안 됨
-3. Neo4j 엣지 생성에 필요한 속성(formality, power, intimacy)이 없음
+### ð´ ë¬¸ì  (Problem)
+1. ê¸°ë³¸ì ì¸ íë¡¬íí¸ë§ ìì´ì ì¶ë ¥ êµ¬ì¡°ê° ë¨ìí¨
+2. Character Agentì ì´ë¦ ë§¤ì¹­ì´ ì ë¨
+3. Neo4j ì£ì§ ìì±ì íìí ìì±(formality, power, intimacy)ì´ ìì
 
-**기존 출력**:
+**ê¸°ì¡´ ì¶ë ¥**:
 ```json
 {
   "key_dialogues": ["..."],
@@ -191,14 +192,14 @@ If visual_scene contains "forest", "trees", "moon", "fog" - REJECTED
 }
 ```
 
-### 🟡 원인 분석 (Root Cause)
-1. Dialogue Agent가 Character Agent 결과를 참조하지 않음
-2. 스키마(`dialogues.py`)에 상세 모델이 있지만 프롬프트에서 활용 안 함
-3. 관계성(speaker → listener)이 구조화되지 않음
+### ð¡ ìì¸ ë¶ì (Root Cause)
+1. Dialogue Agentê° Character Agent ê²°ê³¼ë¥¼ ì°¸ì¡°íì§ ìì
+2. ì¤í¤ë§(`dialogues.py`)ì ìì¸ ëª¨ë¸ì´ ìì§ë§ íë¡¬íí¸ìì íì© ì í¨
+3. ê´ê³ì±(speaker â listener)ì´ êµ¬ì¡°íëì§ ìì
 
-### 🟢 해결책 (Solution)
+### ð¢ í´ê²°ì± (Solution)
 
-#### 1. Character 참조 전달
+#### 1. Character ì°¸ì¡° ì ë¬
 ```python
 available_characters = [c.get("name", "") for c in state.get("extracted_characters", [])]
 response = await chain.ainvoke({
@@ -207,18 +208,18 @@ response = await chain.ainvoke({
 })
 ```
 
-#### 2. 3차원 관계 모델링
+#### 2. 3ì°¨ì ê´ê³ ëª¨ë¸ë§
 - `formality`: "formal", "informal", "mixed"
 - `power_dynamic`: "superior", "equal", "subordinate"
-- `intimacy_level`: 1-10 정량화
+- `intimacy_level`: 1-10 ì ëí
 
-#### 3. Neo4j 엣지 속성 추출
+#### 3. Neo4j ì£ì§ ìì± ì¶ì¶
 ```json
 {
   "dialogue_relationships": [
     {
-      "speaker": "하나",
-      "listener": "서진",
+      "speaker": "íë",
+      "listener": "ìì§",
       "formality_to_listener": "formal",
       "power_dynamic": "subordinate",
       "intimacy_level": 7
@@ -227,83 +228,83 @@ response = await chain.ainvoke({
 }
 ```
 
-### ⚠️ 주의사항 (Data Integrity)
+### â ï¸ ì£¼ìì¬í­ (Data Integrity)
 
-#### Enum 유효성 검증
-LLM이 "polite" 대신 "formal", "lower" 대신 "subordinate" 등 유의어를 출력할 수 있음.
-→ Pydantic 또는 후처리에서 허용값 검증 필요
+#### Enum ì í¨ì± ê²ì¦
+LLMì´ "polite" ëì  "formal", "lower" ëì  "subordinate" ë± ì ìì´ë¥¼ ì¶ë ¥í  ì ìì.
+â Pydantic ëë íì²ë¦¬ìì íì©ê° ê²ì¦ íì
 
-#### 노드 키 무결성
-Character Agent가 "Seojin"(영문), Dialogue Agent가 "서진"(한글) 출력 시 매칭 실패
-→ 일관된 식별자(Identifier) 사용 권장
+#### ë¸ë í¤ ë¬´ê²°ì±
+Character Agentê° "Seojin"(ìë¬¸), Dialogue Agentê° "ìì§"(íê¸) ì¶ë ¥ ì ë§¤ì¹­ ì¤í¨
+â ì¼ê´ë ìë³ì(Identifier) ì¬ì© ê¶ì¥
 
-### 📁 수정된 파일
-- `app/agents/extraction/dialogue.py` - 프롬프트 Production Level 업그레이드
-- `tests/test_agents/test_dialogue_analysis.ipynb` - 테스트 노트북 상세화
+### ð ìì ë íì¼
+- `app/agents/extraction/dialogue.py` - íë¡¬íí¸ Production Level ìê·¸ë ì´ë
+- `tests/test_agents/test_dialogue_analysis.ipynb` - íì¤í¸ ë¸í¸ë¶ ìì¸í
 
-### ✅ 결과
-- `key_dialogues`: 중요 대사 + 숨겨진 의미(subtext) 추출
-- `speech_patterns`: 캐릭터별 말투 특성
-- `dialogue_relationships`: Neo4j 엣지 속성 (formality, power, intimacy)
-- Character Agent 이름과 정확히 매칭
+### â ê²°ê³¼
+- `key_dialogues`: ì¤ì ëì¬ + ì¨ê²¨ì§ ìë¯¸(subtext) ì¶ì¶
+- `speech_patterns`: ìºë¦­í°ë³ ë§í¬ í¹ì±
+- `dialogue_relationships`: Neo4j ì£ì§ ìì± (formality, power, intimacy)
+- Character Agent ì´ë¦ê³¼ ì íí ë§¤ì¹­
 
-### 💡 향후 개선 사항 (Future Enhancements)
+### ð¡ í¥í ê°ì  ì¬í­ (Future Enhancements)
 
-#### 1. 친밀도(Intimacy) 변수 분리
-현재: 단일 `intimacy_level` (1-10)
-문제: 소꿉친구 설정에도 현재 적대적이면 낮게 측정됨
+#### 1. ì¹ë°ë(Intimacy) ë³ì ë¶ë¦¬
+íì¬: ë¨ì¼ `intimacy_level` (1-10)
+ë¬¸ì : ìê¿ì¹êµ¬ ì¤ì ìë íì¬ ì ëì ì´ë©´ ë®ê² ì¸¡ì ë¨
 
-**제안된 분리**:
+**ì ìë ë¶ë¦¬**:
 ```json
 {
-  "friendliness": 2,      // 현재 우호도 (낮음)
-  "bond_strength": 9      // 관계의 깊이/역사 (높음)
+  "friendliness": 2,      // íì¬ ì°í¸ë (ë®ì)
+  "bond_strength": 9      // ê´ê³ì ê¹ì´/ì­ì¬ (ëì)
 }
 ```
-→ "죽이고 싶을 만큼 미우면서도 서로를 가장 잘 아는 애증 관계" 표현 가능
+â "ì£½ì´ê³  ì¶ì ë§í¼ ë¯¸ì°ë©´ìë ìë¡ë¥¼ ê°ì¥ ì ìë ì ì¦ ê´ê³" íí ê°ë¥
 
-#### 2. 권력 관계 비대칭성 검증
-A→B가 "superior"면 B→A는 "subordinate"여야 함
-현재: LLM이 상황에 따라 다르게 판단 (하나가 이민호에게 맞서는 태도 = equal)
+#### 2. ê¶ë ¥ ê´ê³ ë¹ëì¹­ì± ê²ì¦
+AâBê° "superior"ë©´ BâAë "subordinate"ì¬ì¼ í¨
+íì¬: LLMì´ ìí©ì ë°ë¼ ë¤ë¥´ê² íë¨ (íëê° ì´ë¯¼í¸ìê² ë§ìë íë = equal)
 
-**검증 로직 추가 제안**:
+**ê²ì¦ ë¡ì§ ì¶ê° ì ì**:
 ```python
 if power_ab == "superior" and power_ba != "subordinate":
     conflicts.append("Power asymmetry detected")
 ```
 
-#### 3. 식별자 일관성 강제
-이미 `available_characters` 전달로 해결됨
-추가 보완: 프롬프트에 **"캐릭터 이름은 반드시 제공된 리스트 표기를 그대로 따를 것"** 명시
+#### 3. ìë³ì ì¼ê´ì± ê°ì 
+ì´ë¯¸ `available_characters` ì ë¬ë¡ í´ê²°ë¨
+ì¶ê° ë³´ì: íë¡¬íí¸ì **"ìºë¦­í° ì´ë¦ì ë°ëì ì ê³µë ë¦¬ì¤í¸ íê¸°ë¥¼ ê·¸ëë¡ ë°ë¥¼ ê²"** ëªì
 
 ---
 
-## 4. Emotion Agent - Production Level 업그레이드
+## 4. Emotion Agent - Production Level ìê·¸ë ì´ë
 
-### 📅 날짜
+### ð ë ì§
 2025-12-27
 
-### 🔴 문제 (Problem)
-1. 기본적인 프롬프트로 출력 구조가 단순함 (emotion, intensity만)
-2. Character Agent와 이름 매칭이 안 됨
-3. 감정 트리거, 표현 방식 등 컨텍스트 부족
+### ð´ ë¬¸ì  (Problem)
+1. ê¸°ë³¸ì ì¸ íë¡¬íí¸ë¡ ì¶ë ¥ êµ¬ì¡°ê° ë¨ìí¨ (emotion, intensityë§)
+2. Character Agentì ì´ë¦ ë§¤ì¹­ì´ ì ë¨
+3. ê°ì  í¸ë¦¬ê±°, íí ë°©ì ë± ì»¨íì¤í¸ ë¶ì¡±
 
-### 🟢 해결책 (Solution)
+### ð¢ í´ê²°ì± (Solution)
 
-#### 1. 감정 필드 확장
-- `primary_emotion`, `secondary_emotion`: 복합 감정 표현
-- `trigger`: 감정 유발 원인
-- `expression`: 물리적 표현 방식
-- `is_hidden`: 숨겨진 감정 여부
+#### 1. ê°ì  íë íì¥
+- `primary_emotion`, `secondary_emotion`: ë³µí© ê°ì  íí
+- `trigger`: ê°ì  ì ë° ìì¸
+- `expression`: ë¬¼ë¦¬ì  íí ë°©ì
+- `is_hidden`: ì¨ê²¨ì§ ê°ì  ì¬ë¶
 
-#### 2. Neo4j 노드 속성 업데이트
+#### 2. Neo4j ë¸ë ìì± ìë°ì´í¸
 ```json
 {
   "neo4j_updates": [
     {
-      "character_name": "서진",
+      "character_name": "ìì§",
       "property_updates": {
-        "current_emotion": "분노",
+        "current_emotion": "ë¶ë¸",
         "emotion_intensity": 8,
         "emotion_valence": "negative"
       }
@@ -312,83 +313,83 @@ if power_ab == "superior" and power_ba != "subordinate":
 }
 ```
 
-### 💡 향후 개선 사항 (Event Sourcing)
+### ð¡ í¥í ê°ì  ì¬í­ (Event Sourcing)
 
-현재 방식은 캐릭터 노드의 속성을 덮어쓰기(Overwrite)합니다.
-감정 변화의 역사(History)를 추적해야 한다면:
+íì¬ ë°©ìì ìºë¦­í° ë¸ëì ìì±ì ë®ì´ì°ê¸°(Overwrite)í©ëë¤.
+ê°ì  ë³íì ì­ì¬(History)ë¥¼ ì¶ì í´ì¼ íë¤ë©´:
 
-**현재 (State Update)**:
+**íì¬ (State Update)**:
 ```cypher
-SET (Character).emotion = "분노"
+SET (Character).emotion = "ë¶ë¸"
 ```
 
-**고도화 (Event Graph)**:
+**ê³ ëí (Event Graph)**:
 ```cypher
-CREATE (c:Character)-[:FELT {timestamp: t, chapter: 3}]->(e:Emotion {type: "분노"})
+CREATE (c:Character)-[:FELT {timestamp: t, chapter: 3}]->(e:Emotion {type: "ë¶ë¸"})
 ```
 
-→ 스토리 진행에 따른 감정 변화 궤적(Trajectory) 분석 가능
+â ì¤í ë¦¬ ì§íì ë°ë¥¸ ê°ì  ë³í ê¶¤ì (Trajectory) ë¶ì ê°ë¥
 
-### 📁 수정된 파일
-- `app/agents/extraction/emotion.py` - 프롬프트 Production Level 업그레이드
-- `tests/test_agents/test_emotion_tracking.ipynb` - 테스트 노트북 상세화
+### ð ìì ë íì¼
+- `app/agents/extraction/emotion.py` - íë¡¬íí¸ Production Level ìê·¸ë ì´ë
+- `tests/test_agents/test_emotion_tracking.ipynb` - íì¤í¸ ë¸í¸ë¶ ìì¸í
 
-### ✅ 결과
-- `emotion_states`: 상세 감정 분석 (trigger, expression, is_hidden)
-- `neo4j_updates`: Character 노드 속성 업데이트용 JSON
-- Character Agent 이름과 정확히 매칭
+### â ê²°ê³¼
+- `emotion_states`: ìì¸ ê°ì  ë¶ì (trigger, expression, is_hidden)
+- `neo4j_updates`: Character ë¸ë ìì± ìë°ì´í¸ì© JSON
+- Character Agent ì´ë¦ê³¼ ì íí ë§¤ì¹­
 
 ---
 
-## 5. Consistency Agent - Production Level 업그레이드
+## 5. Consistency Agent - Production Level ìê·¸ë ì´ë
 
-### 📅 날짜
+### ð ë ì§
 2025-12-27
 
-### 🔴 문제 (Problem)
-1. Dialogue/Emotion Agent 결과를 활용하지 않음 (Level 1 데이터 미통합)
-2. 관계 방향성 검증 없음 (BETRAYED/MENTOR는 단방향이어야 함)
-3. 참조 무결성 검증 없음 (존재하지 않는 캐릭터 참조 가능)
-4. Neo4j-ready 출력 구조 없음
+### ð´ ë¬¸ì  (Problem)
+1. Dialogue/Emotion Agent ê²°ê³¼ë¥¼ íì©íì§ ìì (Level 1 ë°ì´í° ë¯¸íµí©)
+2. ê´ê³ ë°©í¥ì± ê²ì¦ ìì (BETRAYED/MENTORë ë¨ë°©í¥ì´ì´ì¼ í¨)
+3. ì°¸ì¡° ë¬´ê²°ì± ê²ì¦ ìì (ì¡´ì¬íì§ ìë ìºë¦­í° ì°¸ì¡° ê°ë¥)
+4. Neo4j-ready ì¶ë ¥ êµ¬ì¡° ìì
 
-**기존 검증 범위**:
-- Character trait 충돌만 감지
-- 단순 점수 계산 (HIGH: -25, MEDIUM: -10)
+**ê¸°ì¡´ ê²ì¦ ë²ì**:
+- Character trait ì¶©ëë§ ê°ì§
+- ë¨ì ì ì ê³ì° (HIGH: -25, MEDIUM: -10)
 
-### 🟡 원인 분석 (Root Cause)
-1. 초기 구현에서 Level 1 Agent 결과 통합을 고려하지 않음
-2. 관계 방향성 규칙(BETRAYED: 배신자→피해자)이 프롬프트에 없음
-3. 프로그래매틱 검증이 trait 충돌에만 한정됨
+### ð¡ ìì¸ ë¶ì (Root Cause)
+1. ì´ê¸° êµ¬íìì Level 1 Agent ê²°ê³¼ íµí©ì ê³ ë ¤íì§ ìì
+2. ê´ê³ ë°©í¥ì± ê·ì¹(BETRAYED: ë°°ì ìâí¼í´ì)ì´ íë¡¬íí¸ì ìì
+3. íë¡ê·¸ëë§¤í± ê²ì¦ì´ trait ì¶©ëìë§ íì ë¨
 
-### 🟢 해결책 (Solution)
+### ð¢ í´ê²°ì± (Solution)
 
-#### 1. Level 1 Agent 데이터 통합
+#### 1. Level 1 Agent ë°ì´í° íµí©
 ```python
 dialogues = state.get("analyzed_dialogues", {})
 emotions = state.get("tracked_emotions", {})
 ```
 
-#### 2. 충돌 유형 확장
-| 충돌 유형 | Severity | 설명 |
+#### 2. ì¶©ë ì í íì¥
+| ì¶©ë ì í | Severity | ì¤ëª |
 |----------|----------|------|
-| `CHARACTER_TRAIT_CONFLICT` | HIGH | 모순된 성격 특성 |
-| `DIRECTION_CONFLICT` | MEDIUM | BETRAYED/MENTOR 방향성 오류 |
-| `REFERENTIAL_INTEGRITY_ERROR` | HIGH | 존재하지 않는 캐릭터 참조 |
-| `DIALOGUE_CONSISTENCY_CONFLICT` | LOW-MEDIUM | 대화 패턴-성격 불일치 |
-| `EMOTION_CONSISTENCY_CONFLICT` | LOW-MEDIUM | 감정-행동 불일치 |
+| `CHARACTER_TRAIT_CONFLICT` | HIGH | ëª¨ìë ì±ê²© í¹ì± |
+| `DIRECTION_CONFLICT` | MEDIUM | BETRAYED/MENTOR ë°©í¥ì± ì¤ë¥ |
+| `REFERENTIAL_INTEGRITY_ERROR` | HIGH | ì¡´ì¬íì§ ìë ìºë¦­í° ì°¸ì¡° |
+| `DIALOGUE_CONSISTENCY_CONFLICT` | LOW-MEDIUM | ëí í¨í´-ì±ê²© ë¶ì¼ì¹ |
+| `EMOTION_CONSISTENCY_CONFLICT` | LOW-MEDIUM | ê°ì -íë ë¶ì¼ì¹ |
 
-#### 3. 프로그래매틱 검증 확장
+#### 3. íë¡ê·¸ëë§¤í± ê²ì¦ íì¥
 ```python
 def validate_relationship_directions(relationships: list) -> list:
-    """BETRAYED/MENTOR는 bidirectional=false여야 함"""
+    """BETRAYED/MENTORë bidirectional=falseì¬ì¼ í¨"""
     ...
 
 def validate_character_references(relationships: list, available_names: set) -> list:
-    """모든 source/target이 character list에 존재해야 함"""
+    """ëª¨ë  source/targetì´ character listì ì¡´ì¬í´ì¼ í¨"""
     ...
 ```
 
-#### 4. Neo4j-Ready 출력 추가
+#### 4. Neo4j-Ready ì¶ë ¥ ì¶ê°
 ```json
 {
   "neo4j_validation": {
@@ -399,55 +400,55 @@ def validate_character_references(relationships: list, available_names: set) -> 
 }
 ```
 
-### 📁 수정된 파일
-- `app/agents/analysis/consistency.py` - Production Level 전면 개선
-- `tests/test_agents/test_consistency_check.ipynb` - 7개 테스트 섹션으로 확장
+### ð ìì ë íì¼
+- `app/agents/analysis/consistency.py` - Production Level ì ë©´ ê°ì 
+- `tests/test_agents/test_consistency_check.ipynb` - 7ê° íì¤í¸ ì¹ìì¼ë¡ íì¥
 
-### ✅ 결과
-- Dialogue/Emotion 데이터 교차 검증
-- 관계 방향성 자동 검증 (BETRAYED, MENTOR)
-- 참조 무결성 자동 검증
-- Neo4j 검증 결과 구조화된 출력
+### â ê²°ê³¼
+- Dialogue/Emotion ë°ì´í° êµì°¨ ê²ì¦
+- ê´ê³ ë°©í¥ì± ìë ê²ì¦ (BETRAYED, MENTOR)
+- ì°¸ì¡° ë¬´ê²°ì± ìë ê²ì¦
+- Neo4j ê²ì¦ ê²°ê³¼ êµ¬ì¡°íë ì¶ë ¥
 
-### 💡 추가 기능: 자동 해결 전략 (Auto-Resolution Strategy)
+### ð¡ ì¶ê° ê¸°ë¥: ìë í´ê²° ì ëµ (Auto-Resolution Strategy)
 
-각 충돌에 `suggested_action` 및 `final_value_candidate` 필드 제공:
+ê° ì¶©ëì `suggested_action` ë° `final_value_candidate` íë ì ê³µ:
 
-| Action | 설명 |
+| Action | ì¤ëª |
 |--------|------|
-| `KEEP_DB_VALUE` | 기존 DB 값 유지 |
-| `OVERWRITE_WITH_NEW` | 새 값으로 덮어쓰기 (저위험) |
-| `FLAG_FOR_HUMAN` | 인간 검토 필요 |
-| `AUTO_FIX` | 시스템 자동 수정 가능 |
+| `KEEP_DB_VALUE` | ê¸°ì¡´ DB ê° ì ì§ |
+| `OVERWRITE_WITH_NEW` | ì ê°ì¼ë¡ ë®ì´ì°ê¸° (ì ìí) |
+| `FLAG_FOR_HUMAN` | ì¸ê° ê²í  íì |
+| `AUTO_FIX` | ìì¤í ìë ìì  ê°ë¥ |
 
-**🆕 final_value_candidate 구조** (AUTO_FIX 시):
+**ð final_value_candidate êµ¬ì¡°** (AUTO_FIX ì):
 ```json
 {
   "table": "relationships",
-  "key": {"source": "이민호", "target": "서진", "relation_type": "BETRAYED"},
+  "key": {"source": "ì´ë¯¼í¸", "target": "ìì§", "relation_type": "BETRAYED"},
   "update": {"bidirectional": false}
 }
 ```
-→ 별도 연산 없이 바로 UPDATE 쿼리에 바인딩 가능!
+â ë³ë ì°ì° ìì´ ë°ë¡ UPDATE ì¿¼ë¦¬ì ë°ì¸ë© ê°ë¥!
 
-**Resolution Summary 출력**:
+**Resolution Summary ì¶ë ¥**:
 ```json
 {
   "resolution_summary": {
     "auto_fixable": 2,
-    "ready_for_update": 2,  // 🆕 바로 DB UPDATE 가능한 수
+    "ready_for_update": 2,  // ð ë°ë¡ DB UPDATE ê°ë¥í ì
     "needs_human_review": 3,
     "total_conflicts": 6
   }
 }
 ```
 
-**백엔드 로직 예시**:
+**ë°±ìë ë¡ì§ ìì**:
 ```python
 for conflict in conflicts:
     if conflict['suggested_action'] == 'AUTO_FIX':
         fvc = conflict['final_value_candidate']
-        # 바로 UPDATE 쿼리 실행 가능!
+        # ë°ë¡ UPDATE ì¿¼ë¦¬ ì¤í ê°ë¥!
         db.execute(f\"\"\"
             UPDATE {fvc['table']} 
             SET {', '.join(f'{k}={v}' for k,v in fvc['update'].items())}
@@ -457,17 +458,17 @@ for conflict in conflicts:
 
 ---
 
-## 6. Plot Integration Agent - Production Level 업그레이드
+## 6. Plot Integration Agent - Production Level ìê·¸ë ì´ë
 
-### 📅 날짜
+### ð ë ì§
 2025-12-27
 
-### 🔴 문제 (Problem)
-1. 기본적인 프롬프트로 단순 요약만 제공
-2. 멀티미디어 파이프라인에 필요한 시계열 데이터 없음
-3. 이벤트/캐릭터 참조 없이 자체 이름 생성
+### ð´ ë¬¸ì  (Problem)
+1. ê¸°ë³¸ì ì¸ íë¡¬íí¸ë¡ ë¨ì ìì½ë§ ì ê³µ
+2. ë©í°ë¯¸ëì´ íì´íë¼ì¸ì íìí ìê³ì´ ë°ì´í° ìì
+3. ì´ë²¤í¸/ìºë¦­í° ì°¸ì¡° ìì´ ìì²´ ì´ë¦ ìì±
 
-**기존 출력**:
+**ê¸°ì¡´ ì¶ë ¥**:
 ```json
 {
   "plot_summary": "...",
@@ -476,33 +477,33 @@ for conflict in conflicts:
 }
 ```
 
-### 🟡 원인 분석 (Root Cause)
-1. Tension이 단일 숫자로 시간 흐름에 따른 변화 표현 불가
-2. 비트 단위 분할 없어 컷 연출/삽화 생성 활용 불가
-3. Event Agent 결과 참조하지 않음
+### ð¡ ìì¸ ë¶ì (Root Cause)
+1. Tensionì´ ë¨ì¼ ì«ìë¡ ìê° íë¦ì ë°ë¥¸ ë³í íí ë¶ê°
+2. ë¹í¸ ë¨ì ë¶í  ìì´ ì»· ì°ì¶/ì½í ìì± íì© ë¶ê°
+3. Event Agent ê²°ê³¼ ì°¸ì¡°íì§ ìì
 
-### 🟢 해결책 (Solution)
+### ð¢ í´ê²°ì± (Solution)
 
-#### 1. Tension Curve 배열 도입
+#### 1. Tension Curve ë°°ì´ ëì
 ```json
 "tension_curve": [3, 5, 7, 8, 6]
 ```
-→ 오디오 빌드업(↑), 드롭(↓) 타이밍 자동 생성 가능
+â ì¤ëì¤ ë¹ëì(â), ëë¡­(â) íì´ë° ìë ìì± ê°ë¥
 
-#### 2. Narrative Beats 분할
+#### 2. Narrative Beats ë¶í 
 ```json
 "narrative_beats": [
   {
     "beat_id": 1,
-    "text": "서진과 하나가 어두운 숲에서 만남",
+    "text": "ìì§ê³¼ íëê° ì´ëì´ ì²ìì ë§ë¨",
     "beat_type": "SETUP",
     "event_ref": "E001",
     "visual_prompt": "Two figures meeting in dark forest"
   }
 ]
 ```
-- `beat_type`: SETUP, INCITING_INCIDENT, CLIMAX 등
-- `visual_prompt`: 삽화 AI 직접 입력 가능
+- `beat_type`: SETUP, INCITING_INCIDENT, CLIMAX ë±
+- `visual_prompt`: ì½í AI ì§ì  ìë ¥ ê°ë¥
 
 #### 3. Multimedia Pipeline Summary
 ```json
@@ -516,53 +517,53 @@ for conflict in conflicts:
 }
 ```
 
-### 📁 수정된 파일
-- `app/agents/analysis/plot.py` - Production Level 업그레이드
-- `tests/test_agents/test_plot_integration.ipynb` - 7개 섹션으로 확장
+### ð ìì ë íì¼
+- `app/agents/analysis/plot.py` - Production Level ìê·¸ë ì´ë
+- `tests/test_agents/test_plot_integration.ipynb` - 7ê° ì¹ìì¼ë¡ íì¥
 
-### ✅ 결과
-- 3-Act 구조 + Foreshadowing + Neo4j 엣지
-- Tension Curve 배열 (오디오/연출 타이밍용)
-- Narrative Beats (컷 편집/삽화 프롬프트용)
-- Multimedia Summary (파이프라인 검증용)
+### â ê²°ê³¼
+- 3-Act êµ¬ì¡° + Foreshadowing + Neo4j ì£ì§
+- Tension Curve ë°°ì´ (ì¤ëì¤/ì°ì¶ íì´ë°ì©)
+- Narrative Beats (ì»· í¸ì§/ì½í íë¡¬íí¸ì©)
+- Multimedia Summary (íì´íë¼ì¸ ê²ì¦ì©)
 
-### 💡 추가 수정: Tension Curve 빈 배열 문제
+### ð¡ ì¶ê° ìì : Tension Curve ë¹ ë°°ì´ ë¬¸ì 
 
-**문제**: LLM이 `tension_curve`를 빈 배열 `[]`로 반환하는 경우 발생
+**ë¬¸ì **: LLMì´ `tension_curve`ë¥¼ ë¹ ë°°ì´ `[]`ë¡ ë°ííë ê²½ì° ë°ì
 
-**해결**: 프로그래매틱 백업 함수 추가
+**í´ê²°**: íë¡ê·¸ëë§¤í± ë°±ì í¨ì ì¶ê°
 ```python
 def generate_fallback_tension_curve(events: list) -> list:
-    """이벤트 importance로 tension 자동 생성"""
+    """ì´ë²¤í¸ importanceë¡ tension ìë ìì±"""
     return [max(1, min(10, e.get("importance", 5))) for e in events]
 
 def generate_fallback_beats(events: list) -> list:
-    """이벤트에서 narrative beats 자동 생성"""
+    """ì´ë²¤í¸ìì narrative beats ìë ìì±"""
     ...
 ```
 
-**결과 (로그)**:
+**ê²°ê³¼ (ë¡ê·¸)**:
 ```
 [PLOT] Generating fallback tension_curve from event importance
 [PLOT] Beats: 5, Tension curve: [7, 9, 8, 8, 6]
 ```
-→ Raw Data 배열이 항상 보장됨
+â Raw Data ë°°ì´ì´ í­ì ë³´ì¥ë¨
 
 ---
 
-## 7. Validator Agent - Production Level 업그레이드
+## 7. Validator Agent - Production Level ìê·¸ë ì´ë
 
-### 📅 날짜
+### ð ë ì§
 2025-12-28
 
-### 🔴 문제 (Problem)
-1. 기본적인 True/False 검증만 제공
-2. 에러 발생 시 "어디에, 왜" 정보 없음
-3. 성능 모니터링 불가
+### ð´ ë¬¸ì  (Problem)
+1. ê¸°ë³¸ì ì¸ True/False ê²ì¦ë§ ì ê³µ
+2. ìë¬ ë°ì ì "ì´ëì, ì" ì ë³´ ìì
+3. ì±ë¥ ëª¨ëí°ë§ ë¶ê°
 
-### 🟢 해결책 (Solution)
+### ð¢ í´ê²°ì± (Solution)
 
-#### 1. 구조화된 에러 출력
+#### 1. êµ¬ì¡°íë ìë¬ ì¶ë ¥
 ```json
 {
   "field": "extracted_characters[0].name",
@@ -572,43 +573,43 @@ def generate_fallback_beats(events: list) -> list:
 }
 ```
 
-#### 2. 실행 시간 메트릭
+#### 2. ì¤í ìê° ë©í¸ë¦­
 ```json
 "execution_time_ms": 12.5
 ```
 
-### 📁 수정된 파일
-- `app/agents/validation/validator.py` - 구조화된 에러, 실행 시간
-- `tests/test_agents/test_validator.ipynb` - 테스트 케이스
+### ð ìì ë íì¼
+- `app/agents/validation/validator.py` - êµ¬ì¡°íë ìë¬, ì¤í ìê°
+- `tests/test_agents/test_validator.ipynb` - íì¤í¸ ì¼ì´ì¤
 
-### ✅ 결과
-- 8개 에이전트 출력 개별 검증
-- 구조화된 에러 리포트 (field, code, message, value)
-- 실행 시간 메트릭
+### â ê²°ê³¼
+- 8ê° ìì´ì í¸ ì¶ë ¥ ê°ë³ ê²ì¦
+- êµ¬ì¡°íë ìë¬ ë¦¬í¬í¸ (field, code, message, value)
+- ì¤í ìê° ë©í¸ë¦­
 
 ---
 
-## 8. Supervisor Agent - Production Level 업그레이드
+## 8. Supervisor Agent - Production Level ìê·¸ë ì´ë
 
-### 📅 날짜
+### ð ë ì§
 2025-12-28
 
-### 🔴 문제 (Problem)
-1. 요청 추적 불가 - 비동기 환경에서 로그 추적 어려움
-2. Validation 실패 시 무한 루프 가능성
-3. 최대 재시도 초과 시 처리 방안 없음
+### ð´ ë¬¸ì  (Problem)
+1. ìì²­ ì¶ì  ë¶ê° - ë¹ëê¸° íê²½ìì ë¡ê·¸ ì¶ì  ì´ë ¤ì
+2. Validation ì¤í¨ ì ë¬´í ë£¨í ê°ë¥ì±
+3. ìµë ì¬ìë ì´ê³¼ ì ì²ë¦¬ ë°©ì ìì
 
-### 🟢 해결책 (Solution)
+### ð¢ í´ê²°ì± (Solution)
 
-#### 1. Global Trace ID (전역 추적 ID)
+#### 1. Global Trace ID (ì ì­ ì¶ì  ID)
 ```python
 def generate_trace_id() -> str:
     return f"req-{date_str}-{short_uuid}"
-# 출력: "req-20251228-123456-a1b2c3d4"
+# ì¶ë ¥: "req-20251228-123456-a1b2c3d4"
 ```
-→ 모든 로그에 요청 추적 ID 포함
+â ëª¨ë  ë¡ê·¸ì ìì²­ ì¶ì  ID í¬í¨
 
-#### 2. Supervisor State (재시도 모니터링)
+#### 2. Supervisor State (ì¬ìë ëª¨ëí°ë§)
 ```json
 {
   "trace_id": "req-20251228-123456-a1b2c3d4",
@@ -621,82 +622,82 @@ def generate_trace_id() -> str:
 #### 3. Human Review Node
 ```python
 if retry_count >= MAX_EXTRACTION_RETRIES:
-    return "human_review"  # 사람 개입 요청
+    return "human_review"  # ì¬ë ê°ì ìì²­
 ```
-→ 최대 재시도 (3회) 초과 시 사람 개입
+â ìµë ì¬ìë (3í) ì´ê³¼ ì ì¬ë ê°ì
 
-### 📁 수정된 파일
+### ð ìì ë íì¼
 - `app/agents/supervisor.py` - trace_id, supervisor_state, human_review_node
-- `tests/test_agents/test_supervisor.ipynb` - 9개 테스트 케이스
+- `tests/test_agents/test_supervisor.ipynb` - 9ê° íì¤í¸ ì¼ì´ì¤
 
-### ✅ 결과
-- **trace_id**: 전역 요청 추적 ID
-- **supervisor_state**: 재시도 횟수 모니터링
-- **human_review**: 무한 루프 방지 + 사람 개입 라우팅
+### â ê²°ê³¼
+- **trace_id**: ì ì­ ìì²­ ì¶ì  ID
+- **supervisor_state**: ì¬ìë íì ëª¨ëí°ë§
+- **human_review**: ë¬´í ë£¨í ë°©ì§ + ì¬ë ê°ì ë¼ì°í
 
 ---
 
-## 9. Message Schema - 하이브리드 아키텍처 업그레이드
+## 9. Message Schema - íì´ë¸ë¦¬ë ìí¤íì² ìê·¸ë ì´ë
 
-### 📅 날짜
+### ð ë ì§
 2025-12-28
 
-### 🔴 문제 (Problem)
-1. `messages.py`의 `AnalysisContext`가 기본 count 정보만 포함
-2. `rabbitmq_consumer.py`가 Supervisor와 연동되지 않음
-3. 에이전트들이 기존 캐릭터/이벤트 데이터에 접근 불가
-4. 분산 추적을 위한 Global Trace ID 미지원
+### ð´ ë¬¸ì  (Problem)
+1. `messages.py`ì `AnalysisContext`ê° ê¸°ë³¸ count ì ë³´ë§ í¬í¨
+2. `rabbitmq_consumer.py`ê° Supervisorì ì°ëëì§ ìì
+3. ìì´ì í¸ë¤ì´ ê¸°ì¡´ ìºë¦­í°/ì´ë²¤í¸ ë°ì´í°ì ì ê·¼ ë¶ê°
+4. ë¶ì° ì¶ì ì ìí Global Trace ID ë¯¸ì§ì
 
-**기존 메시지 스키마**:
+**ê¸°ì¡´ ë©ìì§ ì¤í¤ë§**:
 ```python
 class AnalysisContext(BaseModel):
     previous_chapters: list[str] = []
-    existing_characters_count: int = 0  # count만
-    existing_events_count: int = 0      # count만
+    existing_characters_count: int = 0  # countë§
+    existing_events_count: int = 0      # countë§
 ```
 
-**기존 데이터 접근 문제**:
-- ConsistencyChecker: 기존 캐릭터 속성과 비교 불가
-- RelationshipAnalyzer: 기존 관계 데이터 참조 불가
-- 일관성 검사가 동일 문서 내에서만 가능
+**ê¸°ì¡´ ë°ì´í° ì ê·¼ ë¬¸ì **:
+- ConsistencyChecker: ê¸°ì¡´ ìºë¦­í° ìì±ê³¼ ë¹êµ ë¶ê°
+- RelationshipAnalyzer: ê¸°ì¡´ ê´ê³ ë°ì´í° ì°¸ì¡° ë¶ê°
+- ì¼ê´ì± ê²ì¬ê° ëì¼ ë¬¸ì ë´ììë§ ê°ë¥
 
-### 🟡 원인 분석 (Root Cause)
-1. 초기 설계에서 Spring Boot → FastAPI 방향만 고려
-2. FastAPI가 기존 데이터를 조회할 방법이 없었음
-3. 메시지 크기 최소화를 위해 count만 전송하도록 설계
+### ð¡ ìì¸ ë¶ì (Root Cause)
+1. ì´ê¸° ì¤ê³ìì Spring Boot â FastAPI ë°©í¥ë§ ê³ ë ¤
+2. FastAPIê° ê¸°ì¡´ ë°ì´í°ë¥¼ ì¡°íí  ë°©ë²ì´ ììì
+3. ë©ìì§ í¬ê¸° ìµìíë¥¼ ìí´ countë§ ì ì¡íëë¡ ì¤ê³
 
-### 🟢 해결책 (Solution)
+### ð¢ í´ê²°ì± (Solution)
 
-#### 아키텍처 결정: 하이브리드 방식
-두 가지 접근 방식의 장점을 결합:
+#### ìí¤íì² ê²°ì : íì´ë¸ë¦¬ë ë°©ì
+ë ê°ì§ ì ê·¼ ë°©ìì ì¥ì ì ê²°í©:
 
-| 옵션 | 설명 | 장단점 |
+| ìµì | ì¤ëª | ì¥ë¨ì  |
 |------|------|--------|
-| **A. Spring Boot 전송** | 기존 데이터를 메시지에 포함 | 빠름, 메시지 크기 증가 |
-| **B. FastAPI DB 조회** | 필요시 직접 DB 조회 | 항상 최신, 네트워크 홉 |
-| **✅ C. 하이브리드** | 경량 참조 전송 + 필요시 DB 조회 | 균형 잡힌 접근 |
+| **A. Spring Boot ì ì¡** | ê¸°ì¡´ ë°ì´í°ë¥¼ ë©ìì§ì í¬í¨ | ë¹ ë¦, ë©ìì§ í¬ê¸° ì¦ê° |
+| **B. FastAPI DB ì¡°í** | íìì ì§ì  DB ì¡°í | í­ì ìµì , ë¤í¸ìí¬ í |
+| **â C. íì´ë¸ë¦¬ë** | ê²½ë ì°¸ì¡° ì ì¡ + íìì DB ì¡°í | ê· í ì¡í ì ê·¼ |
 
-**핵심 원칙**:
-- **읽기 (Read)**: FastAPI가 PostgreSQL/Neo4j 직접 조회
-- **쓰기 (Write)**: Spring Boot 콜백을 통해 처리
+**íµì¬ ìì¹**:
+- **ì½ê¸° (Read)**: FastAPIê° PostgreSQL/Neo4j ì§ì  ì¡°í
+- **ì°ê¸° (Write)**: Spring Boot ì½ë°±ì íµí´ ì²ë¦¬
 
-#### 1. 경량 참조 스키마 (`messages.py`)
+#### 1. ê²½ë ì°¸ì¡° ì¤í¤ë§ (`messages.py`)
 ```python
 class ExistingCharacterRef(BaseModel):
-    """경량 참조 - 이름 매칭용"""
+    """ê²½ë ì°¸ì¡° - ì´ë¦ ë§¤ì¹­ì©"""
     id: str
     name: str
     role: Optional[str] = None
 
 class ExistingRelationshipRef(BaseModel):
-    """Neo4j 관계 경량 참조"""
+    """Neo4j ê´ê³ ê²½ë ì°¸ì¡°"""
     source_name: str
     target_name: str
     relation_type: str
     strength: int = 5
 
 class AnalysisContext(BaseModel):
-    """확장된 컨텍스트"""
+    """íì¥ë ì»¨íì¤í¸"""
     chapter_number: Optional[int] = None
     existing_characters: list[ExistingCharacterRef] = []
     existing_events: list[ExistingEventRef] = []
@@ -705,68 +706,68 @@ class AnalysisContext(BaseModel):
     world_rules_summary: Optional[str] = None
 ```
 
-#### 2. DB 조회 서비스 (`db_query_service.py`) - NEW
+#### 2. DB ì¡°í ìë¹ì¤ (`db_query_service.py`) - NEW
 ```python
 class DatabaseQueryService:
-    """읽기 전용 DB 조회 서비스"""
+    """ì½ê¸° ì ì© DB ì¡°í ìë¹ì¤"""
     
     async def get_character_details(self, project_id: str, name: str):
-        """캐릭터 상세 정보 조회"""
+        """ìºë¦­í° ìì¸ ì ë³´ ì¡°í"""
         ...
     
     async def get_all_relationships(self, project_id: str):
-        """Neo4j 관계 전체 조회"""
+        """Neo4j ê´ê³ ì ì²´ ì¡°í"""
         ...
     
     async def get_world_rules(self, project_id: str):
-        """세계관 규칙 조회"""
+        """ì¸ê³ê´ ê·ì¹ ì¡°í"""
         ...
 ```
 
-#### 3. RabbitMQ Consumer 강화 (`rabbitmq_consumer.py`)
+#### 3. RabbitMQ Consumer ê°í (`rabbitmq_consumer.py`)
 ```python
 class RabbitMQConsumer:
-    """프로덕션 레벨 Consumer"""
+    """íë¡ëì ë ë²¨ Consumer"""
     
-    # 연결 재시도 로직 (최대 5회)
+    # ì°ê²° ì¬ìë ë¡ì§ (ìµë 5í)
     async def connect(self) -> None:
         for attempt in range(max_retries):
             try: ...
     
-    # Global Trace ID 전파
+    # Global Trace ID ì í
     async def _process_message(self, message):
         trace_id = task_message.trace_id or self._generate_trace_id()
         bound_logger = logger.bind(trace_id=trace_id)
     
-    # 헬스 체크
+    # í¬ì¤ ì²´í¬
     async def health_check(self) -> dict:
         return {"connected": ..., "consuming": ...}
 ```
 
-#### 4. Analysis Service 하이브리드 통합 (`analysis_service.py`)
+#### 4. Analysis Service íì´ë¸ë¦¬ë íµí© (`analysis_service.py`)
 ```python
 async def run_analysis(task, trace_id, enrich_from_db=False):
-    # 1. 메시지에서 초기 상태 생성
+    # 1. ë©ìì§ìì ì´ê¸° ìí ìì±
     initial_state = await create_initial_state_from_message(task, trace_id)
     
-    # 2. 필요시 DB에서 추가 데이터 조회
+    # 2. íìì DBìì ì¶ê° ë°ì´í° ì¡°í
     if enrich_from_db:
         db_service = await get_db_service()
         initial_state = await enrich_state_with_db(initial_state, db_service)
     
-    # 3. 파이프라인 실행
+    # 3. íì´íë¼ì¸ ì¤í
     final_state = await run_analysis_pipeline(...)
 ```
 
-#### 5. State/Graph 업데이트
+#### 5. State/Graph ìë°ì´í¸
 ```python
-# state.py - 새 필드 추가
+# state.py - ì íë ì¶ê°
 trace_id: str = ""
 chapter_number: Optional[int] = None
 world_rules_summary: Optional[str] = None
-existing_settings: list[dict] = []  # dict → list 타입 변경
+existing_settings: list[dict] = []  # dict â list íì ë³ê²½
 
-# graph.py - 파라미터 추가
+# graph.py - íë¼ë¯¸í° ì¶ê°
 async def run_analysis_pipeline(
     ...,
     existing_settings: list = None,  # NEW
@@ -774,53 +775,53 @@ async def run_analysis_pipeline(
 ):
 ```
 
-### 📁 수정된 파일
+### ð ìì ë íì¼
 
-| 파일 | 변경 내용 |
+| íì¼ | ë³ê²½ ë´ì© |
 |------|----------|
-| `app/schemas/messages.py` | 경량 참조 스키마 (ExistingCharacterRef, ExistingEventRef, ExistingRelationshipRef, ExistingSettingRef), trace_id 지원 |
-| `app/services/rabbitmq_consumer.py` | 연결 재시도 로직, Global Trace ID 전파, graceful shutdown, 헬스 체크 |
-| `app/services/db_query_service.py` | **[NEW]** PostgreSQL/Neo4j 읽기 전용 조회 서비스 |
-| `app/services/analysis_service.py` | 하이브리드 통합 - 메시지에서 초기 상태 생성 + 필요시 DB 보강 |
-| `app/agents/state.py` | trace_id, chapter_number, world_rules_summary 필드 추가 |
-| `app/agents/graph.py` | trace_id, existing_settings 파라미터 추가 |
-| `pyproject.toml` | asyncpg>=0.30.0, neo4j>=5.26.0 의존성 추가 |
+| `app/schemas/messages.py` | ê²½ë ì°¸ì¡° ì¤í¤ë§ (ExistingCharacterRef, ExistingEventRef, ExistingRelationshipRef, ExistingSettingRef), trace_id ì§ì |
+| `app/services/rabbitmq_consumer.py` | ì°ê²° ì¬ìë ë¡ì§, Global Trace ID ì í, graceful shutdown, í¬ì¤ ì²´í¬ |
+| `app/services/db_query_service.py` | **[NEW]** PostgreSQL/Neo4j ì½ê¸° ì ì© ì¡°í ìë¹ì¤ |
+| `app/services/analysis_service.py` | íì´ë¸ë¦¬ë íµí© - ë©ìì§ìì ì´ê¸° ìí ìì± + íìì DB ë³´ê° |
+| `app/agents/state.py` | trace_id, chapter_number, world_rules_summary íë ì¶ê° |
+| `app/agents/graph.py` | trace_id, existing_settings íë¼ë¯¸í° ì¶ê° |
+| `pyproject.toml` | asyncpg>=0.30.0, neo4j>=5.26.0 ìì¡´ì± ì¶ê° |
 
-### ✅ 결과
+### â ê²°ê³¼
 
-**데이터 흐름**:
+**ë°ì´í° íë¦**:
 ```
-Spring Boot 전송: 텍스트 + 경량 참조 (이름, ID 등)
-         ↓
-FastAPI 수신: AnalysisTaskMessage 파싱
-         ↓
-[선택적] DB 보강: 컨텍스트가 부족하면 PostgreSQL/Neo4j 직접 조회
-         ↓
-에이전트 파이프라인 실행: 상세 분석
-         ↓
-Spring Boot 콜백: 결과 전송
+Spring Boot ì ì¡: íì¤í¸ + ê²½ë ì°¸ì¡° (ì´ë¦, ID ë±)
+         â
+FastAPI ìì : AnalysisTaskMessage íì±
+         â
+[ì íì ] DB ë³´ê°: ì»¨íì¤í¸ê° ë¶ì¡±íë©´ PostgreSQL/Neo4j ì§ì  ì¡°í
+         â
+ìì´ì í¸ íì´íë¼ì¸ ì¤í: ìì¸ ë¶ì
+         â
+Spring Boot ì½ë°±: ê²°ê³¼ ì ì¡
 ```
 
-**주요 개선점**:
-- ✅ 에이전트가 기존 캐릭터/이벤트/관계 데이터에 접근 가능
-- ✅ 일관성 검사가 전체 프로젝트 범위에서 가능
-- ✅ Global Trace ID로 분산 환경 로그 추적 가능
-- ✅ 연결 실패 시 자동 재시도
+**ì£¼ì ê°ì ì **:
+- â ìì´ì í¸ê° ê¸°ì¡´ ìºë¦­í°/ì´ë²¤í¸/ê´ê³ ë°ì´í°ì ì ê·¼ ê°ë¥
+- â ì¼ê´ì± ê²ì¬ê° ì ì²´ íë¡ì í¸ ë²ììì ê°ë¥
+- â Global Trace IDë¡ ë¶ì° íê²½ ë¡ê·¸ ì¶ì  ê°ë¥
+- â ì°ê²° ì¤í¨ ì ìë ì¬ìë
 
-### ⚠️ 다음 단계 (Implementation Checklist)
+### â ï¸ ë¤ì ë¨ê³ (Implementation Checklist)
 
-1. **의존성 설치**:
+1. **ìì¡´ì± ì¤ì¹**:
    ```bash
    pip install asyncpg neo4j
    ```
 
-2. **Spring Boot 메시지 형식 업데이트**:
-   새로운 `AnalysisContext` 스키마에 맞게 메시지 생성
+2. **Spring Boot ë©ìì§ íì ìë°ì´í¸**:
+   ìë¡ì´ `AnalysisContext` ì¤í¤ë§ì ë§ê² ë©ìì§ ìì±
 
-3. **DB 테이블 확인**:
-   `characters`, `events`, `settings`, `world_rules` 테이블 존재 확인
+3. **DB íì´ë¸ íì¸**:
+   `characters`, `events`, `settings`, `world_rules` íì´ë¸ ì¡´ì¬ íì¸
 
-4. **환경 변수 설정** (`.env`):
+4. **íê²½ ë³ì ì¤ì ** (`.env`):
    ```
    POSTGRES_HOST=localhost
    POSTGRES_PORT=5432
@@ -833,50 +834,50 @@ Spring Boot 콜백: 결과 전송
    NEO4J_PASSWORD=stolink123
    ```
 
-### 💡 향후 개선 사항
+### ð¡ í¥í ê°ì  ì¬í­
 
-#### 1. 캐싱 레이어 추가
-자주 조회되는 데이터 (캐릭터 목록 등)를 Redis 캐싱:
+#### 1. ìºì± ë ì´ì´ ì¶ê°
+ìì£¼ ì¡°íëë ë°ì´í° (ìºë¦­í° ëª©ë¡ ë±)ë¥¼ Redis ìºì±:
 ```python
 @cached(ttl=300)
 async def get_all_characters(self, project_id: str):
     ...
 ```
 
-#### 2. Connection Pooling 최적화
-현재: min_size=2, max_size=10
-프로덕션: 동시 분석 작업 수에 따라 조정 필요
+#### 2. Connection Pooling ìµì í
+íì¬: min_size=2, max_size=10
+íë¡ëì: ëì ë¶ì ìì ìì ë°ë¼ ì¡°ì  íì
 
-#### 3. Dead Letter Queue 구현
-처리 실패한 메시지를 별도 큐로 이동:
+#### 3. Dead Letter Queue êµ¬í
+ì²ë¦¬ ì¤í¨í ë©ìì§ë¥¼ ë³ë íë¡ ì´ë:
 ```python
-# rabbitmq_consumer.py에 DLX 설정 (TODO)
+# rabbitmq_consumer.pyì DLX ì¤ì  (TODO)
 arguments={
     "x-dead-letter-exchange": "stolink.dlx",
     "x-dead-letter-routing-key": "stolink.analysis.failed"
 }
 ```
 
-### 🐛 추가 버그 수정: Callback URL 무시 문제
+### ð ì¶ê° ë²ê·¸ ìì : Callback URL ë¬´ì ë¬¸ì 
 
-#### 문제
-RabbitMQ 메시지에서 `callback_url`을 `https://webhook.site/...`로 설정해도 항상 `settings.spring_callback_url`로 요청이 전송됨.
+#### ë¬¸ì 
+RabbitMQ ë©ìì§ìì `callback_url`ì `https://webhook.site/...`ë¡ ì¤ì í´ë í­ì `settings.spring_callback_url`ë¡ ìì²­ì´ ì ì¡ë¨.
 
-**에러 로그**:
+**ìë¬ ë¡ê·¸**:
 ```
 Callback request error error='All connection attempts failed' job_id=test-job-003
 ```
 
-#### 원인
-`callback_client.py`가 메시지의 `callback_url`을 파라미터로 받지 않고, 항상 설정 파일의 기본 URL을 사용:
+#### ìì¸
+`callback_client.py`ê° ë©ìì§ì `callback_url`ì íë¼ë¯¸í°ë¡ ë°ì§ ìê³ , í­ì ì¤ì  íì¼ì ê¸°ë³¸ URLì ì¬ì©:
 
 ```python
-# 기존 코드 (문제)
+# ê¸°ì¡´ ì½ë (ë¬¸ì )
 callback_url = f"{self.base_url}/api/internal/ai/analysis/callback"
 ```
 
-#### 해결
-1. `callback_client.py` - `callback_url` 파라미터 추가:
+#### í´ê²°
+1. `callback_client.py` - `callback_url` íë¼ë¯¸í° ì¶ê°:
 ```python
 async def send_analysis_callback(
     self,
@@ -884,54 +885,54 @@ async def send_analysis_callback(
     callback_url: Optional[str] = None  # NEW
 ) -> bool:
     if callback_url and callback_url.startswith("http"):
-        url = callback_url  # 메시지의 URL 직접 사용
+        url = callback_url  # ë©ìì§ì URL ì§ì  ì¬ì©
     else:
         url = f"{settings.spring_callback_url}/api/internal/ai/analysis/callback"
 ```
 
-2. `analysis_service.py` - `task.callback_url` 전달:
+2. `analysis_service.py` - `task.callback_url` ì ë¬:
 ```python
-callback_url = task.callback_url  # 메시지에서 추출
+callback_url = task.callback_url  # ë©ìì§ìì ì¶ì¶
 await callback_client.send_analysis_callback(
     ...,
-    callback_url=callback_url  # 전달
+    callback_url=callback_url  # ì ë¬
 )
 ```
 
-#### 테스트 방법
-1. RabbitMQ WebUI에서 메시지 발행 (callback_url을 webhook.site로 설정)
-2. webhook.site에서 결과 수신 확인
+#### íì¤í¸ ë°©ë²
+1. RabbitMQ WebUIìì ë©ìì§ ë°í (callback_urlì webhook.siteë¡ ì¤ì )
+2. webhook.siteìì ê²°ê³¼ ìì  íì¸
 
-#### 수정된 파일
+#### ìì ë íì¼
 - `app/services/callback_client.py`
 - `app/services/analysis_service.py`
 
 ---
 
-## 10. JSON 파싱 오류 및 스키마 불일치 - Structured Output 도입
+## 10. JSON íì± ì¤ë¥ ë° ì¤í¤ë§ ë¶ì¼ì¹ - Structured Output ëì
 
-### 📅 날짜
+### ð ë ì§
 2025-12-29
 
-### 🔴 문제 (Problem)
-1. LLM이 JSON 대신 Markdown 코드 블록(` ```json ... ``` `)으로 감싸서 응답
-2. `key=value` 형식(Python repr)이 JSON 대신 출력되는 경우 발생
-3. Spring Boot에서 파싱 실패하는 필드 존재 (`location_name`, `description` 누락)
+### ð´ ë¬¸ì  (Problem)
+1. LLMì´ JSON ëì  Markdown ì½ë ë¸ë¡(` ```json ... ``` `)ì¼ë¡ ê°ì¸ì ìëµ
+2. `key=value` íì(Python repr)ì´ JSON ëì  ì¶ë ¥ëë ê²½ì° ë°ì
+3. Spring Bootìì íì± ì¤í¨íë íë ì¡´ì¬ (`location_name`, `description` ëë½)
 
-**에러 로그**:
+**ìë¬ ë¡ê·¸**:
 ```
 Setting JSON parse error: Expecting property name enclosed in double quotes
 Character JSON parse error: Invalid control character at: line 45 column 3
 ```
 
-### 🟡 원인 분석 (Root Cause)
-1. 수동 `json.loads()` 파싱의 불안정성
-2. 프롬프트 지시만으로는 JSON 형식 보장 불가
-3. LLM이 간헐적으로 필수 필드 누락
+### ð¡ ìì¸ ë¶ì (Root Cause)
+1. ìë `json.loads()` íì±ì ë¶ìì ì±
+2. íë¡¬íí¸ ì§ìë§ì¼ë¡ë JSON íì ë³´ì¥ ë¶ê°
+3. LLMì´ ê°íì ì¼ë¡ íì íë ëë½
 
-### 🟢 해결책 (Solution)
+### ð¢ í´ê²°ì± (Solution)
 
-#### 1. `ChatBedrockConverse` + `with_structured_output()` 도입
+#### 1. `ChatBedrockConverse` + `with_structured_output()` ëì
 ```python
 # llm.py
 from langchain_aws import ChatBedrockConverse
@@ -941,78 +942,78 @@ def get_structured_llm(schema: Type[BaseModel]) -> ChatBedrockConverse:
     return base_llm.with_structured_output(schema)
 ```
 
-#### 2. 에이전트 리팩토링
+#### 2. ìì´ì í¸ ë¦¬í©í ë§
 ```python
-# Before (수동 파싱)
+# Before (ìë íì±)
 response = await chain.ainvoke({"story_text": text})
 content = response.content.strip()
 if content.startswith("```"):
     content = content.split("```")[1]
-result = json.loads(content)  # 에러 가능!
+result = json.loads(content)  # ìë¬ ê°ë¥!
 
 # After (Structured Output)
 structured_llm = get_structured_llm(SettingExtractionResult)
 chain = PROMPT | structured_llm
 result = await chain.ainvoke({"story_text": text})
-# result는 이미 Pydantic 객체 - 파싱 불필요!
+# resultë ì´ë¯¸ Pydantic ê°ì²´ - íì± ë¶íì!
 ```
 
-#### 3. 스키마 업데이트
-| 스키마 | 추가/변경 필드 |
+#### 3. ì¤í¤ë§ ìë°ì´í¸
+| ì¤í¤ë§ | ì¶ê°/ë³ê²½ íë |
 |--------|----------------|
-| `SettingExtraction` | `location_name` 추가 |
-| `EventExtraction` | `description` 필수화 |
-| `PlotIntegrationResult` | `foreshadow_id`, `hint_text` 필수화 |
-| `ConsistencyReport` | `resolution_summary`, `neo4j_validation` 추가 |
-| `ValidationResult` | 신규 생성 |
+| `SettingExtraction` | `location_name` ì¶ê° |
+| `EventExtraction` | `description` íìí |
+| `PlotIntegrationResult` | `foreshadow_id`, `hint_text` íìí |
+| `ConsistencyReport` | `resolution_summary`, `neo4j_validation` ì¶ê° |
+| `ValidationResult` | ì ê· ìì± |
 
-### 📁 수정된 파일
-- `app/agents/llm.py` - `ChatBedrockConverse` + `get_structured_llm()` 추가
-- `app/agents/extraction/character.py` - Structured Output 적용
-- `app/agents/extraction/event.py` - Structured Output 적용
-- `app/agents/extraction/setting.py` - Structured Output 적용
-- `app/agents/analysis/plot.py` - Structured Output 적용
-- `app/agents/analysis/consistency.py` - Structured Output 적용
-- `app/schemas/plot.py` - Spring Boot 호환 구조로 재작성
-- `app/schemas/consistency.py` - `ResolutionSummary`, `Neo4jValidation` 추가
-- `app/schemas/validation.py` - 신규 생성
-- `app/schemas/callback.py` - `FullAnalysisResult` 업데이트
+### ð ìì ë íì¼
+- `app/agents/llm.py` - `ChatBedrockConverse` + `get_structured_llm()` ì¶ê°
+- `app/agents/extraction/character.py` - Structured Output ì ì©
+- `app/agents/extraction/event.py` - Structured Output ì ì©
+- `app/agents/extraction/setting.py` - Structured Output ì ì©
+- `app/agents/analysis/plot.py` - Structured Output ì ì©
+- `app/agents/analysis/consistency.py` - Structured Output ì ì©
+- `app/schemas/plot.py` - Spring Boot í¸í êµ¬ì¡°ë¡ ì¬ìì±
+- `app/schemas/consistency.py` - `ResolutionSummary`, `Neo4jValidation` ì¶ê°
+- `app/schemas/validation.py` - ì ê· ìì±
+- `app/schemas/callback.py` - `FullAnalysisResult` ìë°ì´í¸
 
-### ✅ 결과
-| 항목 | 전 | 후 |
+### â ê²°ê³¼
+| í­ëª© | ì  | í |
 |------|---|---|
-| JSON 파싱 에러 | 간헐적 발생 | 발생 없음 |
-| Markdown 블록 제거 | 필요 | 불필요 |
-| 타입 검증 | 없음 | Pydantic 자동 검증 |
-| 필수 필드 누락 | 발생 가능 | 스키마에서 강제 |
+| JSON íì± ìë¬ | ê°íì  ë°ì | ë°ì ìì |
+| Markdown ë¸ë¡ ì ê±° | íì | ë¶íì |
+| íì ê²ì¦ | ìì | Pydantic ìë ê²ì¦ |
+| íì íë ëë½ | ë°ì ê°ë¥ | ì¤í¤ë§ìì ê°ì  |
 
 ---
 
-## 11. Job 상태 업데이트 API 연동
+## 11. Job ìí ìë°ì´í¸ API ì°ë
 
-### 📅 날짜
+### ð ë ì§
 2025-12-29
 
-### 🔴 문제 (Problem)
-사용자에게 분석 작업의 세밀한 진행 상태를 제공할 수 없었음. 기존에는 PENDING → COMPLETED/FAILED만 표시.
+### ð´ ë¬¸ì  (Problem)
+ì¬ì©ììê² ë¶ì ììì ì¸ë°í ì§í ìíë¥¼ ì ê³µí  ì ììì. ê¸°ì¡´ìë PENDING â COMPLETED/FAILEDë§ íì.
 
-### 🟡 원인 분석 (Root Cause)
-FastAPI에서 Spring Boot로 중간 상태를 업데이트하는 API가 없었음.
+### ð¡ ìì¸ ë¶ì (Root Cause)
+FastAPIìì Spring Bootë¡ ì¤ê° ìíë¥¼ ìë°ì´í¸íë APIê° ììì.
 
-### 🟢 해결책 (Solution)
+### ð¢ í´ê²°ì± (Solution)
 
-#### 1. Spring Boot 팀에서 제공한 API 스펙
+#### 1. Spring Boot íìì ì ê³µí API ì¤í
 ```http
 POST /api/internal/ai/jobs/{jobId}/status
 Content-Type: application/json
 
 {
   "status": "ANALYZING",
-  "message": "Character Agent 실행 중"
+  "message": "Character Agent ì¤í ì¤"
 }
 ```
 
-#### 2. CallbackClient에 `update_job_status()` 메서드 추가
+#### 2. CallbackClientì `update_job_status()` ë©ìë ì¶ê°
 ```python
 async def update_job_status(
     self,
@@ -1024,92 +1025,92 @@ async def update_job_status(
     payload = {"status": status}
     if message:
         payload["message"] = message
-    # ... HTTP POST 요청
+    # ... HTTP POST ìì²­
 ```
 
-#### 3. AnalysisService에 상태 업데이트 통합
-| 시점 | 상태 | 메시지 |
+#### 3. AnalysisServiceì ìí ìë°ì´í¸ íµí©
+| ìì  | ìí | ë©ìì§ |
 |------|------|--------|
-| 파이프라인 시작 시 | `ANALYZING` | "Starting multi-agent pipeline" |
-| Validator 시작 시 | `VALIDATING` | "Running validation and quality checks" |
-| 예외 발생 시 | `FAILED` | 에러 메시지 (200자 제한) |
+| íì´íë¼ì¸ ìì ì | `ANALYZING` | "Starting multi-agent pipeline" |
+| Validator ìì ì | `VALIDATING` | "Running validation and quality checks" |
+| ìì¸ ë°ì ì | `FAILED` | ìë¬ ë©ìì§ (200ì ì í) |
 
-### 📁 수정된 파일
-- `app/services/callback_client.py` - `update_job_status()` 메서드 추가
-- `app/services/analysis_service.py` - 상태 업데이트 호출 통합
+### ð ìì ë íì¼
+- `app/services/callback_client.py` - `update_job_status()` ë©ìë ì¶ê°
+- `app/services/analysis_service.py` - ìí ìë°ì´í¸ í¸ì¶ íµí©
 
-### ✅ 결과
+### â ê²°ê³¼
 ```
-PENDING → PROCESSING → ANALYZING → VALIDATING → COMPLETED
-                                            ↘ FAILED
+PENDING â PROCESSING â ANALYZING â VALIDATING â COMPLETED
+                                            â FAILED
 ```
 
-사용자에게 더 세밀한 진행 상태 제공 가능.
+ì¬ì©ììê² ë ì¸ë°í ì§í ìí ì ê³µ ê°ë¥.
 
 ---
 
-## 12. Character Agent - FullCharacter 스키마 확장
+## 12. Character Agent - FullCharacter ì¤í¤ë§ íì¥
 
-### 📅 날짜
+### ð ë ì§
 2025-12-29
 
-### 🔴 문제 (Problem)
+### ð´ ë¬¸ì  (Problem)
 
-#### 문제 1: 기존 스키마 필드 부족
-- 기존 `CharacterExtraction` 스키마가 기본 정보만 포함 (name, role, visual, personality)
-- 게임/롤플레이에 필요한 상세 필드 부족 (age, race, faction, mbti, dialogue tone 등)
+#### ë¬¸ì  1: ê¸°ì¡´ ì¤í¤ë§ íë ë¶ì¡±
+- ê¸°ì¡´ `CharacterExtraction` ì¤í¤ë§ê° ê¸°ë³¸ ì ë³´ë§ í¬í¨ (name, role, visual, personality)
+- ê²ì/ë¡¤íë ì´ì íìí ìì¸ íë ë¶ì¡± (age, race, faction, mbti, dialogue tone ë±)
 
-#### 문제 2: RelationshipType Enum 오류
-LLM이 `FORMER_ALLY`를 출력했으나 Enum에 정의되지 않음:
+#### ë¬¸ì  2: RelationshipType Enum ì¤ë¥
+LLMì´ `FORMER_ALLY`ë¥¼ ì¶ë ¥íì¼ë Enumì ì ìëì§ ìì:
 ```
 Input should be 'FRIEND', 'ENEMY', ... or 'UNKNOWN'
 input_value='FORMER_ALLY'
 ```
 
-#### 문제 3: LLM이 List 필드에 null 반환
-LLM이 `null`을 반환하면 Pydantic `default_factory=list`가 무시되어 검증 오류 발생:
+#### ë¬¸ì  3: LLMì´ List íëì null ë°í
+LLMì´ `null`ì ë°ííë©´ Pydantic `default_factory=list`ê° ë¬´ìëì´ ê²ì¦ ì¤ë¥ ë°ì:
 ```
 Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
 ```
-영향받은 필드: `personality.flaws`, `personality.values`, `dialogue.catchphrases`, `relations.known_events` 등
+ìí¥ë°ì íë: `personality.flaws`, `personality.values`, `dialogue.catchphrases`, `relations.known_events` ë±
 
-#### 문제 4: CurrentMood 필수 필드 오류
-`CurrentMood.emotion`이 필수 필드(`str = Field(...)`)로 정의되어 LLM이 null 반환 시 오류:
+#### ë¬¸ì  4: CurrentMood íì íë ì¤ë¥
+`CurrentMood.emotion`ì´ íì íë(`str = Field(...)`)ë¡ ì ìëì´ LLMì´ null ë°í ì ì¤ë¥:
 ```
 Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
 ```
 
-### 🟡 원인 분석 (Root Cause)
-1. 초기 스키마가 기본 스토리 분석만 고려
-2. `RelationshipType` Enum에 `FORMER_ALLY`, `FORMER_ENEMY` 누락
-3. Pydantic v2에서 `default_factory`는 필드가 **없을 때**만 적용, LLM이 **null을 명시적으로 반환**하면 무시됨
-4. `CurrentMood` 필드가 Optional이 아닌 필수로 정의됨
+### ð¡ ìì¸ ë¶ì (Root Cause)
+1. ì´ê¸° ì¤í¤ë§ê° ê¸°ë³¸ ì¤í ë¦¬ ë¶ìë§ ê³ ë ¤
+2. `RelationshipType` Enumì `FORMER_ALLY`, `FORMER_ENEMY` ëë½
+3. Pydantic v2ìì `default_factory`ë íëê° **ìì ë**ë§ ì ì©, LLMì´ **nullì ëªìì ì¼ë¡ ë°í**íë©´ ë¬´ìë¨
+4. `CurrentMood` íëê° Optionalì´ ìë íìë¡ ì ìë¨
 
-### 🟢 해결책 (Solution)
+### ð¢ í´ê²°ì± (Solution)
 
-#### 1. 포괄적 스키마 생성 (`character_full.py`)
-| 클래스 | 용도 |
+#### 1. í¬ê´ì  ì¤í¤ë§ ìì± (`character_full.py`)
+| í´ëì¤ | ì©ë |
 |--------|------|
-| `CharacterProfile` | 기본 정보 (name, age, gender, race, faction, mbti, backstory) |
-| `CharacterAppearance` | 외형 정보 (physique, hair_color, attire, scars_tattoos) |
-| `CharacterStats` | 능력치 (str, dex, int, level, skills) |
-| `DialogueConfig` | AI 대화 설정 (tone, catchphrases, forbidden_topics) |
-| `CombatConfig` | 전투 설정 (elemental_resist, attack_range) |
-| **`FullCharacter`** | 위 모든 클래스를 통합한 완전한 캐릭터 모델 |
+| `CharacterProfile` | ê¸°ë³¸ ì ë³´ (name, age, gender, race, faction, mbti, backstory) |
+| `CharacterAppearance` | ì¸í ì ë³´ (physique, hair_color, attire, scars_tattoos) |
+| `CharacterStats` | ë¥ë ¥ì¹ (str, dex, int, level, skills) |
+| `DialogueConfig` | AI ëí ì¤ì  (tone, catchphrases, forbidden_topics) |
+| `CombatConfig` | ì í¬ ì¤ì  (elemental_resist, attack_range) |
+| **`FullCharacter`** | ì ëª¨ë  í´ëì¤ë¥¼ íµí©í ìì í ìºë¦­í° ëª¨ë¸ |
 
-#### 2. RelationshipType Enum 확장
+#### 2. RelationshipType Enum íì¥
 ```python
 class RelationshipType(str, Enum):
     FRIEND = "FRIEND"
     ENEMY = "ENEMY"
-    # ... 기존 값들 ...
-    FORMER_ALLY = "FORMER_ALLY"   # 추가
-    FORMER_ENEMY = "FORMER_ENEMY" # 추가
-    NEUTRAL = "NEUTRAL"           # 추가
+    # ... ê¸°ì¡´ ê°ë¤ ...
+    FORMER_ALLY = "FORMER_ALLY"   # ì¶ê°
+    FORMER_ENEMY = "FORMER_ENEMY" # ì¶ê°
+    NEUTRAL = "NEUTRAL"           # ì¶ê°
     UNKNOWN = "UNKNOWN"
 ```
 
-#### 3. field_validator로 null→빈 리스트 변환
+#### 3. field_validatorë¡ nullâë¹ ë¦¬ì¤í¸ ë³í
 ```python
 from pydantic import field_validator
 
@@ -1126,59 +1127,59 @@ class DialogueConfig(BaseModel):
         return none_to_list(v)
 ```
 
-#### 4. CurrentMood 필수 필드 → Optional 변경
+#### 4. CurrentMood íì íë â Optional ë³ê²½
 ```python
-# Before (오류 발생)
+# Before (ì¤ë¥ ë°ì)
 emotion: str = Field(..., description="Primary emotion")
 
-# After (null 허용)
+# After (null íì©)
 emotion: Optional[str] = Field(None, description="Primary emotion")
 intensity: Optional[int] = Field(5, ge=1, le=10)
 ```
 
-### 📁 수정된 파일
-- `app/schemas/character_full.py` - 11개 서브 클래스 + field_validator 추가
-- `app/schemas/characters.py` - RelationshipType 확장, field_validator 추가, CurrentMood Optional 변경
-- `app/agents/extraction/character.py` - 프롬프트 확장, FullCharacterExtractionResult 적용
+### ð ìì ë íì¼
+- `app/schemas/character_full.py` - 11ê° ìë¸ í´ëì¤ + field_validator ì¶ê°
+- `app/schemas/characters.py` - RelationshipType íì¥, field_validator ì¶ê°, CurrentMood Optional ë³ê²½
+- `app/agents/extraction/character.py` - íë¡¬íí¸ íì¥, FullCharacterExtractionResult ì ì©
 
-### ✅ 결과
-**새 출력 형식**:
+### â ê²°ê³¼
+**ì ì¶ë ¥ íì**:
 ```json
 {
-  "profile": { "name": "아린", "age": 25, "gender": "female" },
+  "profile": { "name": "ìë¦°", "age": 25, "gender": "female" },
   "role": "protagonist",
   "appearance": { "physique": "athletic", "hair_color": "black" },
   "personality": { "core_traits": ["brave"], "flaws": [], "values": [] },
   "dialogue": { "tone": "formal", "catchphrases": [] },
-  "relations": { "relations": [{ "target": "카엘", "type": "FORMER_ALLY" }] }
+  "relations": { "relations": [{ "target": "ì¹´ì", "type": "FORMER_ALLY" }] }
 }
 ```
 
-**검증 오류 해결**:
-- ✅ `FORMER_ALLY` → RelationshipType Enum에 추가됨
-- ✅ `null` → 빈 리스트 `[]`로 자동 변환됨
-- ✅ `CurrentMood.emotion = null` → 허용됨
+**ê²ì¦ ì¤ë¥ í´ê²°**:
+- â `FORMER_ALLY` â RelationshipType Enumì ì¶ê°ë¨
+- â `null` â ë¹ ë¦¬ì¤í¸ `[]`ë¡ ìë ë³íë¨
+- â `CurrentMood.emotion = null` â íì©ë¨
 
-### 💡 향후 개선 사항
-1. **Spring Boot 스키마 동기화**: `FullCharacter` 스키마를 Spring Boot DTO와 일치시키기
-2. **게임 전용 필드 분리**: 소설 분석 시 `stats`, `combat` 섹션 비활성화 옵션
+### ð¡ í¥í ê°ì  ì¬í­
+1. **Spring Boot ì¤í¤ë§ ëê¸°í**: `FullCharacter` ì¤í¤ë§ë¥¼ Spring Boot DTOì ì¼ì¹ìí¤ê¸°
+2. **ê²ì ì ì© íë ë¶ë¦¬**: ìì¤ ë¶ì ì `stats`, `combat` ì¹ì ë¹íì±í ìµì
 
 ---
 
-## 13. Multi-Agent - FullCharacter 스키마 호환성 문제
+## 13. Multi-Agent - FullCharacter ì¤í¤ë§ í¸íì± ë¬¸ì 
 
-### 📅 날짜
+### ð ë ì§
 2025-12-29
 
-### 🔴 문제 (Problem)
-FullCharacter 스키마 적용 후 Dialogue, Emotion, Relationship 등 다른 Agent에서 JSON 파싱 오류 발생:
+### ð´ ë¬¸ì  (Problem)
+FullCharacter ì¤í¤ë§ ì ì© í Dialogue, Emotion, Relationship ë± ë¤ë¥¸ Agentìì JSON íì± ì¤ë¥ ë°ì:
 ```
 Dialogue JSON parse error: Expecting value: line 1 column 1 (char 0)
 Emotion JSON parse error: Expecting value: line 1 column 1 (char 0)
 Relationship JSON parse error: Expecting value: line 1 column 1 (char 0)
 ```
 
-또한 캐릭터 이름이 추출되지 않음:
+ëí ìºë¦­í° ì´ë¦ì´ ì¶ì¶ëì§ ìì:
 ```json
 {
   "profile": { "name": null, "age": null },
@@ -1186,22 +1187,22 @@ Relationship JSON parse error: Expecting value: line 1 column 1 (char 0)
 }
 ```
 
-### 🟡 원인 분석 (Root Cause)
-1. **스키마 경로 변경**: FullCharacter에서 캐릭터 이름이 `profile.name`에 저장됨
-2. **기존 Agent 코드 비호환**: 다른 Agent들이 `c.get("name")`으로 접근하여 `None` 반환
-3. **빈 캐릭터 리스트 전달**: `available_characters = []`가 LLM에 전달되어 부적절한 응답 생성
+### ð¡ ìì¸ ë¶ì (Root Cause)
+1. **ì¤í¤ë§ ê²½ë¡ ë³ê²½**: FullCharacterìì ìºë¦­í° ì´ë¦ì´ `profile.name`ì ì ì¥ë¨
+2. **ê¸°ì¡´ Agent ì½ë ë¹í¸í**: ë¤ë¥¸ Agentë¤ì´ `c.get("name")`ì¼ë¡ ì ê·¼íì¬ `None` ë°í
+3. **ë¹ ìºë¦­í° ë¦¬ì¤í¸ ì ë¬**: `available_characters = []`ê° LLMì ì ë¬ëì´ ë¶ì ì í ìëµ ìì±
 
 ```python
-# 기존 코드 (비호환)
+# ê¸°ì¡´ ì½ë (ë¹í¸í)
 available_characters = [c.get("name", "") for c in characters if c.get("name")]
-# → FullCharacter에서는 profile.name이므로 빈 리스트 반환
+# â FullCharacterììë profile.nameì´ë¯ë¡ ë¹ ë¦¬ì¤í¸ ë°í
 ```
 
-### 🟢 해결책 (Solution)
-모든 Agent에서 legacy 스키마와 FullCharacter 스키마 모두 지원하도록 수정:
+### ð¢ í´ê²°ì± (Solution)
+ëª¨ë  Agentìì legacy ì¤í¤ë§ì FullCharacter ì¤í¤ë§ ëª¨ë ì§ìíëë¡ ìì :
 
 ```python
-# 수정된 코드 (호환)
+# ìì ë ì½ë (í¸í)
 available_characters = []
 for c in characters:
     name = c.get("name") or (c.get("profile", {}) or {}).get("name")
@@ -1209,8 +1210,8 @@ for c in characters:
         available_characters.append(name)
 ```
 
-### 📁 수정된 파일
-| 파일 | 수정 위치 |
+### ð ìì ë íì¼
+| íì¼ | ìì  ìì¹ |
 |------|----------|
 | `app/agents/extraction/dialogue.py` | Line 142-150 |
 | `app/agents/extraction/emotion.py` | Line 111-120 |
@@ -1220,41 +1221,41 @@ for c in characters:
 | `app/agents/analysis/consistency.py` | Line 82-88, 147-157 |
 | `app/agents/validation/validator.py` | Line 120-130 |
 
-### ✅ 결과
-- ✅ 모든 Agent에서 `profile.name` 경로 지원
-- ✅ Dialogue/Emotion/Relationship Agent 정상 동작
-- ✅ JSON 파싱 오류 해결
-- ✅ 기존 legacy 스키마도 하위 호환 유지
+### â ê²°ê³¼
+- â ëª¨ë  Agentìì `profile.name` ê²½ë¡ ì§ì
+- â Dialogue/Emotion/Relationship Agent ì ì ëì
+- â JSON íì± ì¤ë¥ í´ê²°
+- â ê¸°ì¡´ legacy ì¤í¤ë§ë íì í¸í ì ì§
 
 ---
 
 
-## 14. Multi-Agent - JSON 파싱 오류 및 AWS Throttling
+## 14. Multi-Agent - JSON íì± ì¤ë¥ ë° AWS Throttling
 
-### 📅 날짜
+### ð ë ì§
 2025-12-29
 
-### 🔴 문제 (Problem)
-1. **ThrottlingException**: AWS Bedrock API 요청 제한 초과
+### ð´ ë¬¸ì  (Problem)
+1. **ThrottlingException**: AWS Bedrock API ìì²­ ì í ì´ê³¼
 ```
 ThrottlingException: Too many requests, please wait before trying again.
 ```
 
-2. **JSON 파싱 오류**: Dialogue, Emotion, Relationship Agent에서 빈 응답 파싱 실패
+2. **JSON íì± ì¤ë¥**: Dialogue, Emotion, Relationship Agentìì ë¹ ìëµ íì± ì¤í¨
 ```
 Dialogue JSON parse error: Expecting value: line 1 column 1 (char 0)
 Emotion JSON parse error: Expecting value: line 1 column 1 (char 0)
 Relationship JSON parse error: Expecting value: line 1 column 1 (char 0)
 ```
 
-### 🟡 원인 분석 (Root Cause)
-1. **Throttling**: 병렬로 다수의 LLM 호출 → API 요청 제한 초과
-2. **빈 응답**: 캐릭터가 없거나 텍스트에 대화/감정/관계가 없을 때 LLM이 빈 응답 반환
-3. **파이프라인 중단**: JSON 파싱 오류가 에러로 전파되어 전체 파이프라인에 영향
+### ð¡ ìì¸ ë¶ì (Root Cause)
+1. **Throttling**: ë³ë ¬ë¡ ë¤ìì LLM í¸ì¶ â API ìì²­ ì í ì´ê³¼
+2. **ë¹ ìëµ**: ìºë¦­í°ê° ìê±°ë íì¤í¸ì ëí/ê°ì /ê´ê³ê° ìì ë LLMì´ ë¹ ìëµ ë°í
+3. **íì´íë¼ì¸ ì¤ë¨**: JSON íì± ì¤ë¥ê° ìë¬ë¡ ì íëì´ ì ì²´ íì´íë¼ì¸ì ìí¥
 
-### 🟢 해결책 (Solution)
+### ð¢ í´ê²°ì± (Solution)
 
-#### 1. 빈 캐릭터 리스트 체크 추가
+#### 1. ë¹ ìºë¦­í° ë¦¬ì¤í¸ ì²´í¬ ì¶ê°
 ```python
 if not available_characters:
     print("[DIALOGUE] No characters available, returning empty result")
@@ -1269,7 +1270,7 @@ if not available_characters:
     }
 ```
 
-#### 2. 빈 LLM 응답 처리
+#### 2. ë¹ LLM ìëµ ì²ë¦¬
 ```python
 content = response.content.strip()
 if not content:
@@ -1277,7 +1278,7 @@ if not content:
     return {"analyzed_dialogues": {...}, ...}
 ```
 
-#### 3. JSON 오류 시 빈 결과 반환 (파이프라인 중단 방지)
+#### 3. JSON ì¤ë¥ ì ë¹ ê²°ê³¼ ë°í (íì´íë¼ì¸ ì¤ë¨ ë°©ì§)
 ```python
 except json.JSONDecodeError as e:
     print(f"[DIALOGUE] JSON parse error: {e}")
@@ -1291,7 +1292,7 @@ except json.JSONDecodeError as e:
     }
 ```
 
-#### 4. 지수 백오프 재시도 함수 (llm.py)
+#### 4. ì§ì ë°±ì¤í ì¬ìë í¨ì (llm.py)
 ```python
 async def retry_with_backoff(func, *args, **kwargs):
     for attempt in range(MAX_RETRIES):
@@ -1305,61 +1306,61 @@ async def retry_with_backoff(func, *args, **kwargs):
                 raise e
 ```
 
-### 📁 수정된 파일
-| 파일 | 수정 내용 |
+### ð ìì ë íì¼
+| íì¼ | ìì  ë´ì© |
 |------|----------|
-| `app/agents/llm.py` | `retry_with_backoff` 함수 추가 |
-| `app/agents/extraction/dialogue.py` | 빈 데이터/JSON 오류 처리 |
-| `app/agents/extraction/emotion.py` | 빈 데이터/JSON 오류 처리 |
-| `app/agents/analysis/relationship.py` | 빈 데이터/JSON 오류 처리, 캐릭터 2명 미만 스킵 |
+| `app/agents/llm.py` | `retry_with_backoff` í¨ì ì¶ê° |
+| `app/agents/extraction/dialogue.py` | ë¹ ë°ì´í°/JSON ì¤ë¥ ì²ë¦¬ |
+| `app/agents/extraction/emotion.py` | ë¹ ë°ì´í°/JSON ì¤ë¥ ì²ë¦¬ |
+| `app/agents/analysis/relationship.py` | ë¹ ë°ì´í°/JSON ì¤ë¥ ì²ë¦¬, ìºë¦­í° 2ëª ë¯¸ë§ ì¤íµ |
 
-### ✅ 결과
-- ✅ 빈 캐릭터 리스트 시 LLM 호출 없이 빈 결과 반환
-- ✅ 빈 LLM 응답 시 JSON 파싱 시도 안함
-- ✅ JSON 오류가 에러가 아닌 빈 결과로 처리 → 파이프라인 계속 진행
-- ✅ ThrottlingException 시 지수 백오프 재시도 가능
+### â ê²°ê³¼
+- â ë¹ ìºë¦­í° ë¦¬ì¤í¸ ì LLM í¸ì¶ ìì´ ë¹ ê²°ê³¼ ë°í
+- â ë¹ LLM ìëµ ì JSON íì± ìë ìí¨
+- â JSON ì¤ë¥ê° ìë¬ê° ìë ë¹ ê²°ê³¼ë¡ ì²ë¦¬ â íì´íë¼ì¸ ê³ì ì§í
+- â ThrottlingException ì ì§ì ë°±ì¤í ì¬ìë ê°ë¥
 
 ---
 
 
-## 15. Character Agent - Hierarchical Multi-Agent System 리팩토링
+## 15. Character Agent - Hierarchical Multi-Agent System ë¦¬í©í ë§
 
-### 📅 날짜
+### ð ë ì§
 2025-12-29
 
-### 🔴 문제 (Problem)
+### ð´ ë¬¸ì  (Problem)
 
-1. **단일 에이전트 과부하**: 기존 `character.py`가 `FullCharacter` 스키마의 13개 컴포넌트(~87개 필드)를 한 번에 추출
-2. **성격 vs 감정 혼동**: 일시적 감정(`두려움`)이 영구적 성격 결함(`flaws`)으로 분류됨
-3. **언어 불일치**: 한국어 입력에서 영어 번역 출력 (`암흑회` → `Dark Order`)
-4. **Validator 경로 오류**: `profile.name` 대신 최상위 `name`을 찾아 VAL_003 오류 발생
-5. **비대칭 관계 미지원**: 배신 관계에서 양방향 모두 같은 유형으로 추출
+1. **ë¨ì¼ ìì´ì í¸ ê³¼ë¶í**: ê¸°ì¡´ `character.py`ê° `FullCharacter` ì¤í¤ë§ì 13ê° ì»´í¬ëí¸(~87ê° íë)ë¥¼ í ë²ì ì¶ì¶
+2. **ì±ê²© vs ê°ì  í¼ë**: ì¼ìì  ê°ì (`ëë ¤ì`)ì´ ìêµ¬ì  ì±ê²© ê²°í¨(`flaws`)ì¼ë¡ ë¶ë¥ë¨
+3. **ì¸ì´ ë¶ì¼ì¹**: íêµ­ì´ ìë ¥ìì ìì´ ë²ì­ ì¶ë ¥ (`ìíí` â `Dark Order`)
+4. **Validator ê²½ë¡ ì¤ë¥**: `profile.name` ëì  ìµìì `name`ì ì°¾ì VAL_003 ì¤ë¥ ë°ì
+5. **ë¹ëì¹­ ê´ê³ ë¯¸ì§ì**: ë°°ì  ê´ê³ìì ìë°©í¥ ëª¨ë ê°ì ì íì¼ë¡ ì¶ì¶
 
-**complex.json 예시**:
+**complex.json ìì**:
 ```json
 {
-  "status": "WARNING",  // COMPLETED이어야 함
+  "status": "WARNING",  // COMPLETEDì´ì´ì¼ í¨
   "extracted_characters": [{
     "personality": {
-      "flaws": ["두려움"]  // 이것은 current_mood.emotion이어야 함
+      "flaws": ["ëë ¤ì"]  // ì´ê²ì current_mood.emotionì´ì´ì¼ í¨
     },
     "profile": {
-      "faction": "Dark Order"  // "암흑회"이어야 함
+      "faction": "Dark Order"  // "ìíí"ì´ì´ì¼ í¨
     }
   }]
 }
 ```
 
-### 🟡 원인 분석 (Root Cause)
+### ð¡ ìì¸ ë¶ì (Root Cause)
 
-1. **LLM 컨텍스트 한계**: 87개 필드를 단일 호출로 추출 → 정확도 저하
-2. **프롬프트 불명확**: 성격(영구) vs 감정(일시) 구분 지시 없음
-3. **언어 지시 누락**: 출력 언어 규칙이 프롬프트에 없음
-4. **Validator 로직 버그**: 중첩 필드 경로(`profile.name`)를 지원하지 않음
+1. **LLM ì»¨íì¤í¸ íê³**: 87ê° íëë¥¼ ë¨ì¼ í¸ì¶ë¡ ì¶ì¶ â ì íë ì í
+2. **íë¡¬íí¸ ë¶ëªí**: ì±ê²©(ìêµ¬) vs ê°ì (ì¼ì) êµ¬ë¶ ì§ì ìì
+3. **ì¸ì´ ì§ì ëë½**: ì¶ë ¥ ì¸ì´ ê·ì¹ì´ íë¡¬íí¸ì ìì
+4. **Validator ë¡ì§ ë²ê·¸**: ì¤ì²© íë ê²½ë¡(`profile.name`)ë¥¼ ì§ìíì§ ìì
 
-### 🟢 해결책 (Solution)
+### ð¢ í´ê²°ì± (Solution)
 
-#### 1. Hierarchical Multi-Agent System 아키텍처
+#### 1. Hierarchical Multi-Agent System ìí¤íì²
 
 ```mermaid
 flowchart TB
@@ -1388,62 +1389,62 @@ flowchart TB
     AGG --> CT
 ```
 
-**핵심 개념**:
-- Main Supervisor 입장에서 Character Team은 **하나의 에이전트**처럼 보임 (캡슐화)
-- 내부적으로 Character Supervisor가 6개 서브 에이전트를 관리
+**íµì¬ ê°ë**:
+- Main Supervisor ìì¥ìì Character Teamì **íëì ìì´ì í¸**ì²ë¼ ë³´ì (ìº¡ìí)
+- ë´ë¶ì ì¼ë¡ Character Supervisorê° 6ê° ìë¸ ìì´ì í¸ë¥¼ ê´ë¦¬
 
-#### 2. 서브 에이전트 역할 분리
+#### 2. ìë¸ ìì´ì í¸ ì­í  ë¶ë¦¬
 
-| 에이전트 | 책임 | 주요 필드 |
+| ìì´ì í¸ | ì±ì | ì£¼ì íë |
 |----------|------|-----------|
-| **Identity** | 기본 정보 | name, age, role, faction, backstory |
-| **Appearance** | 외형 (이미지 생성용) | hair, physique, attire, scars |
-| **Personality** | 영구 성격 특성 | core_traits, flaws, values |
-| **Relations** | 캐릭터 간 관계 | relationships, known_events |
-| **Dialogue/Mood** | 대화 스타일 + 일시 감정 | tone, catchphrases, current_mood |
-| **Stats** | 게임 데이터 (optional) | level, HP, skills |
+| **Identity** | ê¸°ë³¸ ì ë³´ | name, age, role, faction, backstory |
+| **Appearance** | ì¸í (ì´ë¯¸ì§ ìì±ì©) | hair, physique, attire, scars |
+| **Personality** | ìêµ¬ ì±ê²© í¹ì± | core_traits, flaws, values |
+| **Relations** | ìºë¦­í° ê° ê´ê³ | relationships, known_events |
+| **Dialogue/Mood** | ëí ì¤íì¼ + ì¼ì ê°ì  | tone, catchphrases, current_mood |
+| **Stats** | ê²ì ë°ì´í° (optional) | level, HP, skills |
 
-#### 3. 성격 vs 감정 분리 (Personality Agent)
+#### 3. ì±ê²© vs ê°ì  ë¶ë¦¬ (Personality Agent)
 
 ```python
 PERSONALITY_EXTRACTION_PROMPT = """
 ### CRITICAL DISTINCTION ###
-✅ core_traits (PERSISTENT): brave, cunning, loyal
-✅ flaws (PERSISTENT): impulsive, arrogant, vengeful
-❌ NOT personality: fearful (in scary moment), anxious (before battle)
+â core_traits (PERSISTENT): brave, cunning, loyal
+â flaws (PERSISTENT): impulsive, arrogant, vengeful
+â NOT personality: fearful (in scary moment), anxious (before battle)
 
-Example: "단호했지만 약간의 두려움이 섞여 있었다"
-- core_traits: ["단호함"] ✅
-- flaws: [] (두려움 is situational, NOT a flaw)
+Example: "ë¨í¸íì§ë§ ì½ê°ì ëë ¤ìì´ ìì¬ ììë¤"
+- core_traits: ["ë¨í¸í¨"] â
+- flaws: [] (ëë ¤ì is situational, NOT a flaw)
 """
 ```
 
-#### 4. 언어 일관성 (모든 서브 에이전트)
+#### 4. ì¸ì´ ì¼ê´ì± (ëª¨ë  ìë¸ ìì´ì í¸)
 
 ```python
 ### LANGUAGE CONSISTENCY RULE ###
 Output ALL text in the SAME language as the input.
 If the story is in Korean, all values must be in Korean.
-Do NOT translate (e.g., "암흑회" not "Dark Order").
+Do NOT translate (e.g., "ìíí" not "Dark Order").
 ```
 
-#### 5. 비대칭 관계 지원 (Relations Agent)
+#### 5. ë¹ëì¹­ ê´ê³ ì§ì (Relations Agent)
 
 ```python
 ### RELATIONSHIP ASYMMETRY ###
 If A betrayed B:
-- A → B: type="BETRAYER"
-- B → A: type="FORMER_ALLY"
+- A â B: type="BETRAYER"
+- B â A: type="FORMER_ALLY"
 Create SEPARATE entries for each direction.
 ```
 
-#### 6. Validator 중첩 경로 수정
+#### 6. Validator ì¤ì²© ê²½ë¡ ìì 
 
 ```python
-# validator.py - 변경 전
+# validator.py - ë³ê²½ ì 
 "required_fields": ["name", "role"]
 
-# validator.py - 변경 후
+# validator.py - ë³ê²½ í
 "required_fields": ["profile.name", "role"],
 "nested_paths": True
 
@@ -1456,75 +1457,75 @@ def get_nested_value(data: dict, path: str):
     return value
 ```
 
-#### 7. 폴백 전략 (Team Entry Point)
+#### 7. í´ë°± ì ëµ (Team Entry Point)
 
 ```python
 async def character_team_node(state: dict) -> dict:
     try:
-        # Hierarchical 시스템 실행
+        # Hierarchical ìì¤í ì¤í
         result = await character_team_graph.ainvoke(team_state)
         return result
     except Exception as e:
-        # 실패 시 레거시 단일 에이전트로 폴백
+        # ì¤í¨ ì ë ê±°ì ë¨ì¼ ìì´ì í¸ë¡ í´ë°±
         print(f"[CHARACTER_TEAM] Fallback to legacy: {e}")
         return await legacy_character_extraction(state)
 ```
 
-### 📁 수정된 파일
+### ð ìì ë íì¼
 
-#### 신규 파일 (11개)
-| 파일 | 설명 |
+#### ì ê· íì¼ (11ê°)
+| íì¼ | ì¤ëª |
 |------|------|
-| `app/agents/extraction/character/__init__.py` | 패키지 초기화 |
-| `app/agents/extraction/character/state.py` | CharacterTeamState 정의 |
+| `app/agents/extraction/character/__init__.py` | í¨í¤ì§ ì´ê¸°í |
+| `app/agents/extraction/character/state.py` | CharacterTeamState ì ì |
 | `app/agents/extraction/character/identity.py` | Identity Agent |
 | `app/agents/extraction/character/appearance.py` | Appearance Agent |
 | `app/agents/extraction/character/personality.py` | Personality Agent |
 | `app/agents/extraction/character/relations.py` | Relations Agent |
 | `app/agents/extraction/character/dialogue_mood.py` | Dialogue/Mood Agent |
 | `app/agents/extraction/character/stats.py` | Stats Agent |
-| `app/agents/extraction/character/aggregator.py` | 결과 병합 |
-| `app/agents/extraction/character/supervisor.py` | 내부 라우팅 |
-| `app/agents/extraction/character/team.py` | 진입점 + 폴백 |
+| `app/agents/extraction/character/aggregator.py` | ê²°ê³¼ ë³í© |
+| `app/agents/extraction/character/supervisor.py` | ë´ë¶ ë¼ì°í |
+| `app/agents/extraction/character/team.py` | ì§ìì  + í´ë°± |
 
-#### 수정된 파일
-| 파일 | 수정 내용 |
+#### ìì ë íì¼
+| íì¼ | ìì  ë´ì© |
 |------|----------|
-| `app/agents/graph.py` | `character_team_node` import로 변경 |
-| `app/agents/validation/validator.py` | 중첩 경로 검증 (`profile.name`) |
-| `app/agents/extraction/character.py` → `character_legacy.py` | 폴백용으로 이름 변경 |
+| `app/agents/graph.py` | `character_team_node` importë¡ ë³ê²½ |
+| `app/agents/validation/validator.py` | ì¤ì²© ê²½ë¡ ê²ì¦ (`profile.name`) |
+| `app/agents/extraction/character.py` â `character_legacy.py` | í´ë°±ì©ì¼ë¡ ì´ë¦ ë³ê²½ |
 
-#### 테스트 파일
-| 파일 | 설명 |
+#### íì¤í¸ íì¼
+| íì¼ | ì¤ëª |
 |------|------|
-| `tests/test_agents/test_character_team.ipynb` | 개별 에이전트 + 통합 테스트 |
+| `tests/test_agents/test_character_team.ipynb` | ê°ë³ ìì´ì í¸ + íµí© íì¤í¸ |
 
-### ✅ 결과
+### â ê²°ê³¼
 
-1. **성능 향상**: 87개 필드 → 6개 에이전트로 분산 (각 ~15개 필드)
-2. **정확도 향상**: 
-   - `두려움`이 `current_mood.emotion`에 올바르게 추출
-   - `암흑회`가 한국어로 유지
-   - 비대칭 관계 (BETRAYER/FORMER_ALLY) 지원
-3. **Validator 오류 해결**: `profile.name` 중첩 경로 검증 성공
-4. **안정성**: 폴백 전략으로 실패 시에도 결과 반환
+1. **ì±ë¥ í¥ì**: 87ê° íë â 6ê° ìì´ì í¸ë¡ ë¶ì° (ê° ~15ê° íë)
+2. **ì íë í¥ì**: 
+   - `ëë ¤ì`ì´ `current_mood.emotion`ì ì¬ë°ë¥´ê² ì¶ì¶
+   - `ìíí`ê° íêµ­ì´ë¡ ì ì§
+   - ë¹ëì¹­ ê´ê³ (BETRAYER/FORMER_ALLY) ì§ì
+3. **Validator ì¤ë¥ í´ê²°**: `profile.name` ì¤ì²© ê²½ë¡ ê²ì¦ ì±ê³µ
+4. **ìì ì±**: í´ë°± ì ëµì¼ë¡ ì¤í¨ ììë ê²°ê³¼ ë°í
 
-### 💡 향후 개선 사항
+### ð¡ í¥í ê°ì  ì¬í­
 
-1. **병렬 실행**: 현재 순차 실행 → asyncio.gather로 6개 에이전트 동시 실행
-2. **캐싱**: 동일 텍스트에 대한 서브 에이전트 결과 캐싱
-3. **다른 도메인 확장**: Event, Setting에도 동일한 Hierarchical 패턴 적용 가능
+1. **ë³ë ¬ ì¤í**: íì¬ ìì°¨ ì¤í â asyncio.gatherë¡ 6ê° ìì´ì í¸ ëì ì¤í
+2. **ìºì±**: ëì¼ íì¤í¸ì ëí ìë¸ ìì´ì í¸ ê²°ê³¼ ìºì±
+3. **ë¤ë¥¸ ëë©ì¸ íì¥**: Event, Settingìë ëì¼í Hierarchical í¨í´ ì ì© ê°ë¥
 
 ---
 
-## 16. Appearance Agent - Production Level 업그레이드
+## 16. Appearance Agent - Production Level ìê·¸ë ì´ë
 
-### 📅 날짜
+### ð ë ì§
 2025-12-29
 
-### 🔴 문제 (Problem)
+### ð´ ë¬¸ì  (Problem)
 
-Appearance Agent 출력에 `null` 값이 많이 포함되어 다음 시스템에서 문제 발생:
+Appearance Agent ì¶ë ¥ì `null` ê°ì´ ë§ì´ í¬í¨ëì´ ë¤ì ìì¤íìì ë¬¸ì  ë°ì:
 
 ```json
 "skin_tone": null,
@@ -1533,22 +1534,22 @@ Appearance Agent 출력에 `null` 값이 많이 포함되어 다음 시스템에
 "expression": null
 ```
 
-| 시스템 | 문제 |
+| ìì¤í | ë¬¸ì  |
 |--------|------|
-| **Image Gen AI** | 프롬프트에 null 포함 시 일관성 없는 결과 |
-| **Game Engine (C++/C#)** | NullReferenceException 발생 |
-| **Shader/UI** | 색상 파싱 불가 |
+| **Image Gen AI** | íë¡¬íí¸ì null í¬í¨ ì ì¼ê´ì± ìë ê²°ê³¼ |
+| **Game Engine (C++/C#)** | NullReferenceException ë°ì |
+| **Shader/UI** | ìì íì± ë¶ê° |
 
-### 🟡 원인 분석 (Root Cause)
+### ð¡ ìì¸ ë¶ì (Root Cause)
 
-1. **Null 처리 부재**: 원본 텍스트에 묘사 없으면 null 그대로 반환
-2. **색상 비정규화**: "검은", "은빛" 같은 자연어 → 렌더링 엔진에서 파싱 불가
-3. **프롬프트 분산**: 개별 필드 조합 로직이 백엔드에서 추가 필요
-4. **스타일 미지정**: 화풍/장르 정보 없이 이미지 생성 시 일관성 상실
+1. **Null ì²ë¦¬ ë¶ì¬**: ìë³¸ íì¤í¸ì ë¬ì¬ ìì¼ë©´ null ê·¸ëë¡ ë°í
+2. **ìì ë¹ì ê·í**: "ê²ì", "ìë¹" ê°ì ìì°ì´ â ë ëë§ ìì§ìì íì± ë¶ê°
+3. **íë¡¬íí¸ ë¶ì°**: ê°ë³ íë ì¡°í© ë¡ì§ì´ ë°±ìëìì ì¶ê° íì
+4. **ì¤íì¼ ë¯¸ì§ì **: íí/ì¥ë¥´ ì ë³´ ìì´ ì´ë¯¸ì§ ìì± ì ì¼ê´ì± ìì¤
 
-### 🟢 해결책 (Solution)
+### ð¢ í´ê²°ì± (Solution)
 
-4가지 Production 기능 추가:
+4ê°ì§ Production ê¸°ë¥ ì¶ê°:
 
 #### 1. Null Fallback Strategy
 
@@ -1559,28 +1560,28 @@ ROLE_DEFAULTS = {
     "default": {"physique": "average", "skin_tone": "unspecified", "expression": "neutral"},
 }
 
-# null 대신 "unspecified" 또는 role-based default 사용
+# null ëì  "unspecified" ëë role-based default ì¬ì©
 if not result.get("physique"):
     result["physique"] = defaults.get("physique", "average")
 ```
 
 #### 2. Color Normalization
 
-자연어 색상 → 구조화된 데이터 (Hex + Category)
+ìì°ì´ ìì â êµ¬ì¡°íë ë°ì´í° (Hex + Category)
 
 ```python
 COLOR_MAP = {
-    "검은": {"en": "black", "hex": "#000000", "category": "BLACK"},
-    "은빛": {"en": "silver", "hex": "#C0C0C0", "category": "SILVER"},
-    "회색": {"en": "gray", "hex": "#808080", "category": "GRAY"},
-    # ... 20+ 색상
+    "ê²ì": {"en": "black", "hex": "#000000", "category": "BLACK"},
+    "ìë¹": {"en": "silver", "hex": "#C0C0C0", "category": "SILVER"},
+    "íì": {"en": "gray", "hex": "#808080", "category": "GRAY"},
+    # ... 20+ ìì
 }
 ```
 
-출력:
+ì¶ë ¥:
 ```json
 "hair_color_normalized": {
-  "description": "검은",
+  "description": "ê²ì",
   "hex_code": "#000000",
   "category": "BLACK"
 }
@@ -1588,7 +1589,7 @@ COLOR_MAP = {
 
 #### 3. Prompt Aggregation
 
-Image AI에 바로 사용 가능한 통합 프롬프트 생성:
+Image AIì ë°ë¡ ì¬ì© ê°ë¥í íµí© íë¡¬íí¸ ìì±:
 
 ```python
 def generate_visual_prompt(data: dict, style: str) -> str:
@@ -1596,19 +1597,19 @@ def generate_visual_prompt(data: dict, style: str) -> str:
         data.get("physique"),
         f"{data.get('hair_color')} hair",
         f"{data.get('eyes')} eyes",
-        # ... 모든 시각적 요소 결합
+        # ... ëª¨ë  ìê°ì  ìì ê²°í©
     ]
     return ", ".join(parts) + f", {style}"
 ```
 
-출력:
+ì¶ë ¥:
 ```json
-"full_visual_prompt": "athletic, fair skin, 검은 hair, 긴 머리, sharp eyes, silver sword, fantasy illustration"
+"full_visual_prompt": "athletic, fair skin, ê²ì hair, ê¸´ ë¨¸ë¦¬, sharp eyes, silver sword, fantasy illustration"
 ```
 
 #### 4. Style Context
 
-화풍/장르 메타데이터 추가:
+íí/ì¥ë¥´ ë©íë°ì´í° ì¶ê°:
 
 ```json
 "style_context": {
@@ -1617,20 +1618,20 @@ def generate_visual_prompt(data: dict, style: str) -> str:
 }
 ```
 
-### 📁 수정된 파일
+### ð ìì ë íì¼
 
-| 파일 | 수정 내용 |
+| íì¼ | ìì  ë´ì© |
 |------|----------|
-| `app/agents/extraction/character/appearance.py` | COLOR_MAP, ROLE_DEFAULTS, post_process_appearance() 추가 |
-| `app/agents/extraction/character/aggregator.py` | 새 필드 (hair_color_normalized, full_visual_prompt, style_context) 반영 |
-| `tests/test_agents/test_character_appearance.ipynb` | Production 필드 검증 테스트 추가 |
+| `app/agents/extraction/character/appearance.py` | COLOR_MAP, ROLE_DEFAULTS, post_process_appearance() ì¶ê° |
+| `app/agents/extraction/character/aggregator.py` | ì íë (hair_color_normalized, full_visual_prompt, style_context) ë°ì |
+| `tests/test_agents/test_character_appearance.ipynb` | Production íë ê²ì¦ íì¤í¸ ì¶ê° |
 
-### ✅ 결과
+### â ê²°ê³¼
 
 **Before:**
 ```json
 {
-  "hair_color": "검은",
+  "hair_color": "ê²ì",
   "skin_tone": null,
   "expression": null
 }
@@ -1639,15 +1640,15 @@ def generate_visual_prompt(data: dict, style: str) -> str:
 **After:**
 ```json
 {
-  "hair_color": "검은",
+  "hair_color": "ê²ì",
   "hair_color_normalized": {
-    "description": "검은",
+    "description": "ê²ì",
     "hex_code": "#000000",
     "category": "BLACK"
   },
   "skin_tone": "fair",
   "expression": "determined",
-  "full_visual_prompt": "athletic, fair skin, 검은 hair, sharp eyes, fantasy illustration",
+  "full_visual_prompt": "athletic, fair skin, ê²ì hair, sharp eyes, fantasy illustration",
   "style_context": {
     "art_style": "fantasy illustration",
     "rendering_engine": "Unreal Engine 5"
@@ -1655,50 +1656,50 @@ def generate_visual_prompt(data: dict, style: str) -> str:
 }
 ```
 
-1. **Null 제거**: 모든 주요 필드에 fallback 값 적용
-2. **렌더링 호환**: Hex 색상 코드로 Shader/UI 직접 연동 가능
-3. **Image AI 연동**: `full_visual_prompt`를 DALL-E 3/Stable Diffusion에 바로 전달
-4. **일관성**: `style_context`로 생성물 톤 앤 매너 고정
+1. **Null ì ê±°**: ëª¨ë  ì£¼ì íëì fallback ê° ì ì©
+2. **ë ëë§ í¸í**: Hex ìì ì½ëë¡ Shader/UI ì§ì  ì°ë ê°ë¥
+3. **Image AI ì°ë**: `full_visual_prompt`ë¥¼ DALL-E 3/Stable Diffusionì ë°ë¡ ì ë¬
+4. **ì¼ê´ì±**: `style_context`ë¡ ìì±ë¬¼ í¤ ì¤ ë§¤ë ê³ ì 
 
 ---
 
 
-## 17. Story Extraction - 한글/영문 캐릭터 중복 및 추출 품질 개선
+## 17. Story Extraction - íê¸/ìë¬¸ ìºë¦­í° ì¤ë³µ ë° ì¶ì¶ íì§ ê°ì 
 
-### 📅 날짜
+### ð ë ì§
 2025-12-30
 
-### 🔴 문제 (Problem)
+### ð´ ë¬¸ì  (Problem)
 
-1. **한글/영문 캐릭터 중복**: "베라(Vera)"가 "베라"와 "Vera" 두 캐릭터로 분리 추출
-2. **이벤트 추출 실패**: JSON string 반환 시 list_type 유효성 검사 오류
-3. **인벤토리 중복**: `equipped_items`와 `bag_items`에 동일 아이템 중복
-4. **안대/액세서리 누락**: 베라의 검은 안대가 appearance에서 누락
-5. **Role 오류**: 적대적 행동하는 베라가 "other"로 추출 (antagonist여야 함)
-6. **Plot 할루시네이션**: 이벤트가 없을 때 가상의 event_ref (E001-E009) 생성
-7. **existing_characters 미반영**: 페이로드의 기존 캐릭터 ID가 무시됨
+1. **íê¸/ìë¬¸ ìºë¦­í° ì¤ë³µ**: "ë² ë¼(Vera)"ê° "ë² ë¼"ì "Vera" ë ìºë¦­í°ë¡ ë¶ë¦¬ ì¶ì¶
+2. **ì´ë²¤í¸ ì¶ì¶ ì¤í¨**: JSON string ë°í ì list_type ì í¨ì± ê²ì¬ ì¤ë¥
+3. **ì¸ë²¤í ë¦¬ ì¤ë³µ**: `equipped_items`ì `bag_items`ì ëì¼ ìì´í ì¤ë³µ
+4. **ìë/ì¡ì¸ìë¦¬ ëë½**: ë² ë¼ì ê²ì ìëê° appearanceìì ëë½
+5. **Role ì¤ë¥**: ì ëì  íëíë ë² ë¼ê° "other"ë¡ ì¶ì¶ (antagonistì¬ì¼ í¨)
+6. **Plot í ë£¨ìë¤ì´ì**: ì´ë²¤í¸ê° ìì ë ê°ìì event_ref (E001-E009) ìì±
+7. **existing_characters ë¯¸ë°ì**: íì´ë¡ëì ê¸°ì¡´ ìºë¦­í° IDê° ë¬´ìë¨
 
-### 🟡 원인 분석 (Root Cause)
+### ð¡ ìì¸ ë¶ì (Root Cause)
 
-1. 모든 sub-agent가 독립적으로 캐릭터 추출 → 한글/영문 혼용 발생
-2. LLM이 JSON 배열 대신 문자열 반환 → Pydantic 유효성 검사 실패
-3. 프롬프트에 equipped/bag 분리 규칙 없음
-4. 프롬프트에 안대, 마스크 등 face accessory 추출 지시 없음
-5. antagonist 판별 컨텍스트 클루 없음
-6. Plot Agent가 빈 이벤트 배열에도 narrative_beats 생성 시도
-7. Aggregator가 context의 existing_characters를 참조하지 않음
+1. ëª¨ë  sub-agentê° ëë¦½ì ì¼ë¡ ìºë¦­í° ì¶ì¶ â íê¸/ìë¬¸ í¼ì© ë°ì
+2. LLMì´ JSON ë°°ì´ ëì  ë¬¸ìì´ ë°í â Pydantic ì í¨ì± ê²ì¬ ì¤í¨
+3. íë¡¬íí¸ì equipped/bag ë¶ë¦¬ ê·ì¹ ìì
+4. íë¡¬íí¸ì ìë, ë§ì¤í¬ ë± face accessory ì¶ì¶ ì§ì ìì
+5. antagonist íë³ ì»¨íì¤í¸ í´ë£¨ ìì
+6. Plot Agentê° ë¹ ì´ë²¤í¸ ë°°ì´ìë narrative_beats ìì± ìë
+7. Aggregatorê° contextì existing_charactersë¥¼ ì°¸ì¡°íì§ ìì
 
-### 🟢 해결책 (Solution)
+### ð¢ í´ê²°ì± (Solution)
 
-#### 1. 모든 캐릭터 Sub-Agent에 한글 이름 규칙 추가
+#### 1. ëª¨ë  ìºë¦­í° Sub-Agentì íê¸ ì´ë¦ ê·ì¹ ì¶ê°
 ```
 ### CRITICAL: NAME EXTRACTION RULE ###
-When a character is introduced as "베라(Vera)", use ONLY the Korean name.
-❌ BAD: "name": "Vera"
-✅ GOOD: "name": "베라"
+When a character is introduced as "ë² ë¼(Vera)", use ONLY the Korean name.
+â BAD: "name": "Vera"
+â GOOD: "name": "ë² ë¼"
 ```
 
-#### 2. EventExtractionResult에 JSON string parser 추가 (`events.py`)
+#### 2. EventExtractionResultì JSON string parser ì¶ê° (`events.py`)
 ```python
 @field_validator('events', mode='before')
 def parse_events_string(cls, v):
@@ -1707,29 +1708,29 @@ def parse_events_string(cls, v):
     return v
 ```
 
-#### 3. Inventory 중복 방지 규칙 추가 (`inventory.py`)
+#### 3. Inventory ì¤ë³µ ë°©ì§ ê·ì¹ ì¶ê° (`inventory.py`)
 ```
 ### CRITICAL: NO DUPLICATION RULE ###
 An item can ONLY be in ONE place:
-- HOLDING/WEARING → equipped_items ONLY
-- IN A BAG/STORED → bag_items ONLY
+- HOLDING/WEARING â equipped_items ONLY
+- IN A BAG/STORED â bag_items ONLY
 ```
 
-#### 4. Face Accessory 추출 규칙 추가 (`appearance.py`)
+#### 4. Face Accessory ì¶ì¶ ê·ì¹ ì¶ê° (`appearance.py`)
 ```
 ### IMPORTANT: FACE ACCESSORIES ###
-- "오른쪽 눈에는 검은 안대" → eyes: "wearing black eyepatch on right eye"
-- "얼굴에 흉터" → scars_tattoos: ["facial scar"]
+- "ì¤ë¥¸ìª½ ëìë ê²ì ìë" â eyes: "wearing black eyepatch on right eye"
+- "ì¼êµ´ì íí°" â scars_tattoos: ["facial scar"]
 ```
 
-#### 5. Antagonist 판별 규칙 추가 (`identity.py`)
+#### 5. Antagonist íë³ ê·ì¹ ì¶ê° (`identity.py`)
 ```
-- Attacks/threatens the protagonist → antagonist
-- Commands others to harm → antagonist
-- "눈빛이 살기로 번뜩였다" → role: "antagonist"
+- Attacks/threatens the protagonist â antagonist
+- Commands others to harm â antagonist
+- "ëë¹ì´ ì´ê¸°ë¡ ë²ë©ìë¤" â role: "antagonist"
 ```
 
-#### 6. Plot Agent 빈 이벤트 가드 추가 (`plot.py`)
+#### 6. Plot Agent ë¹ ì´ë²¤í¸ ê°ë ì¶ê° (`plot.py`)
 ```python
 if not events:
     return {
@@ -1741,162 +1742,162 @@ if not events:
     }
 ```
 
-#### 7. Aggregator에 existing_characters 병합 로직 추가
+#### 7. Aggregatorì existing_characters ë³í© ë¡ì§ ì¶ê°
 ```python
 existing_characters = context.get("existing_characters") or []
 for ec in existing_characters:
-    existing_lookup[ec["name"]] = ec  # ID 재사용
+    existing_lookup[ec["name"]] = ec  # ID ì¬ì¬ì©
 
 char_id = existing_lookup.get(name, {}).get("id") or f"char-{name}-{n}"
 ```
 
-### 📁 수정된 파일
+### ð ìì ë íì¼
 
-| 파일 | 수정 내용 |
+| íì¼ | ìì  ë´ì© |
 |------|----------|
-| `app/schemas/events.py` | JSON string→list parser validator |
-| `app/agents/extraction/character/identity.py` | 한글 이름 규칙 + antagonist 판별 |
-| `app/agents/extraction/character/appearance.py` | 한글 이름 + face accessory + category 소문자 |
-| `app/agents/extraction/character/personality.py` | 한글 이름 규칙 |
-| `app/agents/extraction/character/dialogue_mood.py` | 한글 이름 규칙 |
-| `app/agents/extraction/character/relations.py` | 한글 이름 규칙 + 할루시네이션 방지 |
-| `app/agents/extraction/character/inventory.py` | 한글 아이템명 + 중복 방지 규칙 |
-| `app/agents/extraction/character/stats.py` | 한글 이름 규칙 |
-| `app/agents/analysis/plot.py` | 빈 이벤트 가드 |
-| `app/agents/extraction/character/aggregator.py` | existing_characters ID 재사용 + category 소문자 |
+| `app/schemas/events.py` | JSON stringâlist parser validator |
+| `app/agents/extraction/character/identity.py` | íê¸ ì´ë¦ ê·ì¹ + antagonist íë³ |
+| `app/agents/extraction/character/appearance.py` | íê¸ ì´ë¦ + face accessory + category ìë¬¸ì |
+| `app/agents/extraction/character/personality.py` | íê¸ ì´ë¦ ê·ì¹ |
+| `app/agents/extraction/character/dialogue_mood.py` | íê¸ ì´ë¦ ê·ì¹ |
+| `app/agents/extraction/character/relations.py` | íê¸ ì´ë¦ ê·ì¹ + í ë£¨ìë¤ì´ì ë°©ì§ |
+| `app/agents/extraction/character/inventory.py` | íê¸ ìì´íëª + ì¤ë³µ ë°©ì§ ê·ì¹ |
+| `app/agents/extraction/character/stats.py` | íê¸ ì´ë¦ ê·ì¹ |
+| `app/agents/analysis/plot.py` | ë¹ ì´ë²¤í¸ ê°ë |
+| `app/agents/extraction/character/aggregator.py` | existing_characters ID ì¬ì¬ì© + category ìë¬¸ì |
 
-### ✅ 결과
+### â ê²°ê³¼
 
-| 문제 | Before | After |
+| ë¬¸ì  | Before | After |
 |------|--------|-------|
-| 캐릭터 수 | 6개 (중복) | 3개 |
-| 이벤트 추출 | 실패 (list_type) | 성공 (E001-E005) |
-| 인벤토리 | 중복 발생 | 분리됨 |
-| 안대 | 누락 | 추출됨 |
+| ìºë¦­í° ì | 6ê° (ì¤ë³µ) | 3ê° |
+| ì´ë²¤í¸ ì¶ì¶ | ì¤í¨ (list_type) | ì±ê³µ (E001-E005) |
+| ì¸ë²¤í ë¦¬ | ì¤ë³µ ë°ì | ë¶ë¦¬ë¨ |
+| ìë | ëë½ | ì¶ì¶ë¨ |
 | Role | "other" | "antagonist" |
-| Plot event_refs | 할루시네이션 | 빈 배열 |
-| existing ID | 무시됨 | 재사용됨 |
-| category 대소문자 | "UNSPECIFIED" | "unspecified" |
-| 관계 history | 할루시네이션 | 명시적 데이터만 |
+| Plot event_refs | í ë£¨ìë¤ì´ì | ë¹ ë°°ì´ |
+| existing ID | ë¬´ìë¨ | ì¬ì¬ì©ë¨ |
+| category ëìë¬¸ì | "UNSPECIFIED" | "unspecified" |
+| ê´ê³ history | í ë£¨ìë¤ì´ì | ëªìì  ë°ì´í°ë§ |
 
-#### 11. 동적 이름 중복 제거 (`aggregator.py`) - 2024-12-30
+#### 11. ëì  ì´ë¦ ì¤ë³µ ì ê±° (`aggregator.py`) - 2024-12-30
 
-**문제**: 프롬프트 규칙에도 불구하고 sub-agent들이 한글/영어 이름을 혼용하여 같은 인물이 2개로 추출됨
-- `identity.py` → "베라", `stats.py` → "Vera" → 2개 캐릭터 생성
+**ë¬¸ì **: íë¡¬íí¸ ê·ì¹ìë ë¶êµ¬íê³  sub-agentë¤ì´ íê¸/ìì´ ì´ë¦ì í¼ì©íì¬ ê°ì ì¸ë¬¼ì´ 2ê°ë¡ ì¶ì¶ë¨
+- `identity.py` â "ë² ë¼", `stats.py` â "Vera" â 2ê° ìºë¦­í° ìì±
 
-**해결책 1**: 스토리 패턴 기반 동적 매핑
+**í´ê²°ì± 1**: ì¤í ë¦¬ í¨í´ ê¸°ë° ëì  ë§¤í
 ```python
 def extract_name_pairs_from_text(story_text: str) -> dict:
-    """스토리에서 "베라(Vera)" 패턴 자동 추출"""
+    """ì¤í ë¦¬ìì "ë² ë¼(Vera)" í¨í´ ìë ì¶ì¶"""
     pattern = r'([\uAC00-\uD7AF]+)\s*\(\s*([A-Za-z]+)\s*\)'
-    # {"Vera": "베라", "Lian": "리안", ...}
+    # {"Vera": "ë² ë¼", "Lian": "ë¦¬ì", ...}
 ```
 
-**해결책 2**: 음역(Romanization) 기반 매칭 (패턴 없을 때 폴백)
+**í´ê²°ì± 2**: ìì­(Romanization) ê¸°ë° ë§¤ì¹­ (í¨í´ ìì ë í´ë°±)
 ```python
 KOREAN_TO_ROMANIZATION = {
-    "리": ["ri", "li", "ree", "lee"],
-    "안": ["an", "ahn"],
-    "베": ["be", "ve", "bae"],
-    "티": ["ti", "tee"],
-    "오": ["o", "oh"],
-    # ... +40개 음절
+    "ë¦¬": ["ri", "li", "ree", "lee"],
+    "ì": ["an", "ahn"],
+    "ë² ": ["be", "ve", "bae"],
+    "í°": ["ti", "tee"],
+    "ì¤": ["o", "oh"],
+    # ... +40ê° ìì 
 }
 
 def find_romanization_match(korean_names, english_names) -> dict:
-    """'리안' → ['rian', 'lian', ...] 생성 후 'Lian'과 매칭"""
+    """'ë¦¬ì' â ['rian', 'lian', ...] ìì± í 'Lian'ê³¼ ë§¤ì¹­"""
 ```
 
-**작동 원리**:
-1. 스토리에서 `한글(영문)` 패턴 감지 → 동적 매핑
-2. 패턴 없는 영문 이름은 음역 매칭으로 한글 이름과 연결
-3. 모든 이름 정규화 후 같은 인물 데이터 병합
+**ìë ìë¦¬**:
+1. ì¤í ë¦¬ìì `íê¸(ìë¬¸)` í¨í´ ê°ì§ â ëì  ë§¤í
+2. í¨í´ ìë ìë¬¸ ì´ë¦ì ìì­ ë§¤ì¹­ì¼ë¡ íê¸ ì´ë¦ê³¼ ì°ê²°
+3. ëª¨ë  ì´ë¦ ì ê·í í ê°ì ì¸ë¬¼ ë°ì´í° ë³í©
 
-**결과**: "리안"만 나오고 "리안(Lian)" 패턴 없어도 "Lian" 자동 병합
+**ê²°ê³¼**: "ë¦¬ì"ë§ ëì¤ê³  "ë¦¬ì(Lian)" í¨í´ ìì´ë "Lian" ìë ë³í©
 
 ---
 
-#### 12. 추출 정확도 개선 (`inventory.py`, `dialogue_mood.py`, `identity.py`) - 2024-12-30
+#### 12. ì¶ì¶ ì íë ê°ì  (`inventory.py`, `dialogue_mood.py`, `identity.py`) - 2024-12-30
 
-**문제**: 스토리와 추출 결과 간 불일치 발생
-- 리안의 단검이 `equipped_items`에 누락
-- 베라의 "황금빛 두루마리"가 `quest_items`에 누락  
-- "쥐새끼처럼 빠르네"가 베라가 아닌 리안의 `catchphrases`에 잘못 귀속
-- 티오가 "앳된 얼굴의 소년"으로 묘사되었으나 `age` 추론 안됨
+**ë¬¸ì **: ì¤í ë¦¬ì ì¶ì¶ ê²°ê³¼ ê° ë¶ì¼ì¹ ë°ì
+- ë¦¬ìì ë¨ê²ì´ `equipped_items`ì ëë½
+- ë² ë¼ì "í©ê¸ë¹ ëë£¨ë§ë¦¬"ê° `quest_items`ì ëë½  
+- "ì¥ìë¼ì²ë¼ ë¹ ë¥´ë¤"ê° ë² ë¼ê° ìë ë¦¬ìì `catchphrases`ì ìëª» ê·ì
+- í°ì¤ê° "ì³ë ì¼êµ´ì ìë"ì¼ë¡ ë¬ì¬ëìì¼ë `age` ì¶ë¡  ìë¨
 
-**해결책**:
+**í´ê²°ì±**:
 
-1. **inventory.py - QUEST 아이템 및 무기 추출 강화**
+1. **inventory.py - QUEST ìì´í ë° ë¬´ê¸° ì¶ì¶ ê°í**
 ```python
 ### CRITICAL: QUEST ITEMS ###
-- 황금빛 두루마리 → QUEST item (베라 소유)
-- 영원의 성배 → QUEST item (if possessed)
+- í©ê¸ë¹ ëë£¨ë§ë¦¬ â QUEST item (ë² ë¼ ìì )
+- ììì ì±ë°° â QUEST item (if possessed)
 
 ### WEAPON EXTRACTION ###
-단검을 잡다/들다/뽑다 → WEAPON equipped_items
-Example: "리안은 이를 악물며 단검을 고쳐 잡았다" → 리안 has 단검
+ë¨ê²ì ì¡ë¤/ë¤ë¤/ë½ë¤ â WEAPON equipped_items
+Example: "ë¦¬ìì ì´ë¥¼ ìë¬¼ë©° ë¨ê²ì ê³ ì³ ì¡ìë¤" â ë¦¬ì has ë¨ê²
 ```
 
-2. **dialogue_mood.py - catchphrase 화자 귀속 규칙**
+2. **dialogue_mood.py - catchphrase íì ê·ì ê·ì¹**
 ```python
 ### CRITICAL: CATCHPHRASE ATTRIBUTION ###
-⚠️ A catchphrase belongs to the SPEAKER, NOT the target!
-Example: 베라 said "여전히 쥐새끼처럼 빠르네, 리안."
-❌ BAD: 리안.catchphrases = ["쥐새끼처럼 빠르다"]  
-✅ GOOD: 베라.catchphrases = ["쥐새끼처럼 빠르네"]
+â ï¸ A catchphrase belongs to the SPEAKER, NOT the target!
+Example: ë² ë¼ said "ì¬ì í ì¥ìë¼ì²ë¼ ë¹ ë¥´ë¤, ë¦¬ì."
+â BAD: ë¦¬ì.catchphrases = ["ì¥ìë¼ì²ë¼ ë¹ ë¥´ë¤"]  
+â GOOD: ë² ë¼.catchphrases = ["ì¥ìë¼ì²ë¼ ë¹ ë¥´ë¤"]
 ```
 
-3. **identity.py - 나이 추론 규칙**
+3. **identity.py - ëì´ ì¶ë¡  ê·ì¹**
 ```python
 - age: Exact age or estimate if mentioned
-  * "앳된 얼굴의 소년" → age inference: young/teen
-  * "소년" → infer age as teen (10-19)
-  * "노인" → infer age as elderly (60+)
+  * "ì³ë ì¼êµ´ì ìë" â age inference: young/teen
+  * "ìë" â infer age as teen (10-19)
+  * "ë¸ì¸" â infer age as elderly (60+)
 ```
 
-**수정된 파일**:
+**ìì ë íì¼**:
 - `app/agents/extraction/character/inventory.py`
 - `app/agents/extraction/character/dialogue_mood.py`
 - `app/agents/extraction/character/identity.py`
 
 ---
 
-#### 13. Character Team Recursion Limit 무한 루프 (`graph.py`, `identity.py`) - 2024-12-30
+#### 13. Character Team Recursion Limit ë¬´í ë£¨í (`graph.py`, `identity.py`) - 2024-12-30
 
-**문제**: `Recursion limit of 25 reached without hitting a stop condition`
-- Character Agent가 무한 루프에 빠져 `characters: []` 반환
-- Event Agent는 성공하지만 참조할 캐릭터가 없음
+**ë¬¸ì **: `Recursion limit of 25 reached without hitting a stop condition`
+- Character Agentê° ë¬´í ë£¨íì ë¹ ì ¸ `characters: []` ë°í
+- Event Agentë ì±ê³µíì§ë§ ì°¸ì¡°í  ìºë¦­í°ê° ìì
 
-**원인 분석**:
-1. `identity.py` 예외 발생 시 `completed_agents`에 "identity" 미추가
-2. Supervisor가 계속 `identity` 단계로 라우팅 → 무한 루프
+**ìì¸ ë¶ì**:
+1. `identity.py` ìì¸ ë°ì ì `completed_agents`ì "identity" ë¯¸ì¶ê°
+2. Supervisorê° ê³ì `identity` ë¨ê³ë¡ ë¼ì°í â ë¬´í ë£¨í
 
-**해결책**:
-1. `identity.py` - 예외 시에도 `completed_agents`에 "identity" 추가
-2. `graph.py` - `recursion_limit=50` 설정
+**í´ê²°ì±**:
+1. `identity.py` - ìì¸ ììë `completed_agents`ì "identity" ì¶ê°
+2. `graph.py` - `recursion_limit=50` ì¤ì 
 
-**수정된 파일**: `app/agents/graph.py`, `app/agents/extraction/character/identity.py`
+**ìì ë íì¼**: `app/agents/graph.py`, `app/agents/extraction/character/identity.py`
 
 ---
 
-#### 14. age_group 및 role 추론 개선 (`aggregator.py`) - 2024-12-30
+#### 14. age_group ë° role ì¶ë¡  ê°ì  (`aggregator.py`) - 2024-12-30
 
-**문제**: 
-- 티오가 "앳된 얼굴의 소년"으로 묘사되었으나 `visual.age_group: null`
-- 모든 캐릭터의 `role: "other"` (protagonist/antagonist 구분 안됨)
+**ë¬¸ì **: 
+- í°ì¤ê° "ì³ë ì¼êµ´ì ìë"ì¼ë¡ ë¬ì¬ëìì¼ë `visual.age_group: null`
+- ëª¨ë  ìºë¦­í°ì `role: "other"` (protagonist/antagonist êµ¬ë¶ ìë¨)
 
-**원인 분석**:
-1. aggregator에서 `age_group`이 항상 `None`으로 하드코딩됨
-2. role 추론이 Identity Agent 결과에만 의존 → 실패 시 "other" 폴백
+**ìì¸ ë¶ì**:
+1. aggregatorìì `age_group`ì´ í­ì `None`ì¼ë¡ íëì½ë©ë¨
+2. role ì¶ë¡ ì´ Identity Agent ê²°ê³¼ìë§ ìì¡´ â ì¤í¨ ì "other" í´ë°±
 
-**해결책**:
+**í´ê²°ì±**:
 
-1. **age_group 추론 함수 추가**
+1. **age_group ì¶ë¡  í¨ì ì¶ê°**
 ```python
 AGE_GROUP_KEYWORDS = {
-    "teen": ["소년", "소녀", "앳된", "teenager"],
-    "child": ["아이", "어린이"],
-    "elderly": ["노인", "할아버지"]
+    "teen": ["ìë", "ìë", "ì³ë", "teenager"],
+    "child": ["ìì´", "ì´ë¦°ì´"],
+    "elderly": ["ë¸ì¸", "í ìë²ì§"]
 }
 
 def infer_age_group(appearance_data, story_text):
@@ -1907,296 +1908,296 @@ def infer_age_group(appearance_data, story_text):
     return None
 ```
 
-2. **role 추론 컨텍스트 기반 강화**
+2. **role ì¶ë¡  ì»¨íì¤í¸ ê¸°ë° ê°í**
 ```python
 def infer_role_from_context(name, relations_data, story_text):
-    # ENEMY 관계 + 공격 키워드 → antagonist
-    # 피해/도망 키워드 → protagonist
+    # ENEMY ê´ê³ + ê³µê²© í¤ìë â antagonist
+    # í¼í´/ëë§ í¤ìë â protagonist
 ```
 
-**수정된 파일**: `app/agents/extraction/character/aggregator.py`
+**ìì ë íì¼**: `app/agents/extraction/character/aggregator.py`
 
 ---
 
-#### 15. 캐릭터 추출 정확도 버그 수정 (`aggregator.py`, `dialogue_mood.py`) - 2024-12-30
+#### 15. ìºë¦­í° ì¶ì¶ ì íë ë²ê·¸ ìì  (`aggregator.py`, `dialogue_mood.py`) - 2024-12-30
 
-**문제**:
-1. **role 반전**: 리안(protagonist)이 "antagonist"로, 티오(supporting)이 "protagonist"로 추출
-2. **age_group 오류**: 모든 캐릭터가 "child"로 추출됨
-3. **catchphrase 귀속 오류**: 베라가 한 말이 리안에게 귀속됨
-4. **appearance 혼동**: 베라의 검은 안대가 리안에게도 적용됨
+**ë¬¸ì **:
+1. **role ë°ì **: ë¦¬ì(protagonist)ì´ "antagonist"ë¡, í°ì¤(supporting)ì´ "protagonist"ë¡ ì¶ì¶
+2. **age_group ì¤ë¥**: ëª¨ë  ìºë¦­í°ê° "child"ë¡ ì¶ì¶ë¨
+3. **catchphrase ê·ì ì¤ë¥**: ë² ë¼ê° í ë§ì´ ë¦¬ììê² ê·ìë¨
+4. **appearance í¼ë**: ë² ë¼ì ê²ì ìëê° ë¦¬ììê²ë ì ì©ë¨
 
-**원인 분석**:
-1. `infer_role_from_context`가 전체 스토리에서 키워드 검색 → 모든 캐릭터에 동일 role 적용
-2. `infer_age_group`이 전체 스토리에서 "아이" 키워드 먼저 발견 → 모두 "child"
-3. LLM이 대사 대상을 화자로 잘못 귀속
-4. appearance 데이터가 캐릭터 간 혼합됨 (별도 수정 필요)
+**ìì¸ ë¶ì**:
+1. `infer_role_from_context`ê° ì ì²´ ì¤í ë¦¬ìì í¤ìë ê²ì â ëª¨ë  ìºë¦­í°ì ëì¼ role ì ì©
+2. `infer_age_group`ì´ ì ì²´ ì¤í ë¦¬ìì "ìì´" í¤ìë ë¨¼ì  ë°ê²¬ â ëª¨ë "child"
+3. LLMì´ ëì¬ ëìì íìë¡ ìëª» ê·ì
+4. appearance ë°ì´í°ê° ìºë¦­í° ê° í¼í©ë¨ (ë³ë ìì  íì)
 
-**해결책**:
+**í´ê²°ì±**:
 
-1. **캐릭터별 문맥 추출 함수 추가**
+1. **ìºë¦­í°ë³ ë¬¸ë§¥ ì¶ì¶ í¨ì ì¶ê°**
 ```python
 def get_character_context(name: str, story_text: str, window: int = 100) -> str:
-    # 캐릭터 이름 주변 ±window 문자만 추출
+    # ìºë¦­í° ì´ë¦ ì£¼ë³ Â±window ë¬¸ìë§ ì¶ì¶
 ```
 
-2. **age_group 우선순위 검색**
+2. **age_group ì°ì ìì ê²ì**
 ```python
-priority_order = ["teen", "elderly", "adult", "child"]  # child가 마지막
+priority_order = ["teen", "elderly", "adult", "child"]  # childê° ë§ì§ë§
 ```
 
-3. **role 추론 개선** - 스코어 기반
+3. **role ì¶ë¡  ê°ì ** - ì¤ì½ì´ ê¸°ë°
 ```python
 antagonist_score, protagonist_score = 0, 0
-# 키워드 카운트 후 비교
+# í¤ìë ì¹´ì´í¸ í ë¹êµ
 ```
 
-4. **catchphrase 화자 검증**
+4. **catchphrase íì ê²ì¦**
 ```python
 def validate_catchphrase_speaker(phrase, speaker_name, story_text):
-    # 스토리에서 실제 화자인지 확인
+    # ì¤í ë¦¬ìì ì¤ì  íìì¸ì§ íì¸
 ```
 
-**수정된 파일**: `app/agents/extraction/character/aggregator.py`, `app/agents/extraction/character/dialogue_mood.py`
+**ìì ë íì¼**: `app/agents/extraction/character/aggregator.py`, `app/agents/extraction/character/dialogue_mood.py`
 
 ---
 
-#### 16. Role 및 Catchphrase 추론 로직 2차 개선 (`aggregator.py`, `dialogue_mood.py`) - 2024-12-30
+#### 16. Role ë° Catchphrase ì¶ë¡  ë¡ì§ 2ì°¨ ê°ì  (`aggregator.py`, `dialogue_mood.py`) - 2024-12-30
 
-**문제**:
-1. **Role 추론 실패**: 베라(antagonist)가 "protagonist"로, 리안(protagonist)이 "other"로 추론됨
-2. **Catchphrase 귀속 실패**: "쥐새끼처럼 빠르네, 리안" → 리안에게 잘못 귀속 (베라가 말함)
+**ë¬¸ì **:
+1. **Role ì¶ë¡  ì¤í¨**: ë² ë¼(antagonist)ê° "protagonist"ë¡, ë¦¬ì(protagonist)ì´ "other"ë¡ ì¶ë¡ ë¨
+2. **Catchphrase ê·ì ì¤í¨**: "ì¥ìë¼ì²ë¼ ë¹ ë¥´ë¤, ë¦¬ì" â ë¦¬ììê² ìëª» ê·ì (ë² ë¼ê° ë§í¨)
 
-**원인 분석**:
-1. **Role**: 관계 설명에서 `name.lower() in desc` 조건이 피해자도 공격자로 인식
-2. **Catchphrase**: 대사 내에서 언급된 이름을 화자로 오인 (리안은 대사 대상)
+**ìì¸ ë¶ì**:
+1. **Role**: ê´ê³ ì¤ëªìì `name.lower() in desc` ì¡°ê±´ì´ í¼í´ìë ê³µê²©ìë¡ ì¸ì
+2. **Catchphrase**: ëì¬ ë´ìì ì¸ê¸ë ì´ë¦ì íìë¡ ì¤ì¸ (ë¦¬ìì ëì¬ ëì)
 
-**해결책**:
+**í´ê²°ì±**:
 
-1. **Role 추론 개선** - 위치 기반 공격자/피해자 판단
+1. **Role ì¶ë¡  ê°ì ** - ìì¹ ê¸°ë° ê³µê²©ì/í¼í´ì íë¨
 ```python
-# 이름 위치 < 공격 단어 위치 → 공격자
+# ì´ë¦ ìì¹ < ê³µê²© ë¨ì´ ìì¹ â ê³µê²©ì
 name_pos = desc.find(name.lower())
-attack_pos = min([desc.find(kw) for kw in ["공격", "죽이", "위협"]])
+attack_pos = min([desc.find(kw) for kw in ["ê³µê²©", "ì£½ì´", "ìí"]])
 if name_pos < attack_pos:
     antagonist_score += 3  # Attacker
 ```
 
-2. **Catchphrase 검증 개선** - 화자 vs 대상 구분
+2. **Catchphrase ê²ì¦ ê°ì ** - íì vs ëì êµ¬ë¶
 ```python
-# 대사 앞(attribution)에 이름 있으면 화자
-# 대사 안에만 이름 있으면 대상 (거부)
+# ëì¬ ì(attribution)ì ì´ë¦ ìì¼ë©´ íì
+# ëì¬ ììë§ ì´ë¦ ìì¼ë©´ ëì (ê±°ë¶)
 speaker_in_attribution = speaker_name in context_before
 speaker_only_in_dialogue = speaker_name in phrase_context and not speaker_in_attribution
 if speaker_only_in_dialogue:
     return False  # Target, not speaker
 ```
 
-**수정된 파일**: `app/agents/extraction/character/aggregator.py`, `app/agents/extraction/character/dialogue_mood.py`
+**ìì ë íì¼**: `app/agents/extraction/character/aggregator.py`, `app/agents/extraction/character/dialogue_mood.py`
 
 ---
 
-## 템플릿 (새 이슈 추가 시 사용)
+## ííë¦¿ (ì ì´ì ì¶ê° ì ì¬ì©)
 
 ```markdown
-## N. [에이전트명] - [문제 요약]
+## N. [ìì´ì í¸ëª] - [ë¬¸ì  ìì½]
 
-### 📅 날짜
+### ð ë ì§
 YYYY-MM-DD
 
-### 🔴 문제 (Problem)
-[문제 설명]
+### ð´ ë¬¸ì  (Problem)
+[ë¬¸ì  ì¤ëª]
 
-### 🟡 원인 분석 (Root Cause)
-[원인]
+### ð¡ ìì¸ ë¶ì (Root Cause)
+[ìì¸]
 
-### 🟢 해결책 (Solution)
-[해결 방법]
+### ð¢ í´ê²°ì± (Solution)
+[í´ê²° ë°©ë²]
 
-### 📁 수정된 파일
-- [파일 목록]
+### ð ìì ë íì¼
+- [íì¼ ëª©ë¡]
 
-### ✅ 결과
-[결과]
+### â ê²°ê³¼
+[ê²°ê³¼]
 ---
 
-#### 18. Role 추론 미적용 및 Catchphrase 검증 우회 버그 수정 - 2024-12-30
+#### 18. Role ì¶ë¡  ë¯¸ì ì© ë° Catchphrase ê²ì¦ ì°í ë²ê·¸ ìì  - 2024-12-30
 
-**문제**:
-1. **Role 추론 미적용**: `infer_role_from_context` 함수가 정의되어 있었지만, LLM이 `protagonist`를 반환하면 **추론 자체가 실행되지 않았음**.
-2. **Catchphrase 검증 우회**: 대사가 story_text에서 찾아지지 않으면 `True` (통과)를 반환하여 **잘못된 귀속이 그대로 유지됨**.
+**ë¬¸ì **:
+1. **Role ì¶ë¡  ë¯¸ì ì©**: `infer_role_from_context` í¨ìê° ì ìëì´ ììì§ë§, LLMì´ `protagonist`ë¥¼ ë°ííë©´ **ì¶ë¡  ìì²´ê° ì¤íëì§ ììì**.
+2. **Catchphrase ê²ì¦ ì°í**: ëì¬ê° story_textìì ì°¾ìì§ì§ ìì¼ë©´ `True` (íµê³¼)ë¥¼ ë°ííì¬ **ìëª»ë ê·ìì´ ê·¸ëë¡ ì ì§ë¨**.
 
-**원인 분석**:
+**ìì¸ ë¶ì**:
 ```python
-# 기존 코드 (aggregator.py)
+# ê¸°ì¡´ ì½ë (aggregator.py)
 if extracted_role == "other" or not extracted_role:
-    inferred_role = infer_role_from_context(...)  # protagonist일 때 실행 안됨!
+    inferred_role = infer_role_from_context(...)  # protagonistì¼ ë ì¤í ìë¨!
 ```
 ```python
-# 기존 코드 (dialogue_mood.py)
+# ê¸°ì¡´ ì½ë (dialogue_mood.py)
 if phrase_pos == -1:
-    return True  # 찾지 못하면 무조건 통과!
+    return True  # ì°¾ì§ ëª»íë©´ ë¬´ì¡°ê±´ íµê³¼!
 ```
 
-**해결책**:
-1. **Role 추론**: LLM 결과와 관계없이 **항상** `infer_role_from_context` 실행. 관계 데이터 기반 분석이 더 신뢰도 높음.
+**í´ê²°ì±**:
+1. **Role ì¶ë¡ **: LLM ê²°ê³¼ì ê´ê³ìì´ **í­ì** `infer_role_from_context` ì¤í. ê´ê³ ë°ì´í° ê¸°ë° ë¶ìì´ ë ì ë¢°ë ëì.
 ```python
-# 수정된 코드
+# ìì ë ì½ë
 inferred_role = infer_role_from_context(name, rel_data, story_text)
 if inferred_role:
-    final_role = inferred_role  # 추론 결과 우선
+    final_role = inferred_role  # ì¶ë¡  ê²°ê³¼ ì°ì 
 ```
 
-2. **Catchphrase 검증**: 대사를 찾지 못하면 **거부**(False)로 변경. 3단계 검색 전략 도입.
+2. **Catchphrase ê²ì¦**: ëì¬ë¥¼ ì°¾ì§ ëª»íë©´ **ê±°ë¶**(False)ë¡ ë³ê²½. 3ë¨ê³ ê²ì ì ëµ ëì.
 ```python
-# 수정된 코드
+# ìì ë ì½ë
 if phrase_pos == -1:
-    return False  # 검증 불가 시 거부
+    return False  # ê²ì¦ ë¶ê° ì ê±°ë¶
 ```
 
-**수정된 파일**: `aggregator.py`, `dialogue_mood.py`
+**ìì ë íì¼**: `aggregator.py`, `dialogue_mood.py`
 
 ---
 
-#### 19. Multi-Tier 모델 전략 도입 - 2024-12-30
+#### 19. Multi-Tier ëª¨ë¸ ì ëµ ëì - 2024-12-30
 
-**문제**: Claude 3 Haiku 모델만 사용하여 복잡한 추론(Role, 관계 분석)에서 정확도 부족.
+**ë¬¸ì **: Claude 3 Haiku ëª¨ë¸ë§ ì¬ì©íì¬ ë³µì¡í ì¶ë¡ (Role, ê´ê³ ë¶ì)ìì ì íë ë¶ì¡±.
 
-**해결책**: 에이전트별 중요도에 따라 3개 tier 모델 할당.
+**í´ê²°ì±**: ìì´ì í¸ë³ ì¤ìëì ë°ë¼ 3ê° tier ëª¨ë¸ í ë¹.
 
-| Tier | 모델 | 에이전트 |
+| Tier | ëª¨ë¸ | ìì´ì í¸ |
 |------|------|----------|
 | basic | Claude 3 Haiku | inventory, stats |
 | standard | Claude 3.5 Sonnet | personality, appearance |
 | advanced | Claude 3.5 Sonnet v2 | identity, relations, dialogue_mood |
 
-**수정된 파일**: `llm.py`, 모든 character extraction 에이전트
+**ìì ë íì¼**: `llm.py`, ëª¨ë  character extraction ìì´ì í¸
 
 ---
 
-#### 20. 성능 최적화 - LLM Tier 다운그레이드 (2025-12-30)
+#### 20. ì±ë¥ ìµì í - LLM Tier ë¤ì´ê·¸ë ì´ë (2025-12-30)
 
-**문제**: 5500자 소설 분석에 약 90초 소요 (과도한 처리 시간).
+**ë¬¸ì **: 5500ì ìì¤ ë¶ìì ì½ 90ì´ ìì (ê³¼ëí ì²ë¦¬ ìê°).
 
-**원인 분석**: 
-- 간단한 추출 작업(인벤토리, 성격, 배경)에도 고성능 모델(Claude 3.5 Haiku) 사용
-- LLM 호출당 응답 시간이 성능 병목
+**ìì¸ ë¶ì**: 
+- ê°ë¨í ì¶ì¶ ìì(ì¸ë²¤í ë¦¬, ì±ê²©, ë°°ê²½)ìë ê³ ì±ë¥ ëª¨ë¸(Claude 3.5 Haiku) ì¬ì©
+- LLM í¸ì¶ë¹ ìëµ ìê°ì´ ì±ë¥ ë³ëª©
 
-**해결책**: 단순 추출 에이전트를 `basic` tier(Claude 3 Haiku)로 다운그레이드.
+**í´ê²°ì±**: ë¨ì ì¶ì¶ ìì´ì í¸ë¥¼ `basic` tier(Claude 3 Haiku)ë¡ ë¤ì´ê·¸ë ì´ë.
 
-| 에이전트 | 변경 전 | 변경 후 | 이유 |
+| ìì´ì í¸ | ë³ê²½ ì  | ë³ê²½ í | ì´ì  |
 |---------|---------|---------|------|
-| inventory | standard | **basic** | 아이템 목록 추출은 단순 작업 |
-| personality | standard | **basic** | 성격 키워드 분류는 단순 작업 |
-| setting | standard | **basic** | 배경 묘사 추출은 단순 작업 |
-| stats | basic | basic (유지) | 이미 최적화됨 |
-| identity | standard | standard (유지) | Role 추론에 높은 정확도 필요 |
-| appearance | standard | standard (유지) | 시각 프롬프트 생성에 품질 필요 |
-| dialogue_mood | advanced | advanced (유지) | TTS 통합에 복잡한 분석 필요 |
+| inventory | standard | **basic** | ìì´í ëª©ë¡ ì¶ì¶ì ë¨ì ìì |
+| personality | standard | **basic** | ì±ê²© í¤ìë ë¶ë¥ë ë¨ì ìì |
+| setting | standard | **basic** | ë°°ê²½ ë¬ì¬ ì¶ì¶ì ë¨ì ìì |
+| stats | basic | basic (ì ì§) | ì´ë¯¸ ìµì íë¨ |
+| identity | standard | standard (ì ì§) | Role ì¶ë¡ ì ëì ì íë íì |
+| appearance | standard | standard (ì ì§) | ìê° íë¡¬íí¸ ìì±ì íì§ íì |
+| dialogue_mood | advanced | advanced (ì ì§) | TTS íµí©ì ë³µì¡í ë¶ì íì |
 
-**예상 개선**: 처리 시간 20-30% 단축 (90초 → 60-70초)
+**ìì ê°ì **: ì²ë¦¬ ìê° 20-30% ë¨ì¶ (90ì´ â 60-70ì´)
 
-**수정된 파일**: 
-- `app/agents/extraction/character/inventory.py` - tier: standard → basic
-- `app/agents/extraction/character/personality.py` - tier: standard → basic
-- `app/agents/extraction/setting.py` - tier: standard → basic
+**ìì ë íì¼**: 
+- `app/agents/extraction/character/inventory.py` - tier: standard â basic
+- `app/agents/extraction/character/personality.py` - tier: standard â basic
+- `app/agents/extraction/setting.py` - tier: standard â basic
 
 ---
 
-#### 21. 재추출 루프로 인한 성능 저하 (2025-12-30)
+#### 21. ì¬ì¶ì¶ ë£¨íë¡ ì¸í ì±ë¥ ì í (2025-12-30)
 
-**문제**: 5500자 소설 분석 시간이 90초 → 409초로 4.5배 증가.
+**ë¬¸ì **: 5500ì ìì¤ ë¶ì ìê°ì´ 90ì´ â 409ì´ë¡ 4.5ë°° ì¦ê°.
 
-**원인 분석**: 
-- Consistency Check의 `requires_reextraction` 조건이 너무 엄격함
-- 기존 조건: `score <= 50 OR HIGH severity >= 1` → 재추출 트리거
-- HIGH severity 1개만 있어도 전체 파이프라인 재실행 (최대 3회)
+**ìì¸ ë¶ì**: 
+- Consistency Checkì `requires_reextraction` ì¡°ê±´ì´ ëë¬´ ìê²©í¨
+- ê¸°ì¡´ ì¡°ê±´: `score <= 50 OR HIGH severity >= 1` â ì¬ì¶ì¶ í¸ë¦¬ê±°
+- HIGH severity 1ê°ë§ ìì´ë ì ì²´ íì´íë¼ì¸ ì¬ì¤í (ìµë 3í)
 
-**증상**:
+**ì¦ì**:
 ```
 [trace-xxx] Consistency requires re-extraction
 [trace-xxx] -> extraction (retry: 2/3)
 ```
 
-**해결책**: 재추출 임계값 완화
+**í´ê²°ì±**: ì¬ì¶ì¶ ìê³ê° ìí
 
-| 조건 | 변경 전 | 변경 후 |
+| ì¡°ê±´ | ë³ê²½ ì  | ë³ê²½ í |
 |------|---------|---------|
-| 점수 임계값 | ≤ 50 | **≤ 30** |
-| HIGH severity | ≥ 1개 | **≥ 2개** |
+| ì ì ìê³ê° | â¤ 50 | **â¤ 30** |
+| HIGH severity | â¥ 1ê° | **â¥ 2ê°** |
 
-**기대 효과**: 
-- 단일 HIGH severity 문제로는 재추출 안 함 (human_review로 처리)
-- 실제로 심각한 문제(점수 30 이하 또는 HIGH 2개 이상)만 재추출
+**ê¸°ë í¨ê³¼**: 
+- ë¨ì¼ HIGH severity ë¬¸ì ë¡ë ì¬ì¶ì¶ ì í¨ (human_reviewë¡ ì²ë¦¬)
+- ì¤ì ë¡ ì¬ê°í ë¬¸ì (ì ì 30 ì´í ëë HIGH 2ê° ì´ì)ë§ ì¬ì¶ì¶
 
-**수정된 파일**: 
-- `app/agents/analysis/consistency.py` - requires_reextraction 임계값 변경
-
----
-
-#### 22. 종합 성능 최적화 (4가지 방안) - 2025-12-30
-
-**문제**: 
-1. Personality 추출 품질 저하 (빈 배열 반환)
-2. 캐릭터 이름 중복 (한글/영문 동일 인물 2번 추출)
-3. AI 캐릭터(ARIA)에 불필요한 에이전트 실행
-4. 처리 시간 ~94초
-
-**해결책**:
-
-**방안 1: Personality Agent Tier 복원**
-- 원인: `basic` tier(Haiku)가 빈 성격 배열 반환
-- 해결: `standard` tier로 복원
-- 파일: `personality.py`
-
-**방안 2: 캐릭터 이름 정규화**
-- 원인: LLM이 "세라"와 "Sera"를 별도 캐릭터로 추출
-- 해결: `identity.py`에 후처리 로직 추가
-  - 스토리에서 "베라(Vera)" 패턴 감지 → 영문 삭제
-  - 한글-로마자 변환으로 중복 감지 (리안 ↔ Lian)
-- 파일: `identity.py`
-
-**방안 3: AI 캐릭터 에이전트 스킵**
-- 원인: ARIA(뇌 임플란트 AI)에게도 appearance/inventory/stats 실행
-- 해결:
-  - `identity.py`: AI 캐릭터 감지 (`race`에 "인공지능", "임플란트" 등)
-  - `supervisor.py`: AI 캐릭터만 있을 경우 물리적 에이전트 스킵
-- 파일: `identity.py`, `supervisor.py`
-
-**방안 4: 배치 LLM 호출 (확인)**
-- 분석: 이미 에이전트별 1회 LLM 호출로 모든 캐릭터 처리 중
-- 상태: 추가 변경 불필요 (이미 최적화됨)
-
-**예상 효과**:
-- 품질: Personality 데이터 정상 추출
-- 정확도: 중복 캐릭터 제거 (7명 → 5명)
-- 속도: AI 캐릭터 스킵으로 ~10-15초 절감
-
-**수정된 파일**:
-- `app/agents/extraction/character/personality.py` - tier: basic → standard
-- `app/agents/extraction/character/identity.py` - 이름 정규화 + AI 감지
-- `app/agents/extraction/character/supervisor.py` - AI 캐릭터 에이전트 스킵
+**ìì ë íì¼**: 
+- `app/agents/analysis/consistency.py` - requires_reextraction ìê³ê° ë³ê²½
 
 ---
 
-#### 23. max_tokens 티어별 최적화 - 2025-12-30
+#### 22. ì¢í© ì±ë¥ ìµì í (4ê°ì§ ë°©ì) - 2025-12-30
 
-**문제**: 모든 LLM 호출에 `max_tokens=4096` 사용으로 불필요한 토큰 생성 및 지연 발생.
+**ë¬¸ì **: 
+1. Personality ì¶ì¶ íì§ ì í (ë¹ ë°°ì´ ë°í)
+2. ìºë¦­í° ì´ë¦ ì¤ë³µ (íê¸/ìë¬¸ ëì¼ ì¸ë¬¼ 2ë² ì¶ì¶)
+3. AI ìºë¦­í°(ARIA)ì ë¶íìí ìì´ì í¸ ì¤í
+4. ì²ë¦¬ ìê° ~94ì´
 
-**해결책**: 티어별 최적화된 max_tokens 기본값 설정
+**í´ê²°ì±**:
 
-| Tier | 모델 | max_tokens | 용도 |
+**ë°©ì 1: Personality Agent Tier ë³µì**
+- ìì¸: `basic` tier(Haiku)ê° ë¹ ì±ê²© ë°°ì´ ë°í
+- í´ê²°: `standard` tierë¡ ë³µì
+- íì¼: `personality.py`
+
+**ë°©ì 2: ìºë¦­í° ì´ë¦ ì ê·í**
+- ìì¸: LLMì´ "ì¸ë¼"ì "Sera"ë¥¼ ë³ë ìºë¦­í°ë¡ ì¶ì¶
+- í´ê²°: `identity.py`ì íì²ë¦¬ ë¡ì§ ì¶ê°
+  - ì¤í ë¦¬ìì "ë² ë¼(Vera)" í¨í´ ê°ì§ â ìë¬¸ ì­ì 
+  - íê¸-ë¡ë§ì ë³íì¼ë¡ ì¤ë³µ ê°ì§ (ë¦¬ì â Lian)
+- íì¼: `identity.py`
+
+**ë°©ì 3: AI ìºë¦­í° ìì´ì í¸ ì¤íµ**
+- ìì¸: ARIA(ë ìíëí¸ AI)ìê²ë appearance/inventory/stats ì¤í
+- í´ê²°:
+  - `identity.py`: AI ìºë¦­í° ê°ì§ (`race`ì "ì¸ê³µì§ë¥", "ìíëí¸" ë±)
+  - `supervisor.py`: AI ìºë¦­í°ë§ ìì ê²½ì° ë¬¼ë¦¬ì  ìì´ì í¸ ì¤íµ
+- íì¼: `identity.py`, `supervisor.py`
+
+**ë°©ì 4: ë°°ì¹ LLM í¸ì¶ (íì¸)**
+- ë¶ì: ì´ë¯¸ ìì´ì í¸ë³ 1í LLM í¸ì¶ë¡ ëª¨ë  ìºë¦­í° ì²ë¦¬ ì¤
+- ìí: ì¶ê° ë³ê²½ ë¶íì (ì´ë¯¸ ìµì íë¨)
+
+**ìì í¨ê³¼**:
+- íì§: Personality ë°ì´í° ì ì ì¶ì¶
+- ì íë: ì¤ë³µ ìºë¦­í° ì ê±° (7ëª â 5ëª)
+- ìë: AI ìºë¦­í° ì¤íµì¼ë¡ ~10-15ì´ ì ê°
+
+**ìì ë íì¼**:
+- `app/agents/extraction/character/personality.py` - tier: basic â standard
+- `app/agents/extraction/character/identity.py` - ì´ë¦ ì ê·í + AI ê°ì§
+- `app/agents/extraction/character/supervisor.py` - AI ìºë¦­í° ìì´ì í¸ ì¤íµ
+
+---
+
+#### 23. max_tokens í°ì´ë³ ìµì í - 2025-12-30
+
+**ë¬¸ì **: ëª¨ë  LLM í¸ì¶ì `max_tokens=4096` ì¬ì©ì¼ë¡ ë¶íìí í í° ìì± ë° ì§ì° ë°ì.
+
+**í´ê²°ì±**: í°ì´ë³ ìµì íë max_tokens ê¸°ë³¸ê° ì¤ì 
+
+| Tier | ëª¨ë¸ | max_tokens | ì©ë |
 |------|------|------------|------|
-| basic | Claude 3 Haiku | **1024** | 단순 분류, 라우팅 |
-| standard | Claude 3.5 Haiku | **2048** | 추출, 요약 |
-| advanced | Claude 4.5 Haiku | 4096 | 복잡한 분석 |
+| basic | Claude 3 Haiku | **1024** | ë¨ì ë¶ë¥, ë¼ì°í |
+| standard | Claude 3.5 Haiku | **2048** | ì¶ì¶, ìì½ |
+| advanced | Claude 4.5 Haiku | 4096 | ë³µì¡í ë¶ì |
 
-**원리**:
-- LLM은 max_tokens까지 생성할 "여유"를 두고 추론
-- 작은 max_tokens = 더 빠른 토큰 생성 시작
-- 대부분의 에이전트는 2048 토큰 미만 응답
+**ìë¦¬**:
+- LLMì max_tokensê¹ì§ ìì±í  "ì¬ì "ë¥¼ ëê³  ì¶ë¡ 
+- ìì max_tokens = ë ë¹ ë¥¸ í í° ìì± ìì
+- ëë¶ë¶ì ìì´ì í¸ë 2048 í í° ë¯¸ë§ ìëµ
 
-**구현**:
+**êµ¬í**:
 ```python
 # llm.py
 model_configs = {
@@ -2207,48 +2208,48 @@ model_configs = {
 effective_max_tokens = config.get("default_max_tokens", 4096)
 ```
 
-**예상 효과**: 에이전트당 1-2초 절감 (총 10-15초)
+**ìì í¨ê³¼**: ìì´ì í¸ë¹ 1-2ì´ ì ê° (ì´ 10-15ì´)
 
-**수정된 파일**: `app/agents/llm.py`
+**ìì ë íì¼**: `app/agents/llm.py`
 
 ---
 
-## 18. Schema v2.0 리팩토링 및 Neo4j RAG 구현
+## 18. Schema v2.0 ë¦¬í©í ë§ ë° Neo4j RAG êµ¬í
 
-### 📅 날짜
+### ð ë ì§
 2025-12-31
 
-### 🔍 문제
-1. 불필요한 필드들로 인해 출력 JSON이 비대하고 처리 속도가 느림
-2. Consistency 검사가 현재 챕터 내에서만 수행되어 이전 챕터와의 모순 감지 불가
-3. Dialogue/Emotion Agent가 Consistency 검사에 실질적 기여가 없음
+### ð ë¬¸ì 
+1. ë¶íìí íëë¤ë¡ ì¸í´ ì¶ë ¥ JSONì´ ë¹ëíê³  ì²ë¦¬ ìëê° ëë¦¼
+2. Consistency ê²ì¬ê° íì¬ ì±í° ë´ììë§ ìíëì´ ì´ì  ì±í°ìì ëª¨ì ê°ì§ ë¶ê°
+3. Dialogue/Emotion Agentê° Consistency ê²ì¬ì ì¤ì§ì  ê¸°ì¬ê° ìì
 
-### 💡 원인 분석
-- `stats`, `combat`, `state`, `economy` 등 게임 전용 필드가 소설 분석에 불필요
-- `dialogues`, `emotions` 필드가 개연성 검사에서 참조되지만 명시적 검사 규칙 없음
-- 이전 캐릭터/이벤트 데이터를 조회할 RAG 시스템 부재
+### ð¡ ìì¸ ë¶ì
+- `stats`, `combat`, `state`, `economy` ë± ê²ì ì ì© íëê° ìì¤ ë¶ìì ë¶íì
+- `dialogues`, `emotions` íëê° ê°ì°ì± ê²ì¬ìì ì°¸ì¡°ëì§ë§ ëªìì  ê²ì¬ ê·ì¹ ìì
+- ì´ì  ìºë¦­í°/ì´ë²¤í¸ ë°ì´í°ë¥¼ ì¡°íí  RAG ìì¤í ë¶ì¬
 
-### ✅ 해결 방법
+### â í´ê²° ë°©ë²
 
-#### 1. fix.md 기반 스키마 간소화
+#### 1. fix.md ê¸°ë° ì¤í¤ë§ ê°ìí
 ```
-제거된 필드:
+ì ê±°ë íë:
 - Global: dialogues, emotions
 - Characters: name(root), stats, combat, state, visual, economy, final_stats
 - Events: is_foreshadowing, foreshadowing_tag
 - Plot: foreshadowing, tension_curve, three_act_structure, narrative_beats
 
-구조 변경:
-- social → profile.faction.social 마이그레이션
-- plot_integration → plot 이름 변경
+êµ¬ì¡° ë³ê²½:
+- social â profile.faction.social ë§ì´ê·¸ë ì´ì
+- plot_integration â plot ì´ë¦ ë³ê²½
 ```
 
-#### 2. 에이전트 삭제
-- `dialogue.py`, `emotion.py` - Dialogue/Emotion Agent 삭제
-- `stats.py` - Stats Agent 삭제
-- 관련 스키마 파일 삭제 (`dialogues.py`, `emotions.py`)
+#### 2. ìì´ì í¸ ì­ì 
+- `dialogue.py`, `emotion.py` - Dialogue/Emotion Agent ì­ì 
+- `stats.py` - Stats Agent ì­ì 
+- ê´ë ¨ ì¤í¤ë§ íì¼ ì­ì  (`dialogues.py`, `emotions.py`)
 
-#### 3. RelationType enum 간소화
+#### 3. RelationType enum ê°ìí
 ```python
 class RelationType(str, Enum):
     ROMANCE = "Romance"
@@ -2258,16 +2259,16 @@ class RelationType(str, Enum):
     UNKNOWN = "Unknown"
 ```
 
-#### 4. Neo4j RAG 구현
+#### 4. Neo4j RAG êµ¬í
 ```python
-# db_query_service.py에 추가
+# db_query_service.pyì ì¶ê°
 async def get_embedding(text: str) -> list[float]
 async def search_similar_characters(project_id, embedding, top_k)
 async def search_similar_events(project_id, embedding, top_k)
 async def retrieve_relevant_history(project_id, characters, events)
 ```
 
-#### 5. CROSS_CHAPTER_CONFLICT 타입 추가
+#### 5. CROSS_CHAPTER_CONFLICT íì ì¶ê°
 ```
 7. **CROSS_CHAPTER_CONFLICT** (HIGH)
    - Character marked "deceased" in previous chapter appears alive
@@ -2275,7 +2276,7 @@ async def retrieve_relevant_history(project_id, characters, events)
    - Event contradicts previously established facts
 ```
 
-#### 6. Character Embedding 생성
+#### 6. Character Embedding ìì±
 ```python
 # aggregator.py
 full_char = {
@@ -2284,46 +2285,46 @@ full_char = {
 }
 ```
 
-#### 7. Event Embedding 생성 (추가)
+#### 7. Event Embedding ìì± (ì¶ê°)
 ```python
-# event.py - 각 이벤트마다 생성
+# event.py - ê° ì´ë²¤í¸ë§ë¤ ìì±
 event["embedding"] = generate_event_embedding(
-    narrative_summary,  # "아린이 마족과 전투를 시작함"
-    participants        # ["아린", "마족 전사"]
+    narrative_summary,  # "ìë¦°ì´ ë§ì¡±ê³¼ ì í¬ë¥¼ ììí¨"
+    participants        # ["ìë¦°", "ë§ì¡± ì ì¬"]
 )
 ```
 
-### 📁 수정된 파일
-| 파일 | 변경 내용 |
+### ð ìì ë íì¼
+| íì¼ | ë³ê²½ ë´ì© |
 |------|----------|
-| `app/schemas/relationships.py` | RelationType 5개 값으로 변경 |
-| `app/schemas/plot.py` | PlotIntegrationResult → PlotResult 간소화 |
-| `app/schemas/events.py` | foreshadowing 필드 제거 |
-| `app/schemas/callback.py` | dialogues/emotions 제거, plot_integration → plot |
-| `app/agents/extraction/character/aggregator.py` | SAFE_DEFAULTS 간소화, 캐릭터 embedding 생성 |
-| `app/agents/extraction/character/supervisor.py` | stats 에이전트 제거 |
-| `app/agents/extraction/event.py` | **이벤트 embedding 생성 추가** |
-| `app/agents/graph.py` | Dialogue/Emotion Agent 호출 제거 |
-| `app/agents/analysis/consistency.py` | CROSS_CHAPTER_CONFLICT + RAG 통합 |
-| `app/agents/analysis/plot.py` | 간소화된 PlotResult 사용 |
-| `app/services/db_query_service.py` | 벡터 검색 함수 추가 (RAG) |
+| `app/schemas/relationships.py` | RelationType 5ê° ê°ì¼ë¡ ë³ê²½ |
+| `app/schemas/plot.py` | PlotIntegrationResult â PlotResult ê°ìí |
+| `app/schemas/events.py` | foreshadowing íë ì ê±° |
+| `app/schemas/callback.py` | dialogues/emotions ì ê±°, plot_integration â plot |
+| `app/agents/extraction/character/aggregator.py` | SAFE_DEFAULTS ê°ìí, ìºë¦­í° embedding ìì± |
+| `app/agents/extraction/character/supervisor.py` | stats ìì´ì í¸ ì ê±° |
+| `app/agents/extraction/event.py` | **ì´ë²¤í¸ embedding ìì± ì¶ê°** |
+| `app/agents/graph.py` | Dialogue/Emotion Agent í¸ì¶ ì ê±° |
+| `app/agents/analysis/consistency.py` | CROSS_CHAPTER_CONFLICT + RAG íµí© |
+| `app/agents/analysis/plot.py` | ê°ìíë PlotResult ì¬ì© |
+| `app/services/db_query_service.py` | ë²¡í° ê²ì í¨ì ì¶ê° (RAG) |
 
-### ✅ 결과
-- 출력 JSON 크기 40-50% 감소
-- Character Team: 7개 → 6개 서브에이전트
-- **캐릭터 + 이벤트 모두 embedding 생성** → 유사 상황 검색 가능
-- Consistency 검사에서 이전 챕터 캐릭터/이벤트 RAG 검색 가능
-- Spring Boot에서 embedding 필드 그대로 Neo4j에 저장하면 벡터 검색 활성화
+### â ê²°ê³¼
+- ì¶ë ¥ JSON í¬ê¸° 40-50% ê°ì
+- Character Team: 7ê° â 6ê° ìë¸ìì´ì í¸
+- **ìºë¦­í° + ì´ë²¤í¸ ëª¨ë embedding ìì±** â ì ì¬ ìí© ê²ì ê°ë¥
+- Consistency ê²ì¬ìì ì´ì  ì±í° ìºë¦­í°/ì´ë²¤í¸ RAG ê²ì ê°ë¥
+- Spring Bootìì embedding íë ê·¸ëë¡ Neo4jì ì ì¥íë©´ ë²¡í° ê²ì íì±í
 
-### 📝 Spring Boot 작업 필요
+### ð Spring Boot ìì íì
 ```cypher
--- Neo4j 벡터 인덱스 생성 (5.11+)
--- 캐릭터용
+-- Neo4j ë²¡í° ì¸ë±ì¤ ìì± (5.11+)
+-- ìºë¦­í°ì©
 CREATE VECTOR INDEX character_embedding IF NOT EXISTS
 FOR (c:Character) ON (c.embedding)
 OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'cosine'}}
 
--- 이벤트용 (NEW!)
+-- ì´ë²¤í¸ì© (NEW!)
 CREATE VECTOR INDEX event_embedding IF NOT EXISTS
 FOR (e:Event) ON (e.embedding)
 OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'cosine'}}
@@ -2331,198 +2332,198 @@ OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 
 
 ---
 
-## 템플릿 (새 이슈 추가 시 사용)
+## ííë¦¿ (ì ì´ì ì¶ê° ì ì¬ì©)
 
 ```markdown
-## N. [에이전트명] - [문제 요약]
+## N. [ìì´ì í¸ëª] - [ë¬¸ì  ìì½]
 
-### 📅 날짜
+### ð ë ì§
 [YYYY-MM-DD]
 
-### 🔍 문제
-[문제 설명]
+### ð ë¬¸ì 
+[ë¬¸ì  ì¤ëª]
 
-### 💡 원인 분석
-[원인]
+### ð¡ ìì¸ ë¶ì
+[ìì¸]
 
-### ✅ 해결 방법
-[해결 방법]
+### â í´ê²° ë°©ë²
+[í´ê²° ë°©ë²]
 
-### 📁 수정된 파일
-- [파일 목록]
+### ð ìì ë íì¼
+- [íì¼ ëª©ë¡]
 
-### ✅ 결과
-[결과]
+### â ê²°ê³¼
+[ê²°ê³¼]
 ```
 
 ---
 
-## 19. 대용량 데이터 처리 아키텍처 재설계 (Architecture Redesign)
+## 19. ëì©ë ë°ì´í° ì²ë¦¬ ìí¤íì² ì¬ì¤ê³ (Architecture Redesign)
 
-### 📅 날짜
+### ð ë ì§
 2026-01-01
 
-### 🎯 목표
-365개 챕터(대용량 소설) 업로드 시 **0.5초 이내 초기 응답** + **비동기 AI 분석** 아키텍처 설계
+### ð¯ ëª©í
+365ê° ì±í°(ëì©ë ìì¤) ìë¡ë ì **0.5ì´ ì´ë´ ì´ê¸° ìëµ** + **ë¹ëê¸° AI ë¶ì** ìí¤íì² ì¤ê³
 
 ---
 
-## 1️⃣ 제안된 워크플로우 (Original Workflow)
+## 1ï¸â£ ì ìë ìí¬íë¡ì° (Original Workflow)
 
-### 시스템 아키텍처 (3단계)
-1. **Ingestion (Spring)**: 원본 저장 및 1차 물리 분할 (초고속)
-2. **Processing (Python)**: 2차 논리/의미 분할 및 AI 분석 (정밀)
-3. **Serving (Client)**: 결과 시각화 (지연 로딩)
+### ìì¤í ìí¤íì² (3ë¨ê³)
+1. **Ingestion (Spring)**: ìë³¸ ì ì¥ ë° 1ì°¨ ë¬¼ë¦¬ ë¶í  (ì´ê³ ì)
+2. **Processing (Python)**: 2ì°¨ ë¼ë¦¬/ìë¯¸ ë¶í  ë° AI ë¶ì (ì ë°)
+3. **Serving (Client)**: ê²°ê³¼ ìê°í (ì§ì° ë¡ë©)
 
-### Phase 1: 업로드 및 초고속 초기화 (Client → Spring) - **0.5초 목표**
-| 단계 | 작업 | 설명 |
+### Phase 1: ìë¡ë ë° ì´ê³ ì ì´ê¸°í (Client â Spring) - **0.5ì´ ëª©í**
+| ë¨ê³ | ìì | ì¤ëª |
 |------|------|------|
-| 1 | 파일 수신 | `POST /api/projects/upload` |
-| 2 | S3 저장 | `raw/{uuid}.txt` 즉시 업로드 (Safety First) |
-| 3 | Project 생성 | DB `project` 테이블 레코드 생성 |
-| 4 | Regex 분할 | Java 정규식으로 365개 챕터 분할 |
-| 5 | Bulk Insert | `chapter` 테이블에 365개 레코드 한 번에 저장 |
-| 6 | 메시지 발행 | RabbitMQ에 365개 메시지 Fan-out |
-| 7 | 응답 리턴 | `200 OK + projectId` (사용자는 즉시 챕터 목록 확인 가능) |
+| 1 | íì¼ ìì  | `POST /api/projects/upload` |
+| 2 | S3 ì ì¥ | `raw/{uuid}.txt` ì¦ì ìë¡ë (Safety First) |
+| 3 | Project ìì± | DB `project` íì´ë¸ ë ì½ë ìì± |
+| 4 | Regex ë¶í  | Java ì ê·ìì¼ë¡ 365ê° ì±í° ë¶í  |
+| 5 | Bulk Insert | `chapter` íì´ë¸ì 365ê° ë ì½ë í ë²ì ì ì¥ |
+| 6 | ë©ìì§ ë°í | RabbitMQì 365ê° ë©ìì§ Fan-out |
+| 7 | ìëµ ë¦¬í´ | `200 OK + projectId` (ì¬ì©ìë ì¦ì ì±í° ëª©ë¡ íì¸ ê°ë¥) |
 
-### Phase 2: 비동기 정밀 분석 (RabbitMQ → Python)
-| 단계 | 작업 | 설명 |
+### Phase 2: ë¹ëê¸° ì ë° ë¶ì (RabbitMQ â Python)
+| ë¨ê³ | ìì | ì¤ëª |
 |------|------|------|
-| 1 | 메시지 수신 | 워커(1~10)가 `chapterId` 가져감 |
-| 2 | DB 조회 | `chapter` 테이블에서 content 조회 |
-| 3 | Semantic Chunking | 문장 임베딩 → 의미 단위 분할 |
-| 4 | AI 요약 | LLM으로 `nav_title` 생성 |
-| 5 | 섹션 저장 | `section` 테이블에 Bulk Insert |
-| 6 | 상태 갱신 | `chapter.status = COMPLETED` |
+| 1 | ë©ìì§ ìì  | ìì»¤(1~10)ê° `chapterId` ê°ì ¸ê° |
+| 2 | DB ì¡°í | `chapter` íì´ë¸ìì content ì¡°í |
+| 3 | Semantic Chunking | ë¬¸ì¥ ìë² ë© â ìë¯¸ ë¨ì ë¶í  |
+| 4 | AI ìì½ | LLMì¼ë¡ `nav_title` ìì± |
+| 5 | ì¹ì ì ì¥ | `section` íì´ë¸ì Bulk Insert |
+| 6 | ìí ê°±ì  | `chapter.status = COMPLETED` |
 
-### Phase 3: 결과 조회 (Client ↔ Spring)
-- SSE/폴링으로 챕터 상태 실시간 갱신
-- 완료된 챕터 클릭 시 `GET /api/chapters/{id}/sections` 호출
+### Phase 3: ê²°ê³¼ ì¡°í (Client â Spring)
+- SSE/í´ë§ì¼ë¡ ì±í° ìí ì¤ìê° ê°±ì 
+- ìë£ë ì±í° í´ë¦­ ì `GET /api/chapters/{id}/sections` í¸ì¶
 
 ---
 
-## 2️⃣ 사용자 질문 및 시니어 개발자 응답
+## 2ï¸â£ ì¬ì©ì ì§ë¬¸ ë° ìëì´ ê°ë°ì ìëµ
 
-### Q1: RabbitMQ에 content를 담는 것 vs DB 조회?
+### Q1: RabbitMQì contentë¥¼ ë´ë ê² vs DB ì¡°í?
 
-**응답: DB 조회 방식 압도적 유리 (Claim Check Pattern)**
+**ìëµ: DB ì¡°í ë°©ì ìëì  ì ë¦¬ (Claim Check Pattern)**
 
-| 기준 | Content 포함 | ID만 전송 |
+| ê¸°ì¤ | Content í¬í¨ | IDë§ ì ì¡ |
 |------|-------------|-----------|
-| RabbitMQ 부하 | 높음 (OOM 위험) | 낮음 |
-| 재시도 비용 | 높음 | 낮음 (ID만 재전송) |
-| 데이터 일관성 | 메시지 시점 고정 | 항상 최신 |
+| RabbitMQ ë¶í | ëì (OOM ìí) | ë®ì |
+| ì¬ìë ë¹ì© | ëì | ë®ì (IDë§ ì¬ì ì¡) |
+| ë°ì´í° ì¼ê´ì± | ë©ìì§ ìì  ê³ ì  | í­ì ìµì  |
 
-**권장 Flow:**
+**ê¶ì¥ Flow:**
 ```
-RabbitMQ: {"projectId": 1, "chapterId": 101}  (가벼움)
-     ↓
+RabbitMQ: {"projectId": 1, "chapterId": 101}  (ê°ë²¼ì)
+     â
 Python: SELECT content FROM chapter WHERE id=101
 ```
 
-### Q2: 문장 임베딩 vs Neo4j 활용?
+### Q2: ë¬¸ì¥ ìë² ë© vs Neo4j íì©?
 
-**응답: 하이브리드 전략 추천**
+**ìëµ: íì´ë¸ë¦¬ë ì ëµ ì¶ì²**
 
-1. **문장 임베딩 기반 Semantic Chunking** (Base)
-   - 앞/뒷 문장 유사도 급락점 = 장면 전환점
-   - 사람이 느끼는 "문단 전환"을 기계적으로 탐지
+1. **ë¬¸ì¥ ìë² ë© ê¸°ë° Semantic Chunking** (Base)
+   - ì/ë· ë¬¸ì¥ ì ì¬ë ê¸ë½ì  = ì¥ë©´ ì íì 
+   - ì¬ëì´ ëë¼ë "ë¬¸ë¨ ì í"ì ê¸°ê³ì ì¼ë¡ íì§
 
-2. **Neo4j 메타데이터 태깅** (Enrichment)
-   - 분할된 Section에 캐릭터/이벤트 키워드 매핑
-   - `relates_to: ['철수', '영희']` 태그 추가
-   - RAG 검색 시 메타데이터 필터 활용
+2. **Neo4j ë©íë°ì´í° íê¹** (Enrichment)
+   - ë¶í ë Sectionì ìºë¦­í°/ì´ë²¤í¸ í¤ìë ë§¤í
+   - `relates_to: ['ì² ì', 'ìí¬']` íê·¸ ì¶ê°
+   - RAG ê²ì ì ë©íë°ì´í° íí° íì©
 
 ---
 
-## 3️⃣ 추가 고려사항 및 질문 (Antigravity 분석)
+## 3ï¸â£ ì¶ê° ê³ ë ¤ì¬í­ ë° ì§ë¬¸ (Antigravity ë¶ì)
 
-### A. 챕터 간 캐릭터 일관성 문제
+### A. ì±í° ê° ìºë¦­í° ì¼ê´ì± ë¬¸ì 
 
-**질문**: 1장에서 추출된 `char-이안-001`이 50장에서도 동일 인물로 인식되나?
+**ì§ë¬¸**: 1ì¥ìì ì¶ì¶ë `char-ì´ì-001`ì´ 50ì¥ììë ëì¼ ì¸ë¬¼ë¡ ì¸ìëë?
 
-**분석 결과**: ✅ **이미 지원됨**
+**ë¶ì ê²°ê³¼**: â **ì´ë¯¸ ì§ìë¨**
 ```python
-# aggregator.py (라인 546-580)
+# aggregator.py (ë¼ì¸ 546-580)
 existing_char = existing_lookup.get(canonical_name)
 if existing_char:
-    char_id = existing_char.get("id", ...)  # ID 재사용
+    char_id = existing_char.get("id", ...)  # ID ì¬ì¬ì©
 ```
 
-**조건**: `existing_characters`로 이전 챕터 캐릭터 전달 필요
+**ì¡°ê±´**: `existing_characters`ë¡ ì´ì  ì±í° ìºë¦­í° ì ë¬ íì
 
-### B. 순차 vs 병렬 처리
+### B. ìì°¨ vs ë³ë ¬ ì²ë¦¬
 
-| 방식 | 장점 | 단점 |
+| ë°©ì | ì¥ì  | ë¨ì  |
 |------|------|------|
-| 순차 처리 | 맥락 정확 | 느림 (180분+) |
-| 병렬 처리 | 빠름 | "그녀" 등 대명사 해석 불가 |
+| ìì°¨ ì²ë¦¬ | ë§¥ë½ ì í | ëë¦¼ (180ë¶+) |
+| ë³ë ¬ ì²ë¦¬ | ë¹ ë¦ | "ê·¸ë" ë± ëëªì¬ í´ì ë¶ê° |
 
-### C. 0.5초 목표 달성 가능성
+### C. 0.5ì´ ëª©í ë¬ì± ê°ë¥ì±
 
-**RabbitMQ 기본 설정**: 365개 메시지 개별 발행 → **불가능**
-**Batch 모드 필요**: 네트워크 왕복 1회로 365개 발행 → **가능**
+**RabbitMQ ê¸°ë³¸ ì¤ì **: 365ê° ë©ìì§ ê°ë³ ë°í â **ë¶ê°ë¥**
+**Batch ëª¨ë íì**: ë¤í¸ìí¬ ìë³µ 1íë¡ 365ê° ë°í â **ê°ë¥**
 
-### D. 실시간 상태 폴링
+### D. ì¤ìê° ìí í´ë§
 
-**추천**: SSE + Redis Pub/Sub
-- 폴링보다 DB 부하 감소
-- WebSocket보다 구현 간단
+**ì¶ì²**: SSE + Redis Pub/Sub
+- í´ë§ë³´ë¤ DB ë¶í ê°ì
+- WebSocketë³´ë¤ êµ¬í ê°ë¨
 
-### E. 챕터 분할 Fallback
+### E. ì±í° ë¶í  Fallback
 
-**문제**: 모든 소설이 `제1장`, `Chapter 1` 패턴을 따르지 않음
+**ë¬¸ì **: ëª¨ë  ìì¤ì´ `ì 1ì¥`, `Chapter 1` í¨í´ì ë°ë¥´ì§ ìì
 
-### F. Section 임베딩 저장소
+### F. Section ìë² ë© ì ì¥ì
 
-**질문**: 캐릭터/이벤트는 Neo4j, Section 임베딩은 어디에?
+**ì§ë¬¸**: ìºë¦­í°/ì´ë²¤í¸ë Neo4j, Section ìë² ë©ì ì´ëì?
 
 ---
 
-## 4️⃣ 사용자 후속 질문에 대한 답변
+## 4ï¸â£ ì¬ì©ì íì ì§ë¬¸ì ëí ëµë³
 
-### Q1: 챕터별 분석 시 동일 캐릭터 인식 테스트?
+### Q1: ì±í°ë³ ë¶ì ì ëì¼ ìºë¦­í° ì¸ì íì¤í¸?
 
-**답변**: 현재 시스템 이미 `existing_characters` 기반 ID 재사용 지원
+**ëµë³**: íì¬ ìì¤í ì´ë¯¸ `existing_characters` ê¸°ë° ID ì¬ì¬ì© ì§ì
 
-**워크플로우:**
+**ìí¬íë¡ì°:**
 ```
-챕터 N 분석 완료 → DB에 캐릭터 저장
-     ↓
-챕터 N+1 분석 요청 → DB에서 기존 캐릭터 조회 → context.existing_characters로 전달
-     ↓
-Python이 이름 매칭 + ID 재사용
+ì±í° N ë¶ì ìë£ â DBì ìºë¦­í° ì ì¥
+     â
+ì±í° N+1 ë¶ì ìì²­ â DBìì ê¸°ì¡´ ìºë¦­í° ì¡°í â context.existing_charactersë¡ ì ë¬
+     â
+Pythonì´ ì´ë¦ ë§¤ì¹­ + ID ì¬ì¬ì©
 ```
 
-### Q2: 캐릭터 ID 일관성 유지 전략?
+### Q2: ìºë¦­í° ID ì¼ê´ì± ì ì§ ì ëµ?
 
-**추천: 순차-증분 분석**
+**ì¶ì²: ìì°¨-ì¦ë¶ ë¶ì**
 ```json
 POST /api/analysis/chapter/{chapterId}
 {
-  "content": "챕터 50 텍스트...",
+  "content": "ì±í° 50 íì¤í¸...",
   "context": {
     "existing_characters": [
-      {"id": "char-이안-001", "name": "이안", "aliases": ["Ian"]}
+      {"id": "char-ì´ì-001", "name": "ì´ì", "aliases": ["Ian"]}
     ]
   }
 }
 ```
 
-### Q3: 순차 vs 병렬?
+### Q3: ìì°¨ vs ë³ë ¬?
 
-**추천: 2-Pass 하이브리드 전략**
+**ì¶ì²: 2-Pass íì´ë¸ë¦¬ë ì ëµ**
 
-| Pass | 방식 | 목적 | 속도 |
+| Pass | ë°©ì | ëª©ì  | ìë |
 |------|------|------|------|
-| 1차 | 병렬 (10 워커) | 기본 추출 | 빠름 (~20분) |
-| 2차 | 순차 + 병합 | ID 통합, 관계 연결 | 느림 (~5분) |
+| 1ì°¨ | ë³ë ¬ (10 ìì»¤) | ê¸°ë³¸ ì¶ì¶ | ë¹ ë¦ (~20ë¶) |
+| 2ì°¨ | ìì°¨ + ë³í© | ID íµí©, ê´ê³ ì°ê²° | ëë¦¼ (~5ë¶) |
 
-**총 25분** (순차만 할 경우 180분+)
+**ì´ 25ë¶** (ìì°¨ë§ í  ê²½ì° 180ë¶+)
 
-### Q4: 0.5초 메시지 발행?
+### Q4: 0.5ì´ ë©ìì§ ë°í?
 
-**RabbitMQ Batch 모드로 가능:**
+**RabbitMQ Batch ëª¨ëë¡ ê°ë¥:**
 ```java
 rabbitTemplate.invoke(operations -> {
     for (ChapterMessage msg : messages) {
@@ -2533,59 +2534,59 @@ rabbitTemplate.invoke(operations -> {
 });
 ```
 
-**다른 MQ 불필요** - RabbitMQ Batch로 충분
+**ë¤ë¥¸ MQ ë¶íì** - RabbitMQ Batchë¡ ì¶©ë¶
 
-### Q5: SSE 추천 이유?
+### Q5: SSE ì¶ì² ì´ì ?
 
-| 기준 | 폴링 | SSE | WebSocket |
+| ê¸°ì¤ | í´ë§ | SSE | WebSocket |
 |------|------|-----|-----------|
-| 서버 부하 | 높음 | 낮음 | 낮음 |
-| HTTP 호환 | ✅ | ✅ | ❌ |
-| 양방향 | ❌ | ❌ | ✅ |
-| 복잡도 | 쉬움 | 보통 | 어려움 |
+| ìë² ë¶í | ëì | ë®ì | ë®ì |
+| HTTP í¸í | â | â | â |
+| ìë°©í¥ | â | â | â |
+| ë³µì¡ë | ì¬ì | ë³´íµ | ì´ë ¤ì |
 
-**SSE 추천 이유:**
-1. 상태 알림은 **서버→클라이언트 단방향**이면 충분
-2. HTTP 기반으로 **프록시/로드밸런서 친화적**
-3. WebSocket보다 **구현 간단**
+**SSE ì¶ì² ì´ì :**
+1. ìí ìë¦¼ì **ìë²âí´ë¼ì´ì¸í¸ ë¨ë°©í¥**ì´ë©´ ì¶©ë¶
+2. HTTP ê¸°ë°ì¼ë¡ **íë¡ì/ë¡ëë°¸ë°ì ì¹íì **
+3. WebSocketë³´ë¤ **êµ¬í ê°ë¨**
 
-### Q6: 챕터 분할 Fallback?
+### Q6: ì±í° ë¶í  Fallback?
 
-**Cascading Fallback 추천:**
+**Cascading Fallback ì¶ì²:**
 ```java
 public List<Chapter> splitChapters(String rawText) {
-    // 1차: 명시적 마커 (제1장, Chapter 1)
+    // 1ì°¨: ëªìì  ë§ì»¤ (ì 1ì¥, Chapter 1)
     List<Chapter> chapters = splitByExplicitMarkers(rawText);
     if (!chapters.isEmpty()) return chapters;
     
-    // 2차: 빈 줄 + 제목 패턴 (### 또는 **굵은**)
+    // 2ì°¨: ë¹ ì¤ + ì ëª© í¨í´ (### ëë **êµµì**)
     chapters = splitByParagraphHeaders(rawText);
     if (!chapters.isEmpty()) return chapters;
     
-    // 3차: 빈 줄 기반
+    // 3ì°¨: ë¹ ì¤ ê¸°ë°
     chapters = splitByDoubleNewline(rawText);
     if (chapters.size() >= 10) return chapters;
     
-    // 4차: 고정 글자 수 + 문장 경계 존중 (10,000자)
+    // 4ì°¨: ê³ ì  ê¸ì ì + ë¬¸ì¥ ê²½ê³ ì¡´ì¤ (10,000ì)
     return splitByCharacterCount(rawText, 10000, true);
 }
 ```
 
-### Q7: Section 임베딩 저장소?
+### Q7: Section ìë² ë© ì ì¥ì?
 
-**추천: PostgreSQL + pgvector**
+**ì¶ì²: PostgreSQL + pgvector**
 
-| 옵션 | 장점 | 단점 |
+| ìµì | ì¥ì  | ë¨ì  |
 |------|------|------|
-| **PostgreSQL + pgvector** | 운영 단순, 기존 인프라 | 10M+ 시 성능 한계 |
-| Neo4j Vector | 그래프 통합 | 느림 |
-| Qdrant | 최고 성능 | 추가 인프라 |
+| **PostgreSQL + pgvector** | ì´ì ë¨ì, ê¸°ì¡´ ì¸íë¼ | 10M+ ì ì±ë¥ íê³ |
+| Neo4j Vector | ê·¸ëí íµí© | ëë¦¼ |
+| Qdrant | ìµê³  ì±ë¥ | ì¶ê° ì¸íë¼ |
 
-**역할 분리:**
-- **Neo4j**: 캐릭터/이벤트 관계 (그래프 쿼리)
-- **PostgreSQL(pgvector)**: Section 임베딩 (의미 검색)
+**ì­í  ë¶ë¦¬:**
+- **Neo4j**: ìºë¦­í°/ì´ë²¤í¸ ê´ê³ (ê·¸ëí ì¿¼ë¦¬)
+- **PostgreSQL(pgvector)**: Section ìë² ë© (ìë¯¸ ê²ì)
 
-**Section 테이블 설계:**
+**Section íì´ë¸ ì¤ê³:**
 ```sql
 CREATE TABLE section (
     id BIGSERIAL PRIMARY KEY,
@@ -2595,7 +2596,7 @@ CREATE TABLE section (
     content TEXT NOT NULL,
     sequence_order INT NOT NULL,
     embedding vector(1536),              -- pgvector
-    related_characters TEXT[],           -- Neo4j 메타데이터 태깅
+    related_characters TEXT[],           -- Neo4j ë©íë°ì´í° íê¹
     related_events TEXT[]
 );
 
@@ -2606,66 +2607,496 @@ WITH (lists = 100);
 
 ---
 
-## 5️⃣ 최종 추천 요약
+## 5ï¸â£ ìµì¢ ì¶ì² ìì½
 
-### 아키텍처 결정
+### ìí¤íì² ê²°ì 
 
-| 항목 | 추천 |
+| í­ëª© | ì¶ì² |
 |------|------|
-| 메시지 전송 | **Claim Check Pattern** (ID만 전송, DB에서 content 조회) |
-| 챕터 분할 | **Cascading Fallback** (명시적 마커 → 빈 줄 → 고정 글자수) |
-| 처리 방식 | **2-Pass 하이브리드** (병렬 추출 → 글로벌 병합) |
-| 메시지 큐 | **RabbitMQ Batch 모드** (변경 불필요) |
-| 상태 폴링 | **SSE + Redis Pub/Sub** |
-| 임베딩 저장 | **PostgreSQL + pgvector** (Section) / **Neo4j** (Character/Event) |
+| ë©ìì§ ì ì¡ | **Claim Check Pattern** (IDë§ ì ì¡, DBìì content ì¡°í) |
+| ì±í° ë¶í  | **Cascading Fallback** (ëªìì  ë§ì»¤ â ë¹ ì¤ â ê³ ì  ê¸ìì) |
+| ì²ë¦¬ ë°©ì | **2-Pass íì´ë¸ë¦¬ë** (ë³ë ¬ ì¶ì¶ â ê¸ë¡ë² ë³í©) |
+| ë©ìì§ í | **RabbitMQ Batch ëª¨ë** (ë³ê²½ ë¶íì) |
+| ìí í´ë§ | **SSE + Redis Pub/Sub** |
+| ìë² ë© ì ì¥ | **PostgreSQL + pgvector** (Section) / **Neo4j** (Character/Event) |
 
-### 최종 데이터 흐름
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ Phase 1: Ingestion (Spring) - 0.5초 목표                         │
-│                                                                 │
-│  Client → Spring → S3 (원본) + PostgreSQL (chapters) + RabbitMQ │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ Phase 2: Processing (Python) - 비동기                            │
-│                                                                 │
-│  1차 Pass (병렬): 10 워커 × 365 챕터 → 기본 추출 (~20분)          │
-│  2차 Pass (순차): ID 통합 + 관계 연결 + 모순 감지 (~5분)          │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ Phase 3: Serving (Client)                                       │
-│                                                                 │
-│  SSE로 상태 수신 → 완료된 챕터 클릭 → Section 텍스트 + 메타데이터 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 저장소 역할 분리
+### ìµì¢ ë°ì´í° íë¦
 
 ```
-┌───────────────────────────────────────────────────────┐
-│                    저장소 역할 분리                     │
-│                                                       │
-│  ┌─────────────────┐    ┌─────────────────┐          │
-│  │   PostgreSQL    │    │     Neo4j       │          │
-│  │   + pgvector    │    │                 │          │
-│  └─────────────────┘    └─────────────────┘          │
-│          ↑                      ↑                    │
-│   - project, chapter      - Character Node          │
-│   - section + embedding   - Event Node              │
-│   - 의미 검색 (RAG)        - Relationships          │
-│                           - 그래프 쿼리              │
-└───────────────────────────────────────────────────────┘
+âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+â Phase 1: Ingestion (Spring) - 0.5ì´ ëª©í                         â
+â                                                                 â
+â  Client â Spring â S3 (ìë³¸) + PostgreSQL (chapters) + RabbitMQ â
+âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+                              â
+âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+â Phase 2: Processing (Python) - ë¹ëê¸°                            â
+â                                                                 â
+â  1ì°¨ Pass (ë³ë ¬): 10 ìì»¤ Ã 365 ì±í° â ê¸°ë³¸ ì¶ì¶ (~20ë¶)          â
+â  2ì°¨ Pass (ìì°¨): ID íµí© + ê´ê³ ì°ê²° + ëª¨ì ê°ì§ (~5ë¶)          â
+âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+                              â
+âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+â Phase 3: Serving (Client)                                       â
+â                                                                 â
+â  SSEë¡ ìí ìì  â ìë£ë ì±í° í´ë¦­ â Section íì¤í¸ + ë©íë°ì´í° â
+âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+```
+
+### ì ì¥ì ì­í  ë¶ë¦¬
+
+```
+âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+â                    ì ì¥ì ì­í  ë¶ë¦¬                     â
+â                                                       â
+â  âââââââââââââââââââ    âââââââââââââââââââ          â
+â  â   PostgreSQL    â    â     Neo4j       â          â
+â  â   + pgvector    â    â                 â          â
+â  âââââââââââââââââââ    âââââââââââââââââââ          â
+â          â                      â                    â
+â   - project, chapter      - Character Node          â
+â   - section + embedding   - Event Node              â
+â   - ìë¯¸ ê²ì (RAG)        - Relationships          â
+â                           - ê·¸ëí ì¿¼ë¦¬              â
+âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 ```
 
 ---
 
-### 📁 관련 파일 (향후 구현 시)
-- `app/agents/extraction/character/aggregator.py` - existing_characters 활용 로직
-- `app/services/section_service.py` - 신규 (Section 저장 + 임베딩)
-- `app/services/chunking_service.py` - 신규 (Semantic Chunking)
+### ð ê´ë ¨ íì¼ (í¥í êµ¬í ì)
+- `app/agents/extraction/character/aggregator.py` - existing_characters íì© ë¡ì§
+- `app/services/section_service.py` - ì ê· (Section ì ì¥ + ìë² ë©)
+- `app/services/chunking_service.py` - ì ê· (Semantic Chunking)
 - Spring Boot: `ChapterSplitService.java`, `RabbitMQBatchPublisher.java`
 
+------
+
+## 20. ì±ë¥ ë³ëª© ë¶ì ë° ìµì í
+
+### ð ë ì§
+2026-01-03
+
+### ð´ ë¬¸ì  (Problem)
+
+ëì©ë ë¬¸ì(3.21MB Les MisÃ©rables) ë¶ì ì **2ìê° 20ë¶ ì´ì** ìì.
+ë¡ê·¸ ë¶ì ê²°ê³¼ 3ê°ì§ ì£¼ì ë³ëª© ë°ê²¬:
+
+#### 1. ë¬´í ì¬ì²ë¦¬ ë£¨í
+```
+[trace-20260102-52c34f32] -> extraction  (11:39:27)
+[trace-20260102-52c34f32] -> extraction  (11:42:50)  â 3ë¶ í ì¬ìë
+[trace-20260102-52c34f32] -> extraction  (11:43:00)  â ë ì¬ìë
+[trace-20260102-52c34f32] -> extraction  (11:46:47)  â ë¬´í ë°ë³µ
+```
+- **ìì¸**: Event=0ì¼ ë Validation ì¤í¨ â `retry_extraction` ë¬´í ë°ë³µ
+
+#### 2. PostgreSQL Pool ë¯¸ì´ê¸°í
+```
+PostgreSQL pool not initialized
+Document content not found: {document_id}
+```
+- **ìì¸**: DB ì°ê²° ì  Consumerê° ë©ìì§ ì²ë¦¬ ìë
+
+#### 3. Neo4j ì°ê²° ëê¹
+```
+Failed vector search - Connection closed with incomplete handshake
+```
+- **ìì¸**: ëë ìì²­ì¼ë¡ ì°ê²° íììì
+
+### ð¡ ìì¸ ë¶ì (Root Cause)
+
+| ë³ëª© | íì¬ ì¤ì  | ë¬¸ì ì  |
+|------|----------|--------|
+| Event ì¶ì¶ ì¤í¨ | `required: True` | ì´ë²¤í¸ ìì¼ë©´ ì ì²´ ì¤í¨ |
+| Retry Threshold | 50% | íì§ 50 ë¯¸ë§ì ë¬´í ì¬ì¶ì¶ |
+| MAX_RETRIES | 3í | ëë¬´ ë§ì ì¬ìë |
+| Prefetch Count | 10 | ëì ì²ë¦¬ë ì í |
+| Embedding ëìì± | 5 | ìë² ë© ë³ëª© |
+| Chunk í¬ê¸° | 2000ì | ëë¬´ ë§ì ì¹ì ìì± |
+
+### ð¢ í´ê²°ì± (Solution)
+
+#### 1. Validation ë¬´í ë£¨í ì°¨ë¨ (`validator.py`)
+```python
+# BEFORE
+"extracted_events": {
+    "required": True,
+    "min_count": 1,
+    "penalty_missing": 15,
+}
+
+# AFTER
+"extracted_events": {
+    "required": False,  # ì´ë²¤í¸ ì¤í¨í´ë ì§í
+    "min_count": 0,
+    "penalty_missing": 5,  # íëí° ê°ì
+}
+```
+
+```python
+# BEFORE: quality < 50 â retry_extraction
+# AFTER: quality < 30 â retry_extraction (threshold ë®ì¶¤)
+elif quality_score >= 30:
+    action = "human_review"  # 50â30
+```
+
+#### 2. Retry íì ì í (`supervisor.py`)
+```python
+# BEFORE
+MAX_EXTRACTION_RETRIES = 3
+
+# AFTER
+MAX_EXTRACTION_RETRIES = 2  # ì¬ìë 1í ê°ì
+```
+
+#### 3. DB ì°ê²° ëê¸° (`document_analysis_consumer.py`)
+```python
+async def start(self) -> None:
+    # DB ìë¹ì¤ ì´ê¸°í ëê¸° ì¶ê°
+    logger.info("Waiting for DB service to initialize...")
+    db_service = await get_db_service()
+    if not await db_service.ensure_postgres_connected():
+        raise RuntimeError("Failed to connect to PostgreSQL")
+    if not await db_service.ensure_neo4j_connected():
+        logger.warning("Neo4j connection failed, will retry later")
+    logger.info("DB service initialized")
+    
+    # RabbitMQ ì°ê²° (ì´íì ì¤í)
+    ...
+```
+
+#### 4. ëì ì²ë¦¬ë ì¦ê° (`docker-compose.standalone.yml`)
+```yaml
+# BEFORE
+CONSUMER_PREFETCH_COUNT: 10
+
+# AFTER
+CONSUMER_PREFETCH_COUNT: 20  # 2ë°° ì¦ê°
+```
+
+#### 5. Embedding ëìì± ì¦ê° (`embedding_service.py`)
+```python
+# BEFORE
+max_concurrent: int = 5
+
+# AFTER
+max_concurrent: int = 10  # 2ë°° ì¦ê°
+```
+
+#### 6. Chunk í¬ê¸° ìµì í (`chunking_service.py`)
+```python
+# BEFORE
+self.max_tokens_per_chunk = 2000
+self.min_chunk_length = 500
+
+# AFTER
+self.max_tokens_per_chunk = 4000  # 2ë°° ì¦ê°
+self.min_chunk_length = 800       # ìµì í¬ê¸° ì¦ê°
+```
+
+### ð ìì ë íì¼
+
+| íì¼ | ë³ê²½ ë´ì© |
+|------|----------|
+| `app/agents/validation/validator.py` | events required=False, retry threshold 50â30 |
+| `app/agents/supervisor.py` | MAX_EXTRACTION_RETRIES 3â2 |
+| `app/services/document_analysis_consumer.py` | DB ì°ê²° ëê¸° ë¡ì§ ì¶ê° |
+| `docker-compose.standalone.yml` | PREFETCH_COUNT 10â20 |
+| `app/services/embedding_service.py` | max_concurrent 5â10 |
+| `app/services/chunking_service.py` | max_tokens 2000â4000, min_chunk 500â800 |
+
+### â ìì ê²°ê³¼
+
+| í­ëª© | ì´ì  | ì´í | ê°ì ì¨ |
+|------|------|------|--------|
+| ì¬ìë íì | 3í | 2í | 33% â |
+| ì´ë²¤í¸ 0ê° ì | ë¬´í ì¬ì¶ì¶ | ì ì ì§í | 100% í´ê²° |
+| ëì ì²ë¦¬ë | 10 | 20 | 2x â |
+| ìë² ë© ëìì± | 5 | 10 | 2x â |
+| ì¹ì ì | ë§ì | ~50% ê°ì | 2x â |
+| DB ë¯¸ì´ê¸°í | ëª¨ë  ë¬¸ì ì¤í¨ | ì°ê²° í ìì | 100% í´ê²° |
+
+### ð¡ í¥í ê°ì  ì¬í­
+
+1. **LLM í¸ì¶ ìºì±**: ëì¼ íì¤í¸ì ëí ì¤ë³µ í¸ì¶ ë°©ì§
+2. **Batch LLM í¸ì¶**: ì¬ë¬ ë¬¸ìë¥¼ í ë²ì ì²ë¦¬
+3. **Rate Limit ëì**: Gemini API ì¿¼í° ëª¨ëí°ë§ ë° ìë ì¡°ì 
+4. **Connection Pool**: Neo4j/PostgreSQL ì°ê²° í ìµì í
+
 ---
+
+## 21. Character Extraction - ëëªì´ì¸/ì ì¬ ì´ë¦ ì¤ë³µ ë¬¸ì 
+
+### ð ë ì§
+2026-01-03
+
+### ð´ ë¬¸ì  (Problem)
+ì¥ë¬¸ íì¤í¸ ë¶ì ì, ëì¼ ì¸ë¬¼ì´ ì´ë¦ íê¸° ì°¨ì´ë¡ ì¸í´ ë³ê°ì ìºë¦­í°ë¡ ë¶ë¦¬ë¨.
+- ì: `Elara`(ìë¼ë¼)ì `Elara Vance`(ìë¼ë¼ ë°ì¤)ê° ê°ê° ìì±ë¨.
+- ê²°ê³¼ì ì¼ë¡ ê´ê³(Relationship) ë°ì´í°ê° ë¶ì°ëê³  Neo4j ê·¸ëíê° ì§ì ë¶í´ì§.
+
+### ð¡ ìì¸ ë¶ì (Root Cause)
+1. ê¸°ì¡´ `aggregator.py`ë **ì íí ë¬¸ìì´ ì¼ì¹**ë **ì¬ì ì ì ìë ë³ì¹­(Alias)**ë§ ë³í©í¨.
+2. LLMì´ ì¶ì¶ ìì ì ì´ë¦ì ì¡°ê¸ì© ë¤ë¥´ê²(Full Name vs First Name) ë°ííë ê²½ì°ë¥¼ ì²ë¦¬íì§ ëª»í¨.
+
+### ð¢ í´ê²°ì± (Solution)
+**Fuzzy Matching & Substring Merging** ë¡ì§ ëì (`app/agents/extraction/character/aggregator.py`)
+1. **Jaro-Winkler Similarity**: ì ì¬ë 0.85 ì´ìì´ë©´ ëì¼ ì¸ë¬¼ë¡ ê°ì£¼.
+2. **Substring Match**: í ì´ë¦ì´ ë¤ë¥¸ ì´ë¦ì ìì í í¬í¨ëë©´(ì: "Elara" in "Elara Vance") ë³í©.
+3. **Canonical Name Selection**: ë³í© ì **ê°ì¥ ê¸´ ì´ë¦**ì ëí ì´ë¦ì¼ë¡ ì í (ì ë³´ëì´ ë§ì ìª½ ì°ì ).
+
+### â ê²°ê³¼
+- "Elara"ì "Elara Vance"ê° "Elara Vance"ë¡ ìë ë³í©ë¨.
+- ì¤ë³µ ìºë¦­í° ë°ì 0ê±´.
+
+---
+
+## 22. Semantic Chunking - ì¥ë¬¸ íì¤í¸ ë¬¸ë§¥ ë¨ì 
+
+### ð ë ì§
+2026-01-03
+
+### ð´ ë¬¸ì  (Problem)
+5,000ì ì´ìì ì¥í¸ ìì¤ì í ë²ì ì²ë¦¬íê±°ë ë¨ì ê¸ì ìë¡ ìë¥´ë©´ ë¤ìê³¼ ê°ì ë¬¸ì  ë°ì:
+1. ë¬¸ë§¥(Context) ë¨ì : ì¤ìí ì¥ë©´(Scene) ì¤ê°ì ìë ¤ì ì´ë²¤í¸ ì¶ì¶ ì¤í¨.
+2. Token Limit ì´ê³¼: LLM ìë ¥ íê³ë¡ ë·ë¶ë¶ ë´ì© ëë½.
+
+### ð¡ ìì¸ ë¶ì (Root Cause)
+- ê³ ì  ê¸¸ì´(Fixed-size) ì²­í¹ ë°©ìì ìì¬ì íë¦(Narrative Flow)ì ê³ ë ¤íì§ ìì.
+
+### ð¢ í´ê²°ì± (Solution)
+**Semantic Chunking (ìë¯¸ ê¸°ë° ë¶í )** êµ¬í
+1. **Embedding**: ë¬¸ë¨(Paragraph)ë³ë¡ ìë² ë© ë²¡í° ìì± (Gemini v1.5).
+2. **Cosine Similarity**: ì¸ì  ë¬¸ë¨ ê° ì ì¬ë ê³ì°.
+3. **Segmentation**: ì ì¬ëê° ê¸ê²©í ë¨ì´ì§ë êµ¬ê°(ìê³ê° 0.6 ë¯¸ë§)ì **ì¥ë©´ ì íì (Scene Break)**ì¼ë¡ íë¨íì¬ ì ë¨.
+4. `event.py` íµí©: íì¤í¸ ê¸¸ì´ê° 4,000ìë¥¼ ëì ê²½ì°, Semantic Chunkingì ìííê³  ê° ì¹ìì ìì°¨ì ì¼ë¡ ì²ë¦¬íì¬ ì´ë²¤í¸ ID(E001...) ì°ìì± ë³´ì¥.
+
+### â ê²°ê³¼
+- 5,000ì ìì¤ì´ 6ê°ì ìë¯¸ ë¨ì ì¹ìì¼ë¡ ë¶í ë¨.
+- ìì¬ ëê¹ ìì´ ì´ 46ê°ì ì´ë²¤í¸ê° E001~E046ì¼ë¡ ìë²½íê² ì¶ì¶ë¨.
+
+
+---
+
+## 21. Embedding Generation - Google API Key ì°¨ë¨ ë° Docker íê²½ ë³ì ê°±ì 
+
+### ð ë ì§
+2026-01-03
+
+### ð´ ë¬¸ì  (Problem)
+1.  **Google API Key Suspended**: ìë² ë© ìì± ìë ì `403 PERMISSION_DENIED` ëë "API keys with this specific Project ID have been suspended" ì¤ë¥ ë°ì. ì í¤ë¥¼ ë°ê¸ë°ìë ê³§ë°ë¡ ì°¨ë¨ë¨ (Leaked Key ê°ì§).
+2.  **Env Var Not Updating**: `.env` íì¼ì ìì íê³  `docker restart`ë¥¼ ìííì¼ë ì»¨íì´ë ë´ë¶ìì ì´ì  í¤(`...NOV_0`)ê° ê³ì ì ì§ë¨.
+3.  **Service Name Confusion**: `docker-compose up -d stolink-fastapi-agent` ëªë ¹ ì¤í¨ (No such service).
+
+### ð¡ ìì¸ ë¶ì (Root Cause)
+1.  **Leaked Key Detection**: Google Cloudë ê³µê° ì ì¥ì(Github ë±)ì ìë¡ëë ì´ë ¥ì´ ìë í¤ë¥¼ ìëì¼ë¡ ë¬´í¨íí¨. ëë íë¡ì í¸ ìì²´ê° Abuseë¡ ì¸í´ Flagëìì ê°ë¥ì±.
+2.  **Docker Restart Limitations**: `docker restart`ë ì´ë¯¸ ìì±ë ì»¨íì´ëì ì¤ì ì ê·¸ëë¡ ì¬ì©íì¬ íë¡ì¸ì¤ë§ ì¬ììí¨. `.env` ë³ê²½ ì¬í­ì´ë `docker-compose.yml` ë³ê²½ ì¬í­ì ë°ìíë ¤ë©´ ì»¨íì´ëë¥¼ ì¬ìì±í´ì¼ í¨ (`up -d` usage).
+3.  **Compose Service Name**: `stolink-fastapi-agent`ë `container_name`ì´ê³ , `docker-compose` ëªë ¹ì´ë `service name`ì¸ `ai-backend`ë¥¼ ì¸ìë¡ ë°ì.
+
+### ð¢ í´ê²°ì± (Solution)
+
+#### 1. Valid API Key íë³´
+- ìì í ìë¡ì´ Google ê³ì  ëë Cleaní íë¡ì í¸ìì ì API Key ë°ê¸.
+- `.env` íì¼ì ì ì©.
+
+#### 2. Docker Container ì¬ìì± (Re-create)
+- `.env` ë³ê²½ ì¬í­ì ë°ìíë ¤ë©´ ë°ëì `up` ëªë ¹ì´ë¥¼ ì¬ì©í´ì¼ í¨ (ê¸°ì¡´ ì»¨íì´ëê° ìì¼ë©´ ì¬ìì±ë¨).
+```bash
+docker-compose -f docker-compose.standalone.yml up -d ai-backend
+```
+- `docker restart`ë íê²½ë³ìë¥¼ ê°±ì íì§ ìì!
+
+#### 3. Service Name íì¸
+- `docker-compose.yml`ì `services` ì¹ì í¤ê° íì¸ (`ai-backend`).
+- ëªë ¹ì´ ì¤í ì `container_name`ì´ ìë `service name` ì¬ì©.
+
+### ð ê´ë ¨ íì¼
+- `.env`
+- `docker-compose.standalone.yml`
+- `debug_embedding.py` (API Key ê²ì¦ì© ì¤í¬ë¦½í¸)
+
+### â ê²°ê³¼
+- 4ë²ì§¸ ìëìì ì í¨í API Key íë³´ ì±ê³µ.
+- `debug_embedding.py`: Success! Embedding dim: 3072.
+- `/api/search/similar`: Status 200 OK.
+
+
+---
+
+## 21. Embedding Generation - Google API Key ì°¨ë¨ ë° Docker íê²½ ë³ì ê°±ì 
+
+### ð ë ì§
+2026-01-03
+
+### ð´ ë¬¸ì  (Problem)
+1.  **Google API Key Suspended**: ìë² ë© ìì± ìë ì `403 PERMISSION_DENIED` ëë "API keys with this specific Project ID have been suspended" ì¤ë¥ ë°ì. ì í¤ë¥¼ ë°ê¸ë°ìë ê³§ë°ë¡ ì°¨ë¨ë¨ (Leaked Key ê°ì§).
+2.  **Env Var Not Updating**: `.env` íì¼ì ìì íê³  `docker restart`ë¥¼ ìííì¼ë ì»¨íì´ë ë´ë¶ìì ì´ì  í¤(`...NOV_0`)ê° ê³ì ì ì§ë¨.
+3.  **Service Name Confusion**: `docker-compose up -d stolink-fastapi-agent` ëªë ¹ ì¤í¨ (No such service).
+
+### ð¡ ìì¸ ë¶ì (Root Cause)
+1.  **Leaked Key Detection**: Google Cloudë ê³µê° ì ì¥ì(Github ë±)ì ìë¡ëë ì´ë ¥ì´ ìë í¤ë¥¼ ìëì¼ë¡ ë¬´í¨íí¨. ëë íë¡ì í¸ ìì²´ê° Abuseë¡ ì¸í´ Flagëìì ê°ë¥ì±.
+2.  **Docker Restart Limitations**: `docker restart`ë ì´ë¯¸ ìì±ë ì»¨íì´ëì ì¤ì ì ê·¸ëë¡ ì¬ì©íì¬ íë¡ì¸ì¤ë§ ì¬ììí¨. `.env` ë³ê²½ ì¬í­ì´ë `docker-compose.yml` ë³ê²½ ì¬í­ì ë°ìíë ¤ë©´ ì»¨íì´ëë¥¼ ì¬ìì±í´ì¼ í¨ (`up -d` usage).
+3.  **Compose Service Name**: `stolink-fastapi-agent`ë `container_name`ì´ê³ , `docker-compose` ëªë ¹ì´ë `service name`ì¸ `ai-backend`ë¥¼ ì¸ìë¡ ë°ì.
+
+### ð¢ í´ê²°ì± (Solution)
+
+#### 1. Valid API Key íë³´
+- ìì í ìë¡ì´ Google ê³ì  ëë Cleaní íë¡ì í¸ìì ì API Key ë°ê¸.
+- `.env` íì¼ì ì ì©.
+
+#### 2. Docker Container ì¬ìì± (Re-create)
+- `.env` ë³ê²½ ì¬í­ì ë°ìíë ¤ë©´ ë°ëì `up` ëªë ¹ì´ë¥¼ ì¬ì©í´ì¼ í¨ (ê¸°ì¡´ ì»¨íì´ëê° ìì¼ë©´ ì¬ìì±ë¨).
+```bash
+docker-compose -f docker-compose.standalone.yml up -d ai-backend
+```
+- `docker restart`ë íê²½ë³ìë¥¼ ê°±ì íì§ ìì!
+
+#### 3. Service Name íì¸
+- `docker-compose.yml`ì `services` ì¹ì í¤ê° íì¸ (`ai-backend`).
+- ëªë ¹ì´ ì¤í ì `container_name`ì´ ìë `service name` ì¬ì©.
+
+### ð ê´ë ¨ íì¼
+- `.env`
+- `docker-compose.standalone.yml`
+- `debug_embedding.py` (API Key ê²ì¦ì© ì¤í¬ë¦½í¸)
+
+### â ê²°ê³¼
+- 4ë²ì§¸ ìëìì ì í¨í API Key íë³´ ì±ê³µ.
+- `debug_embedding.py`: Success! Embedding dim: 3072.
+- `/api/search/similar`: Status 200 OK.
+
+
+## 21. Python NameError ë° API Quota ì¤ë¥ í´ê²°
+
+### í³ ë ì§
+2026-01-04
+
+### í´´ ë¬¸ì  (Problem)
+1. **NameError**: "Phase 1 agent failed: name 're' is not defined" ì¤ë¥ë¡ íì´íë¼ì¸ ì¤ë¨.
+2. **API Quota**: Gemini ëª¨ë¸ í¸ì¶ ì `429 RESOURCE_EXHAUSTED` ì¤ë¥ ë°ì.
+
+### í¿¡ ìì¸ ë¶ì (Root Cause)
+1. `app/agents/extraction/setting.py`ìì `re` ëª¨ëì ì¬ì©íì¼ë import ë¬¸ì´ ëë½ë¨.
+2. ëëì íì¤í¸ ì²ë¦¬ ì Gemini APIì ë¶ë¹/ì¼ì¼ í í° íëë¥¼ ì´ê³¼í¨.
+
+### í¿¢ í´ê²°ì± (Solution)
+1. **Import ì¶ê°**: `setting.py`ì `import re` ì¶ê°.
+2. **ì¬ìë ë¡ì§ ì¤ìí**:
+   - `app/agents/llm.py`ì `safe_ainvoke` í¨ì ì¶ê°.
+   - Exponential Backoff ìê³ ë¦¬ì¦ ì ì© (ì¤í¨ ì ëê¸° ìê° ì ì§ì  ì¦ê°).
+   - ëª¨ë  ìì´ì í¸(`setting.py`, `character/*.py`, `event.py`)ê° `chain.ainvoke` ëì  `safe_ainvoke`ë¥¼ ì¬ì©íëë¡ ë³ê²½.
+
+### í³ ìì ë íì¼
+- `app/agents/extraction/setting.py`
+- `app/agents/llm.py`
+- `app/agents/extraction/character/*.py`
+- `app/agents/extraction/event.py`
+
+### â ê²°ê³¼
+- íì´íë¼ì¸ ì¤ë¨ ìì´ ìì£¼ ì±ê³µ.
+- API Rate Limit ë°ì ì ìëì¼ë¡ ì¬ìëíì¬ ì±ê³µ ì²ë¦¬.
+
+---
+
+## 22. Data Consistency - ìºë¦­í° ë° ê´ê³ ì¶©ë í´ê²°
+
+### í³ ë ì§
+2026-01-04
+
+### í´´ ë¬¸ì  (Problem)
+1. **ìºë¦­í° ì¤ë³µ**: "The man"ê³¼ "The guest"ê° ë³ê°ì ì¸ë¬¼ë¡ ì¶ì¶ëê±°ë, ëì¼ ì¸ë¬¼ì´ IDë§ ë¤ë¥´ê² ì¤ë³µ ìì±ë¨.
+2. **ê´ê³ ëª¨ì**: ëì¼í ë ì¸ë¬¼ ê´ê³ê° íìª½ì "ALLY", ë°ëìª½ì "BETRAYED"ë¡ ì ìë¨.
+3. **íì§ ì í**: ì ë¬¸ì ë¡ ì¸í´ `result.json`ì Quality Scoreê° 55ì ì ë¶ê³¼í¨.
+
+### í¿¡ ìì¸ ë¶ì (Root Cause)
+1. **LLMì í´ì ëª¨í¸ì±**: ë§¥ë½ì ë°ë¼ í¸ì¹­ì´ ë°ëë ê²ì ë³ê° ì¸ë¬¼ë¡ ì¸ì.
+2. **íë¡¬íí¸ ê°ì´ë ë¶ì¡±**: "ìì¬(Suspicion)" ë¨ê³ë¥¼ "ë°°ì (Betrayal)"ì¼ë¡ ê³¼í´ìíê±°ë, ê´ê³ ì í ì ìê° ëªííì§ ììì.
+
+### í¿¢ í´ê²°ì± (Solution)
+1. **Identity Agent íë¡¬íí¸ ê°ì **:
+   - ë¤ì¤ í¸ì¹­(Aliases) ì²ë¦¬ ê·ì¹ ëªì ("The man" -> "The guest" ì ì£¼ ì´ë¦ ì ì§).
+   - ì£¼ì¸ê³µê³¼ ìí¸ìì©íë ëªëªë ì¸ë¬¼ì 'other'ê° ìë 'supporting'ì¼ë¡ ë¶ë¥ ì ë.
+2. **Relations Agent íë¡¬íí¸ ê°ì **:
+   - `BETRAYED` ê´ê³ íì ì ì ì¶ê° ë° ê°ì´ëë¼ì¸ ì ì (ì¤ì§ì  ë°°ì  íìê° ìì ëë§ ì¬ì©).
+   - "ìì¬" ë¨ê³ë `NEUTRAL` ëë `ENEMY` + `private_feeling: DISTRUST`ë¡ ì²ë¦¬íëë¡ ì§ì.
+
+### í³ ìì ë íì¼
+- `app/agents/extraction/character/identity.py`
+- `app/agents/extraction/character/relations.py`
+
+### â ê²°ê³¼
+- **Quality Score**: 98/100 ë¬ì±
+- **Consistency Score**: 100/100 (ì¶©ë 0ê±´)
+- **ë°ì´í° ì íë**: ìºë¦­í° 7ëª, ì¬ê±´ 55ê°, ë°°ê²½ 5ê° ì ì ì¶ì¶ ë° ì¼ê´ì± íë³´.
+
+---
+
+
+
+## 23. Model Optimization - Balanced Load Strategy
+
+### 📅 Date
+2026-01-04
+
+### 🔴 Problem
+- **TPM Instability**: `gemini-2.0-flash-lite` and `2.5-flash-lite` caused high TPM spikes and rate limiting issues during parallel execution.
+- **Load Concentration**: Moving all agents to `Advanced` (Gemini 2.5 Flash) risks hitting the specific rate limit for that model tier due to high concurrency.
+
+### 🟡 Root Cause
+- **Lite Models**: While cost-effective, they showed instability under the high-throughput demands of the parallel extraction phase.
+- **Single Tier Bottleneck**: Relying solely on `Advanced` for all parallel tasks (Appearance, Personality, Relations, Dialogue, Setting) concentrates too much load on a single quota.
+
+### 🟢 Solution
+- **Balanced Tier Strategy**: Distribute the parallel workload between `Advanced` (Gemini 2.5 Flash) and `Premium` (Gemini 3 Flash) to leverage separate rate limit quotas.
+- **Tier Reassignment**:
+  - **Reasoning Heavy (Premium)**: `Relations`, `Personality`, `Dialogue`, `Identity`. (Use Gemini 3's superior reasoning and separate quota).
+  - **Extraction Heavy (Advanced)**: `Appearance`, `Setting`, `Event`. (Use Gemini 2.5 Flash's high speed and context window).
+
+### 📁 Modified Files
+- `app/agents/extraction/character/relations.py` (Premium)
+- `app/agents/extraction/character/personality.py` (Premium)
+- `app/agents/extraction/character/dialogue_mood.py` (Premium)
+- `app/agents/extraction/character/appearance.py` (Advanced)
+- `app/agents/extraction/setting.py` (Advanced)
+- `app/agents/extraction/event.py` (Advanced)
+
+### ✅ Result
+- **Optimized Throughput**: Load is split across model tiers, reducing the risk of hitting a single model's rate limit.
+- **Stabilized Pipeline**: High-performance models ensure extraction quality and stability.
+
+
+## 24. Senior Developer Consultation: Scalability Architecture for Large Texts
+
+### 📅 Date
+2026-01-04
+
+### 📝 Consultation Summary
+From the perspective of a Senior Developer with 20+ years of experience, to process large-scale novels like *Les Misérables* (over 500k words) without issues, the following **4 Key Architectures** must be considered.
+
+The current "Load All -> Chunk -> Parallel Process" approach is efficient for short texts but risks **Memory Explosion, Context Window Overflow, and Data Inconsistency** for massive volumes.
+
+#### 1. 🚀 Streaming Pipeline (Chapter-wise Processing)
+**Risk**: Carrying the entire extracted text and results in `AnalysisState` memory is dangerous.
+**Proposal**: Introduce **Chapter-wise Processing**.
+- Do not load the entire book into the LLM at once. Process it **chapter by chapter using a Queue** (Sequential/Parallel).
+- **State Management**: Keep only the 'Current Chapter' and a 'Rolling Summary' in memory. Persist completed data to DB (Neo4j/Postgres) immediately and release memory.
+
+#### 2. 🔗 Global Entity Resolution (Phase 3)
+**Risk**: In long novels, the same character is called by hundreds of different names (e.g., Jean Valjean = Mayor Madeleine = Prisoner 24601). Parallel chapter processing may extract them as different people.
+**Proposal**: Add **Phase 3: Global Reconciliation**.
+- After all chapters are processed, a **dedicated Post-processing Agent** is needed to merge duplicate entities by comparing embeddings of all extracted characters.
+- A dedicated LLM Step is required to judge "Are these the same person?".
+
+#### 3. 🧠 RAG-based Dynamic Context
+**Risk**: In later chapters, early events are often causes. Passing the full `existing_events` list incurs huge token costs and confuses the LLM.
+**Proposal**: Introduce **Vector Search (RAG)**.
+- Dynamically inject **only the top 5-10 relevant past events** into the prompt by querying "Find past events related to this incident".
+- Enables deep causal reasoning while saving `Context Window`.
+
+#### 4. 📉 Cost & Speed Optimization
+**Proposal**:
+- **Caching**: Embedding generation is expensive. Cache embedding results in Redis using paragraph hashes as keys.
+- **Hierarchical Summarization**: Pre-generate summaries in layers (Chapter -> Volume -> Full Synopsis). Provide "Overall Plot Context" lightly to the LLM during detailed analysis.
+
+### 🏁 Conclusion
+You don't need to change everything immediately, but I recommend refactoring little by little with the philosophy of **"Split Data, Process, and Merge (Map-Reduce)"**. In particular, **Entity Resolution** logic will determine the quality of the long-novel service.

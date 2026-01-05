@@ -250,3 +250,181 @@ def merge_character_aliases(
             merged.add(normalized)
     
     return sorted(list(merged))
+
+
+def calculate_completeness_score(character: dict) -> float:
+    """캐릭터 정보의 충실도(Completeness) 점수 계산.
+    
+    Primary ID 선정 시 정보가 더 풍부한 캐릭터를 선택하기 위함.
+    
+    Args:
+        character: 캐릭터 dict
+        
+    Returns:
+        점수 (높을수록 좋음)
+    """
+    score = 0.0
+    
+    # 1. Description 길이 (최대 50점)
+    desc = character.get("description", "") or ""
+    score += min(len(desc) * 0.1, 50.0)
+    
+    # 2. Traits 개수 (개당 5점, 최대 30점)
+    traits = character.get("traits", []) or []
+    if isinstance(traits, list):
+        score += min(len(traits) * 5.0, 30.0)
+        
+    # 3. 주요 필드 존재 여부 (각 5점)
+    if character.get("role"): score += 5.0
+    if character.get("status"): score += 5.0
+    if character.get("personality_traits"): score += 5.0
+    if character.get("visual_traits"): score += 5.0
+    
+    # 4. 이름 길이 (너무 짧으면 페널티, 적당하면 가산)
+    name = character.get("name", "")
+    if len(name) < 2:
+        score -= 50.0 # 의미 없는 이름일 가능성
+    elif len(name) > 2:
+        score += 2.0
+        
+    return score
+
+
+def perform_global_merge(characters: list[dict]) -> list[dict]:
+    """캐릭터 목록을 받아 글로벌 병합을 수행합니다.
+    
+    Graph Clustering과 Smart Primary Selection을 사용하여
+    서로 연결된 동일 인물들을 그룹화하고 병합합니다.
+    
+    Args:
+        characters: 캐릭터 dict 목록 (id, name, aliases_json 등 포함)
+        
+    Returns:
+        CharacterMergeResult dict 목록 (pydantic dependency 제거를 위해 dict 리턴)
+    """
+    import json
+    
+    n = len(characters)
+    parent = list(range(n))
+    
+    def find(i):
+        if parent[i] == i:
+            return i
+        parent[i] = find(parent[i])
+        return parent[i]
+        
+    def union(i, j):
+        root_i = find(i)
+        root_j = find(j)
+        if root_i != root_j:
+            parent[root_j] = root_i
+            
+    def parse_aliases(aliases_json: Optional[str]) -> list[str]:
+        if not aliases_json:
+            return []
+        try:
+            val = json.loads(aliases_json)
+            if isinstance(val, list):
+                return val
+            return []
+        except:
+            return []
+
+    # 1. Build Clusters (Union-Find)
+    matches_info = {} # (i, j) -> score
+    
+    for i in range(n):
+        char1 = characters[i]
+        char1_aliases = parse_aliases(char1.get("aliases_json"))
+        
+        for j in range(i + 1, n):
+            char2 = characters[j]
+            char2_aliases = parse_aliases(char2.get("aliases_json"))
+            
+            result = is_same_character(
+                char1["name"],
+                char2["name"],
+                char1_aliases,
+                char2_aliases
+            )
+            
+            if result.classification in (MatchClassification.AUTO_MERGE, MatchClassification.NEEDS_REVIEW):
+                union(i, j)
+                # Store score regardless of order
+                idx1, idx2 = min(i, j), max(i, j)
+                matches_info[(idx1, idx2)] = result.score
+
+    # 2. Group by Cluster
+    clusters = {}
+    for i in range(n):
+        root = find(i)
+        if root not in clusters:
+            clusters[root] = []
+        clusters[root].append(i)
+        
+    merges = []
+    
+    # 3. Process Each Cluster
+    for root, members in clusters.items():
+        if len(members) < 2:
+            continue
+            
+        # Smart Primary Selection
+        member_scores = []
+        for idx in members:
+            char = characters[idx]
+            score = calculate_completeness_score(char)
+            member_scores.append((score, idx))
+        
+        # Sort by completeness desc
+        member_scores.sort(key=lambda x: x[0], reverse=True)
+        
+        primary_idx = member_scores[0][1]
+        primary_char = characters[primary_idx]
+        
+        merged_ids = []
+        all_aliases_set = set()
+        avg_confidence_accum = 0.0
+        pair_count = 0
+        conflicts = []
+        
+        # Collect data
+        for idx in members:
+            char = characters[idx]
+            if idx != primary_idx:
+                merged_ids.append(char["id"])
+                
+                # Detect Conflicts with Primary
+                if char.get("role") and primary_char.get("role"):
+                    if char["role"].lower().strip() != primary_char["role"].lower().strip():
+                        conflicts.append(f"Role conflict: '{primary_char['role']}' vs '{char['role']}'")
+                        
+                if char.get("status") and primary_char.get("status"):
+                    if char["status"].lower().strip() != primary_char["status"].lower().strip():
+                        conflicts.append(f"Status conflict: '{primary_char['status']}' vs '{char['status']}'")
+
+            # Collect aliases
+            char_aliases = parse_aliases(char.get("aliases_json"))
+            for a in char_aliases:
+                all_aliases_set.add(a.strip())
+        
+        # Calculate confidence
+        for i in range(len(members)):
+            for j in range(i + 1, len(members)):
+                idx1, idx2 = min(members[i], members[j]), max(members[i], members[j])
+                if (idx1, idx2) in matches_info:
+                    avg_confidence_accum += matches_info[(idx1, idx2)]
+                    pair_count += 1
+        
+        confidence = (avg_confidence_accum / pair_count / 100.0) if pair_count > 0 else 1.0
+        
+        merges.append({
+            "primary_id": primary_char["id"],
+            "merged_ids": merged_ids,
+            "canonical_name": primary_char["name"],
+            "merged_aliases": sorted(list(all_aliases_set)),
+            "confidence": confidence,
+            "conflicts": sorted(list(set(conflicts)))
+        })
+        
+    return merges

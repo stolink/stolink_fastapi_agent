@@ -11,14 +11,15 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
-from app.agents.llm import get_structured_llm
+from app.agents.llm import get_structured_llm, safe_ainvoke
+from app.agents.extraction.character.identity import is_likely_item as is_non_character
 
 
 # === Simplified Schema ===
 class Relationship(BaseModel):
     """Single relationship entry - matches result.json schema."""
     target: str = Field(..., description="Target character name")
-    type: str = Field(..., description="ALLY/ENEMY/RIVAL/NEUTRAL")
+    type: str = Field(..., description="ALLY/ENEMY/RIVAL/NEUTRAL/FAMILY/BETRAYED")
     strength: int = Field(5, ge=1, le=10, description="Relationship intensity 1-10")
     description: Optional[str] = Field(None, description="Brief description of relationship")
     public_stance: Optional[str] = Field(None, description="Outward: ALLY/NEUTRAL/ENEMY/RESPECT")
@@ -107,7 +108,12 @@ RELATIONS_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
 6. Include relationships for characters who are MENTIONED but don't directly appear (e.g., family members, past acquaintances)
 
 ### RELATIONSHIP TYPES ###
-ALLY, ENEMY, RIVAL, NEUTRAL, FAMILY
+ALLY, ENEMY, RIVAL, NEUTRAL, FAMILY, BETRAYED
+
+### GUIDANCE ###
+- BETRAYED: Use only if a betrayal has occurred or is effectively broken. If merely suspicious, use NEUTRAL or ENEMY with 'DISTRUST' private feeling.
+- Do not invent relationship types not listed above.
+- Ensure 'The man' and 'Monseigneur Bienvenu' relationship reflects the hospitality offered (ALLY) unless hostile action is taken.
 
 ### PUBLIC vs PRIVATE ###
 - public_stance: What they SHOW (ALLY/NEUTRAL/ENEMY/RESPECT)
@@ -149,11 +155,16 @@ Create BOTH directions (A→B and B→A) for EVERY relationship.""")
 ])
 
 
+
+
+
 def ensure_bidirectional_relations(relations_data: dict) -> dict:
     """Post-process to ensure all relationships are bidirectional.
     
     If A has a relationship with B, but B doesn't have one with A,
     automatically create the reverse relationship.
+    
+    Note: Skips non-character entities (places, generic descriptors).
     """
     # Collect all existing relationships
     existing_rels = {}  # {(source, target): relationship_data}
@@ -181,6 +192,11 @@ def ensure_bidirectional_relations(relations_data: dict) -> dict:
         source = missing["source"]
         target = missing["target"]
         original = missing["original"]
+        
+        # Skip if source is a non-character (place, generic descriptor, etc.)
+        if is_non_character(source):
+            print(f"[RELATIONS] Skipping non-character: '{source}' (not a valid character)")
+            continue
         
         # Determine reverse relationship type
         rel_type = original.get("type", "NEUTRAL")
@@ -230,7 +246,8 @@ def ensure_bidirectional_relations(relations_data: dict) -> dict:
 # === Node Function ===
 async def relations_extraction_node(state: dict) -> dict:
     """Relations Agent - Extracts character relationships."""
-    structured_llm = get_structured_llm(CharacterRelationsResult, tier="standard")
+    # Use advanced tier (gemini-2.5-flash) for relationship extraction (User Request)
+    structured_llm = get_structured_llm(CharacterRelationsResult, tier="premium")
     chain = RELATIONS_EXTRACTION_PROMPT | structured_llm
     
     # Get available characters from state (extracted by identity agent)
@@ -241,21 +258,40 @@ async def relations_extraction_node(state: dict) -> dict:
     print(f"[RELATIONS] Available characters: {char_list_str}")
     
     try:
-        result: CharacterRelationsResult = await chain.ainvoke({
+        result: CharacterRelationsResult = await safe_ainvoke(chain, {
             "story_text": state["content"],
             "character_list": char_list_str
         })
         
         relations_data = {}
+        filtered_count = 0
         for char in result.characters:
+            # NOTE: Character names are already filtered by Identity Agent.
+            # We only filter relationship TARGETS that LLM might generate incorrectly.
+            
             char_dump = char.model_dump()
+            
+            # Also filter out non-character targets from relationships
+            filtered_relations = []
+            for rel in char_dump.get("relations", []):
+                target = rel.get("target", "")
+                if is_non_character(target):
+                    print(f"[RELATIONS] Filtered non-character target: '{target}' from '{char.name}'")
+                else:
+                    filtered_relations.append(rel)
+            char_dump["relations"] = filtered_relations
+            
             relations_data[char.name] = char_dump
             # Debug logging
-            relation_count = len(char.relations)
+            relation_count = len(filtered_relations)
             print(f"[RELATIONS] Character '{char.name}': {relation_count} relationships")
             if relation_count > 0:
                 for rel in char.relations:
-                    print(f"  - → {rel.target}: {rel.type} (strength={rel.strength})")
+                    if not is_non_character(rel.target):
+                        print(f"  - → {rel.target}: {rel.type} (strength={rel.strength})")
+        
+        if filtered_count > 0:
+            print(f"[RELATIONS] Filtered {filtered_count} non-character entities")
         
         # Post-process to ensure bidirectional relationships
         print(f"[RELATIONS] Ensuring bidirectional relationships...")

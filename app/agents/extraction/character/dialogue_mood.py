@@ -12,7 +12,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
-from app.agents.llm import get_structured_llm
+from app.agents.llm import get_structured_llm, safe_ainvoke
 
 
 # === TTS Mapping ===
@@ -447,13 +447,13 @@ async def dialogue_mood_extraction_node(state: dict) -> dict:
     - dialogue_components: Non-verbal cues separated
     """
     # Use advanced tier for accurate catchphrase attribution and mood analysis
-    structured_llm = get_structured_llm(CharacterDialogueMoodResult, tier="advanced")
+    structured_llm = get_structured_llm(CharacterDialogueMoodResult, tier="premium")
     chain = DIALOGUE_MOOD_EXTRACTION_PROMPT | structured_llm
     
     story_text = state.get("content", "")
     
     try:
-        result: CharacterDialogueMoodResult = await chain.ainvoke({
+        result: CharacterDialogueMoodResult = await safe_ainvoke(chain, {
             "story_text": story_text
         })
         

@@ -21,7 +21,9 @@ class AnalysisState(TypedDict, total=False):
     project_id: str
     document_id: str
     job_id: str
+    job_id: str
     callback_url: str
+    requires_deep_analysis: bool
     
     # Tracing
     trace_id: str
@@ -76,6 +78,7 @@ class StoryAnalysisState(BaseModel):
     document_id: str = Field(..., description="Document UUID")
     job_id: str = Field(..., description="Analysis job UUID")
     callback_url: str = Field(..., description="Spring callback endpoint")
+    requires_deep_analysis: bool = Field(default=False, description="Whether to run deep analysis (plot, consistency)")
     
     # ===== Tracing =====
     trace_id: str = Field(default="", description="Global trace ID for distributed tracing")

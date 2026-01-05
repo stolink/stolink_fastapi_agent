@@ -15,8 +15,8 @@ class ChunkingService:
     def __init__(self, embedding_service: EmbeddingService):
         self.embedding_service = embedding_service
         self.similarity_threshold = 0.6  # 유사도 임계값 (이보다 높으면 병합 시도)
-        self.max_tokens_per_chunk = 2000 # 대략적인 문자 수 제한 (한글 2000자 ~= 1000-1500 토큰)
-        self.min_chunk_length = 500      # 너무 짧은 섹션 방지
+        self.max_tokens_per_chunk = 4000 # Increased for fewer sections (한글 4000자)
+        self.min_chunk_length = 800      # Increased to prevent tiny sections
 
     async def create_semantic_sections(self, content: str) -> List[dict]:
         """컨텐츠를 의미 기반 섹션으로 분할합니다."""

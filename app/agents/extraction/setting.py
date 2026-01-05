@@ -8,9 +8,10 @@ Uses with_structured_output() for:
 - Pydantic schema validation
 - No manual parsing required
 """
+import re  # Added for regex operations
 from langchain_core.prompts import ChatPromptTemplate
 
-from app.agents.llm import get_structured_llm
+from app.agents.llm import get_structured_llm, safe_ainvoke
 from app.schemas.settings import SettingExtractionResult
 
 
@@ -113,7 +114,7 @@ async def setting_extraction_node(state: dict) -> dict:
     print("[SETTING] Starting setting extraction...")
     
     # Get LLM with structured output bound to schema
-    structured_llm = get_structured_llm(SettingExtractionResult, tier="basic")
+    structured_llm = get_structured_llm(SettingExtractionResult, tier="advanced")
     
     conflicts = state.get("consistency_report", {}).get("conflicts", [])
     retry_count = state.get("retry_count", 0)
@@ -125,7 +126,7 @@ async def setting_extraction_node(state: dict) -> dict:
         if is_re_extraction:
             print(f"[SETTING] Re-extracting with {len(conflicts)} conflicts as feedback")
             chain = SETTING_RE_EXTRACTION_PROMPT | structured_llm
-            result: SettingExtractionResult = await chain.ainvoke({
+            result: SettingExtractionResult = await safe_ainvoke(chain, {
                 "story_text": state["content"],
                 "conflicts": str(conflicts),
                 "previous_extraction": str(previous_settings)
@@ -133,7 +134,7 @@ async def setting_extraction_node(state: dict) -> dict:
         else:
             print(f"[SETTING] First extraction, content length: {len(state.get('content', ''))}")
             chain = SETTING_EXTRACTION_PROMPT | structured_llm
-            result: SettingExtractionResult = await chain.ainvoke({
+            result: SettingExtractionResult = await safe_ainvoke(chain, {
                 "story_text": state["content"]
             })
         

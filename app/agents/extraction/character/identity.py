@@ -10,7 +10,45 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
-from app.agents.llm import get_structured_llm
+from app.agents.llm import get_structured_llm, safe_ainvoke
+from app.services.embedding_service import get_embedding_service
+
+
+# === Embedding Generation ===
+async def generate_character_embeddings_batch(characters: dict) -> None:
+    """Generate embeddings for characters using Gemini (3072 dim).
+    
+    Args:
+        characters: Dict of {name: character_dict}
+    """
+    if not characters:
+        return
+
+    service = get_embedding_service()
+    names = list(characters.keys())
+    texts = []
+    
+    for name in names:
+        char_data = characters[name]
+        role = char_data.get("role", "unknown")
+        backstory = char_data.get("backstory", "") or ""
+        # Create rich text for embedding
+        text_to_embed = f"Character: {name}. Role: {role}. Backstory: {backstory}"
+        texts.append(text_to_embed)
+    
+    try:
+        # Batch generation
+        embeddings = await service.generate_embeddings_batch(texts)
+        
+        for i, name in enumerate(names):
+            characters[name]["embedding"] = embeddings[i]
+            
+    except Exception as e:
+        print(f"[IDENTITY] Batch embedding generation failed: {e}")
+        # Initialize empty
+        for name in names:
+            if "embedding" not in characters[name]:
+                characters[name]["embedding"] = []
 
 
 # === Schema ===
@@ -98,52 +136,66 @@ IDENTITY_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """You are an expert story analyst. Extract BASIC IDENTITY information for ALL characters.
 
 ### CRITICAL: WHAT IS A CHARACTER? ###
-⚠️ A CHARACTER is a PERSON or BEING with sentience who can act, speak, or think.
+⚠️ A CHARACTER is a SPECIFIC PERSON or BEING with a PROPER NAME who acts, speaks, or thinks.
 ⚠️ A CHARACTER is NOT an object, item, weapon, clothing, or body part.
+⚠️ A CHARACTER is NOT a PLACE, LOCATION, PLANET, BUILDING, or GEOGRAPHIC ENTITY.
+⚠️ A CHARACTER is NOT an ORGANIZATION, GROUP, FACTION, or ABSTRACT CONCEPT.
+⚠️ A CHARACTER is NOT a GENERIC DESCRIPTOR or ANONYMOUS REFERENCE.
 
-✅ CHARACTERS: 진하, 세라, ARIA, 유민재, 리사 (people/beings with names who act in the story)
-❌ NOT CHARACTERS: 트렌치코트, 홀로그램 방패, 뇌 임플란트, 기계 팔, 메모리 칩, 검은 슈트, 플라즈마 건
+✅ CHARACTERS (with proper names): 강민우, 진하, 세라, ARIA, 유민재, 리사
+❌ NOT CHARACTERS (Items): 트렌치코트, 홀로그램 방패, 뇌 임플란트
+❌ NOT CHARACTERS (Places): 지구, 서울, 우주 정거장, 이카루스, 쉘터, 노아
+❌ NOT CHARACTERS (Organizations): 정부, 군대, 회사, 협회
+❌ NOT CHARACTERS (Generic Background): 생존자들, 군중, 사람들, 행인
 
-	### EXCLUSION EXAMPLES (NOT CHARACTERS) ###
-	- "낡은 트렌치코트" → CLOTHING (Item)
-	- "전설의 검" → WEAPON (Item)
-	- "스마트폰" → DEVICE (Item)
-	- "기계 팔" → PROSTHETIC (Body part/Item)
-	- "마법 지팡이" → WEAPON (Item)
+### CRITICAL: GENERIC DESCRIPTOR HANDLING ###
+✅ EXTRACT unnamed characters IF AND ONLY IF they play a SIGNIFICANT ROLE (e.g., specific dialogue, interaction with protagonist).
+- "Young Woman" (who speaks to protagonist) → ✅ EXTRACT as "Young Woman" (or "젊은 여성")
+- "Old Man" (who gives a quest) → ✅ EXTRACT as "Old Man" (or "노인")
+- "Survivor" (who is just part of a crowd) → ❌ DO NOT EXTRACT
+- "Voice" (entity communicating) → ✅ EXTRACT as "Voice" or their likely identity
 
-	### LANGUAGE CONSISTENCY RULE ###
-	Output ALL text in the SAME language as the input.
+❌ NOT CHARACTERS (Generic/Background): 생존자들(crowd), 사람들(people), 군인들(soldiers)
+- "젊은 여성의 목소리가 들렸다" AND she interacts → ✅ EXTRACT "젊은 여성"
+- "저 멀리 젊은 여성이 지나갔다" (background) → ❌ DO NOT EXTRACT
+
+### LANGUAGE CONSISTENCY RULE ###
+Output ALL text in the SAME language as the input.
 If the story is in Korean, all values must be in Korean.
-Do NOT translate (e.g., "암흑회" not "Dark Order").
 
 ### CRITICAL: NAME EXTRACTION RULE ###
 When a character is introduced as "베라(Vera)" or "리안(Lian)", extract ONLY the Korean name.
-The English in parentheses is just a transliteration hint - DO NOT create separate characters.
-❌ BAD: Extract both "Vera" and "베라" as different characters
-✅ GOOD: Extract only "베라" (use Korean name)
 
 ### EXTRACTION FOCUS ###
-For each character, extract:
-- name: Character's name as it appears in text (REQUIRED)
+For each character with a PROPER NAME, extract:
+- name: Character's PROPER NAME (REQUIRED - do NOT use generic descriptors)
 - age: Exact age or estimate if mentioned
 - gender: male/female/unknown
 - race: Race/species if mentioned (e.g., human, android, AI)
 - occupation: Job, class, or profession
 - faction: Organization, group, or affiliation
 - role: Main story role (protagonist/antagonist/supporting/mentor/sidekick/other)
-- aliases: Any nicknames, titles, descriptive references, or REAL NAMES
+- aliases: Any nicknames, titles (NOT generic descriptors)
 - status: alive/deceased/unknown
 - backstory: Background information
 
 ### RULES ###
-1. Extract ONLY characters (people/beings), NOT objects or items
-2. Use EXACT names from the text
-3. Focus ONLY on identity information, not appearance or personality"""),
+1. Extract characters with PROPER NAMES.
+2. ALSO extract unnamed characters (e.g. "Young Woman", "Old Man", "Voice") IF they have DIALOGUE or INTERACT with main characters.
+3. Do NOT extract insignificant background crowds (e.g. "Survivors", "People").
+4. If unsure, err on the side of extracting characters who speak.
+
+### ROLE GUIDANCE ###
+- named characters who interact with the protagonist should generally be 'supporting' or 'sidekick', NOT 'other'.
+- 'other' is for minor characters who appear briefly or have little impact.
+
+### NAMING CONSISTENCY ###
+- If a character is referred to by multiple names (e.g. "The man" becomes "The guest"), use the most frequent PROPER NAME or the first introduced name as the primary 'name'.
+- List variations (like "The guest") in 'aliases'."""),
     ("human", """Story text:
 {story_text}
 
-Extract identity information for all CHARACTERS (people/beings who act in the story).
-DO NOT extract items, weapons, clothing, or devices as characters.""")
+Extract all significant characters, including those without proper names (like "Young Woman") IF they speak.""")
 ])
 
 
@@ -212,39 +264,75 @@ def normalize_character_names(identity_data: dict, story_text: str) -> dict:
     return identity_data
 
 
+# === NON-CHARACTER FILTER: Names that should NOT be characters ===
+NON_CHARACTER_KEYWORDS = [
+    # Items (Weapons/Armor)
+    "검", "칼", "창", "활", "방패", "갑옷", "투구", "무기",
+    "sword", "blade", "spear", "bow", "shield", "armor", "weapon",
+    
+    # Modern/Sci-Fi Items
+    "총", "건", "라이플", "권총", "슈트", "코트", "임플란트", "칩",
+    "gun", "rifle", "pistol", "suit", "coat", "implant", "chip",
+    
+    # Places (Korean)
+    "지구", "서울", "부산", "도쿄", "뉴욕", "도시", "마을",
+    "행성", "위성", "우주", "정거장", "우주선", "기지",
+    "쉘터", "본부", "연구소", "병원", "학교", "건물",
+    "노아", "벙커", "아지트", "광장", "거리", "빌딩",
+    
+    # Places (English)
+    "earth", "planet", "city", "station", "shelter", "base",
+    
+    # Organizations/Groups
+    "생존자들", "회사", "기업", "정부", "군대", "조직", "협회",
+    "연합", "동맹", "부대", "기관",
+    
+    # Generic Descriptors (NOT proper names)
+    # Generic Descriptors (NOT proper names)
+    # Relaxed filter: Allow generic descriptors that could be key characters (e.g. "Young Woman")
+    # Entity Resolution will handle merging duplicates like "생존자" + "젊은 여성"
+    "그 남자", "그 여자",
+    "사람", "인간", "누군가",
+    "당신", "너",
+    # NOTE: Removed "이", "저", "그", "그녀", "노인", "아이", "그쪽" - can appear in valid character names
+    # e.g., "헤이즈 교수" contains "이", "이선생", "저 사람" (pointing)
+]
+
+# Track logged names to prevent duplicate log messages
+_logged_filter_matches: set = set()
+
+def is_likely_item(name: str) -> bool:
+    """Check if name looks like an item/place/org rather than a character."""
+    name_clean = name.strip()
+    
+    # Explicit Whitelist for Key Generic Characters
+    whitelist = ["Young Woman", "Young Man", "Old Man", "Voice", "여성", "젊은 여성", "노인", "목소리"]
+    if name_clean in whitelist:
+        print(f"[IDENTITY] Whitelist MATCH for: {repr(name_clean)}")
+        return False
+
+    # Normalize name (remove spaces) for matching
+    name_normalized = name_clean.replace(" ", "").lower()
+    for keyword in NON_CHARACTER_KEYWORDS:
+        keyword_normalized = keyword.replace(" ", "").lower()
+        if keyword_normalized in name_normalized or keyword in name_clean:
+            # Suppress duplicate log messages for same name/keyword pair
+            log_key = (name, keyword)
+            if log_key not in _logged_filter_matches:
+                _logged_filter_matches.add(log_key)
+                print(f"[IDENTITY] Filter matched: '{name}' contains '{keyword}'")
+            return True
+    return False
+
 # === Node Function ===
 async def identity_extraction_node(state: dict) -> dict:
     """Identity Agent - Extracts basic character information."""
-    # Use advanced tier for complex role/identity inference
-    structured_llm = get_structured_llm(CharacterIdentityResult, tier="standard")
+    # Use premium tier (gemini-3-flash) for best character identification
+    structured_llm = get_structured_llm(CharacterIdentityResult, tier="premium")
     chain = IDENTITY_EXTRACTION_PROMPT | structured_llm
     
-    # === ITEM FILTER: Names that should NOT be characters ===
-    ITEM_KEYWORDS = [
-    # Generic Items (Weapons/Armor)
-    "검", "칼", "창", "활", "방패", "갑옷", "투구", "무기",
-    "sword", "blade", "spear", "bow", "shield", "armor", "helm", "weapon",
-    
-    # Modern/Sci-Fi Items
-    "총", "건", "라이플", "권총", "슈트", "코트", "임플란트", "칩", "디바이스", "폰",
-    "gun", "rifle", "pistol", "suit", "coat", "implant", "chip", "device", "phone",
-    
-    # Common Objects
-    "책", "지팡이", "반지", "목걸이", "가방",
-    "book", "staff", "ring", "necklace", "bag"
-]    
-    def is_likely_item(name: str) -> bool:
-        """Check if name looks like an item rather than a character."""
-        # Normalize name (remove spaces) for matching
-        name_normalized = name.replace(" ", "").lower()
-        for keyword in ITEM_KEYWORDS:
-            keyword_normalized = keyword.replace(" ", "").lower()
-            if keyword_normalized in name_normalized or keyword in name:
-                return True
-        return False
-    
     try:
-        result: CharacterIdentityResult = await chain.ainvoke({
+        result: CharacterIdentityResult = await safe_ainvoke(chain, {
             "story_text": state["content"]
         })
         
@@ -275,6 +363,10 @@ async def identity_extraction_node(state: dict) -> dict:
                 identity["_skip_agents"] = ["appearance", "inventory", "stats"]
                 ai_characters.append(name)
                 print(f"[IDENTITY] AI character detected: '{name}' - will skip appearance/inventory/stats")
+        
+        # === Generate Embeddings ===
+        print(f"[IDENTITY] Generating embeddings for {len(identity_data)} characters...")
+        await generate_character_embeddings_batch(identity_data)
         
         return {
             "char_identity": identity_data,

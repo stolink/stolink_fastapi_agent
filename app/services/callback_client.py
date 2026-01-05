@@ -41,6 +41,11 @@ class CallbackClient:
         base_delay = 1.0
         last_exception = None
         
+        # Docker environment compatibility
+        if "localhost" in url or "127.0.0.1" in url:
+            url = url.replace("localhost", "host.docker.internal").replace("127.0.0.1", "host.docker.internal")
+            logger.info("Modified request URL for Docker", new_url=url)
+        
         for attempt in range(max_retries):
             try:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -82,7 +87,9 @@ class CallbackClient:
         status: str,
         result: dict[str, Any] = None,
         error: str = None,
-        callback_url: Optional[str] = None
+        callback_url: Optional[str] = None,
+        processing_time_ms: int = None,  # 🆕 추가
+        trace_id: str = None  # 🆕 추가
     ) -> bool:
         """Send analysis result callback to Spring Boot.
         
@@ -92,26 +99,45 @@ class CallbackClient:
             result: Analysis results dictionary
             error: Error message if failed
             callback_url: Override callback URL (from message)
+            processing_time_ms: Total processing time in milliseconds
+            trace_id: Distributed tracing ID
             
         Returns:
             True if callback was successful
         """
-        # Use provided callback_url or fall back to settings
-        if callback_url:
-            # If callback_url is a full URL, use it directly
-            if callback_url.startswith("http"):
-                url = callback_url
-            else:
-                url = f"{settings.spring_callback_url}{callback_url}"
-        else:
-            url = f"{settings.spring_callback_url}/api/internal/ai/analysis/callback"
+        # OVERRIDE: Always use the correct callback endpoint
+        # RabbitMQ messages may contain legacy /api/ai-callback URLs
+        # Force the new correct endpoint regardless of message content
+        url = f"{settings.spring_callback_url}/api/internal/ai/analysis/callback"
         
-        payload = AnalysisCallbackPayload(
-            job_id=job_id,
-            status=status,
-            result=result,
-            error=error
-        )
+        # Log if a different callback_url was provided (for debugging)
+        if callback_url and "/api/internal/ai/analysis/callback" not in callback_url:
+            logger.warning("Ignoring legacy callback_url from message", 
+                          provided_url=callback_url, 
+                          using_url=url)
+        
+        # Flattened Payload: Spring DTO deserialization 에러 방지
+        # "result" 객체 내의 필드들을 최상위 레벨로 올리거나, 
+        # Spring DTO 구조에 맞춰야 함.
+        # 일단 Pydantic 모델 대신 딕셔너리로 직접 구성
+        
+        payload_dict = {
+            "jobId": job_id, # "job_id" -> "jobId" (Spring Convention)
+            "status": status,
+            "error": error
+        }
+        
+        # 🆕 processing_time_ms와 trace_id를 최상위 레벨에 추가
+        if processing_time_ms is not None:
+            payload_dict["processing_time_ms"] = processing_time_ms
+        if trace_id:
+            payload_dict["trace_id"] = trace_id
+        
+        if result:
+            # result 딕셔너리의 내용을 최상위에 병합 (Flatten)
+            # 만약 Spring DTO가 이를 필드로 가지고 있다면 매핑됨
+            # 예: sections, characters, events 등
+            payload_dict.update(result)
         
         logger.info("Sending callback", job_id=job_id, url=url, status=status)
         
@@ -120,7 +146,7 @@ class CallbackClient:
                 "POST",
                 url,
                 job_id,
-                json=payload.model_dump(by_alias=True),
+                json=payload_dict,  # Flattened dict 전송
                 headers={"Content-Type": "application/json"}
             )
             
@@ -185,6 +211,15 @@ class CallbackClient:
                     status=status
                 )
                 return True
+            elif response.status_code == 404:
+                # 404 means Job Not Found. This is expected if we only have a Document ID.
+                # The consumer will fallback to update_document_status.
+                logger.info(
+                    "Job not found for status update (will try fallback)", 
+                    job_id=job_id, 
+                    status_code=404
+                )
+                return False
             else:
                 logger.warning(
                     "Job status update failed",
@@ -196,6 +231,54 @@ class CallbackClient:
                     
         except Exception as e:
             logger.warning("Job status update failed after retries", job_id=job_id, error=str(e))
+            return False
+
+    async def update_document_status(
+        self,
+        document_id: str,
+        status: str,
+        trace_id: str = None
+    ) -> bool:
+        """Update document status in Spring Boot (Legacy/Fallback).
+        
+        Args:
+            document_id: Document UUID
+            status: New status
+            trace_id: Optional trace ID
+        """
+        # Note: Document API might be under spring_backend_url or spring_callback_url.
+        # Assuming they point to the same host/port.
+        url = f"{settings.spring_callback_url}/api/documents/{document_id}/analysis-status"
+        
+        payload = {"status": status}
+        if trace_id:
+            payload["traceId"] = trace_id
+            
+        logger.info("Updating document status (fallback)", document_id=document_id, status=status)
+        
+        try:
+            # Use PATCH for document status
+            response = await self._send_request_with_retry(
+                "PATCH",
+                url,
+                document_id,
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                logger.info("Document status updated", document_id=document_id, status=status)
+                return True
+            else:
+                logger.warning(
+                    "Document status update failed", 
+                    document_id=document_id, 
+                    status_code=response.status_code,
+                    response=response.text
+                )
+                return False
+        except Exception as e:
+            logger.warning("Document status update failed after retries", document_id=document_id, error=str(e))
             return False
 
 

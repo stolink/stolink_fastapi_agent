@@ -16,7 +16,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
-from app.agents.llm import get_structured_llm
+from app.agents.llm import get_structured_llm, safe_ainvoke
 
 # === AI Behavioral Control Schemas ===
 class DecisionStyle(BaseModel):
@@ -264,11 +264,11 @@ async def personality_extraction_node(state: dict) -> dict:
     """Personality Agent - Extracts personality traits (not emotions)."""
     # Use standard tier for personality trait extraction
     # Use standard tier for personality - basic tier causes empty arrays
-    structured_llm = get_structured_llm(CharacterPersonalityResult, tier="standard")
+    structured_llm = get_structured_llm(CharacterPersonalityResult, tier="premium")
     chain = PERSONALITY_EXTRACTION_PROMPT | structured_llm
     
     try:
-        result: CharacterPersonalityResult = await chain.ainvoke({
+        result: CharacterPersonalityResult = await safe_ainvoke(chain, {
             "story_text": state["content"]
         })
         
