@@ -1173,6 +1173,9 @@ class DatabaseQueryService:
                 if not char_name:
                     continue
                 
+                # Normalize name to prevent duplicates from whitespace differences
+                char_name = char_name.strip()
+                
                 await session.run(
                     """
                     MERGE (c:Character {projectId: $pid, name: $name})
@@ -1227,6 +1230,9 @@ class DatabaseQueryService:
                 for participant_name in participants:
                     if not participant_name:
                         continue
+                    
+                    # Normalize to match Character node names
+                    participant_name = participant_name.strip()
                     
                     await session.run(
                         """
