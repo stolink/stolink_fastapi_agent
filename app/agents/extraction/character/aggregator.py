@@ -512,6 +512,47 @@ def build_name_merge_map(all_raw_names: set, dynamic_mapping: dict = None) -> di
 
 
 
+def clean_character_aliases(aliases: list, char_name: str, all_character_names: set) -> list:
+    """Remove other character names that were incorrectly added as aliases.
+    
+    This fixes LLM errors where it puts other characters' names in the aliases list.
+    
+    Args:
+        aliases: The aliases list to clean
+        char_name: The name of this character
+        all_character_names: Set of all known character names in the story
+        
+    Returns:
+        Cleaned aliases list with only valid nicknames/titles for this character
+    """
+    if not aliases:
+        return []
+    
+    cleaned = []
+    char_name_lower = char_name.lower()
+    
+    for alias in aliases:
+        if not alias or not isinstance(alias, str):
+            continue
+            
+        alias_lower = alias.lower().strip()
+        
+        # Skip if the alias is another character's name
+        is_other_character = False
+        for other_name in all_character_names:
+            other_name_lower = other_name.lower()
+            # Allow aliases that contain this character's name (e.g., "Professor Hayes" for "Hayes")
+            if other_name_lower == alias_lower and other_name_lower != char_name_lower:
+                is_other_character = True
+                print(f"[AGGREGATOR] Removed invalid alias '{alias}' from '{char_name}' (it's another character)")
+                break
+                
+        if not is_other_character:
+            cleaned.append(alias)
+    
+    return cleaned
+
+
 def apply_safe_defaults(data: dict, defaults: dict) -> dict:
     """Apply safe defaults for null values."""
     result = {}
@@ -624,6 +665,13 @@ async def merge_character_data(
     
     characters = []
     
+    print(f"[AGGREGATOR] Raw keys - Identity: {list(identity.keys())}")
+    print(f"[AGGREGATOR] Raw keys - Appearance: {list(appearance.keys())}")
+    print(f"[AGGREGATOR] Raw keys - Personality: {list(personality.keys())}")
+    print(f"[AGGREGATOR] Raw keys - Relations: {list(relations.keys())}")
+    print(f"[AGGREGATOR] Raw keys - Dialogue: {list(dialogue_mood.keys())}")
+
+    # === Pre-process Identity: Check for existing characters in DB ===
     for canonical_name in canonical_names:
         # Find all variant names that map to this canonical name
         variant_names = [raw for raw, canon in name_merge_map.items() if canon == canonical_name]
@@ -711,7 +759,8 @@ async def merge_character_data(
                     }
                 },
             },
-            "aliases": id_data.get("aliases", []),
+            # Clean aliases: remove other character names that LLM incorrectly added
+            "aliases": clean_character_aliases(id_data.get("aliases", []), name, canonical_names),
             "status": id_data.get("status", "alive"),
             "appearance": {
                 "physique": app_data.get("physique", "unspecified"),
@@ -760,6 +809,7 @@ async def merge_character_data(
         
         characters.append(full_char)
     
+    print(f"[AGGREGATOR] merge_character_data created {len(characters)} characters: {[c.get('profile',{}).get('name','?') for c in characters]}")
     return characters
 
 
@@ -850,6 +900,7 @@ async def character_aggregator_node(state: dict) -> dict:
 
     settings_list = list(extracted_settings.values())
     print(f"[AGGREGATOR] Aggregated {len(settings_list)} settings.")
+    print(f"[AGGREGATOR] FINAL: returning {len(filtered_characters)} characters to state")
 
     return {
         "extracted_characters": filtered_characters,

@@ -1057,8 +1057,7 @@ class DatabaseQueryService:
         query = """
             INSERT INTO characters (id, project_id, name, role, description, aliases_json, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
+            ON CONFLICT (project_id, name) DO UPDATE SET
                 role = EXCLUDED.role,
                 description = EXCLUDED.description,
                 aliases_json = EXCLUDED.aliases_json,
@@ -1097,8 +1096,8 @@ class DatabaseQueryService:
         query = """
             INSERT INTO settings (id, project_id, name, location_type, description, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
+            ON CONFLICT (project_id, name) DO UPDATE SET
+                location_type = EXCLUDED.location_type,
                 description = EXCLUDED.description,
                 updated_at = NOW()
         """
@@ -1183,16 +1182,40 @@ class DatabaseQueryService:
                 )
             # Events
             for evt in events:
+                import uuid as uuid_mod
+                raw_evt_id = evt.get("event_id") or evt.get("id")
+                try:
+                    evt_uuid = str(uuid_mod.UUID(raw_evt_id)) if raw_evt_id else str(uuid_mod.uuid4())
+                except (ValueError, AttributeError):
+                    # Use original event_id (e.g., "E001") if not a valid UUID
+                    evt_uuid = raw_evt_id if raw_evt_id else str(uuid_mod.uuid4())
+
                 await session.run(
                     """
                     MERGE (e:Event {eventId: $id})
                     SET e.projectId = $pid, e.description = $desc, e.chapter = $chapter
                     """,
-                    id=evt.get("event_id") or evt.get("id"),
+                    id=evt_uuid,
                     pid=project_id,
                     desc=evt.get("description", "") or evt.get("summary", ""),
                     chapter=evt.get("chapter", 0)
                 )
+
+                # 🆕 Create PARTICIPATES_IN relationships between Characters and Events
+                participants = evt.get("participants", [])
+                for participant_name in participants:
+                    if not participant_name:
+                        continue
+                    await session.run(
+                        """
+                        MATCH (c:Character {projectId: $pid, name: $char_name})
+                        MATCH (e:Event {eventId: $evt_id})
+                        MERGE (c)-[r:PARTICIPATES_IN]->(e)
+                        """,
+                        pid=project_id,
+                        char_name=participant_name,
+                        evt_id=evt_uuid
+                    )
 
             # Relationships (Edges) 🆕
             # Expected format: { "source": "CharName", "target": "CharName", "type": "FRIEND", "description": "..." }

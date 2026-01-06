@@ -99,6 +99,11 @@ class CharacterRelationsResult(BaseModel):
 RELATIONS_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """You are a story analyst. Extract CHARACTER RELATIONSHIPS from the text.
 
+### ⚠️ CRITICAL: EXTRACT EACH CHARACTER SEPARATELY ⚠️ ###
+❗ If there are 3 characters in the story (e.g., 클레어, 잭슨, 헤이즈 교수), you MUST return 3 SEPARATE character entries.
+❗ NEVER return only one character when multiple characters exist.
+❗ Even if a character has no explicit relationships, include them with an empty relations array.
+
 ### RULES ###
 1. Output in the SAME language as the input
 2. Use ONLY Korean names when character has format "베라(Vera)" → use "베라"
@@ -124,22 +129,35 @@ ALLY, ENEMY, RIVAL, NEUTRAL, FAMILY, BETRAYED
 - For FAMILY relationships, both directions must be extracted (e.g., if A is B's sibling, B is also A's sibling)
 - Characters who don't directly appear but are mentioned (sick relative, distant friend, etc.) should still have relationships extracted
 
-### OUTPUT EXAMPLE ###
+### OUTPUT EXAMPLE (3 characters) ###
 {{
   "characters": [
     {{
-      "name": "진하",
+      "name": "클레어",
       "relations": [
-        {{"target": "세라", "type": "ALLY", "strength": 7, "description": "의뢰인을 보호하려 함", "public_stance": "ALLY", "private_feeling": "CURIOSITY"}},
-        {{"target": "유민재", "type": "ENEMY", "strength": 8, "description": "적대적 대립", "public_stance": "ENEMY", "private_feeling": "ANGER"}}
+        {{"target": "잭슨", "type": "ALLY", "strength": 6, "description": "위험한 계획을 경계함", "public_stance": "NEUTRAL", "private_feeling": "DISTRUST"}},
+        {{"target": "헤이즈 교수", "type": "ALLY", "strength": 5, "description": "유적 탐사 동료", "public_stance": "ALLY", "private_feeling": "TRUST"}}
       ]
     }},
     {{
-      "name": "세라",
+      "name": "잭슨",
       "relations": [
-        {{"target": "진하", "type": "ALLY", "strength": 7, "description": "자신을 도와주는 탐정", "public_stance": "ALLY", "private_feeling": "TRUST"}}
+        {{"target": "클레어", "type": "ALLY", "strength": 6, "description": "탐사팀 동료", "public_stance": "ALLY", "private_feeling": "NEUTRAL"}}
+      ]
+    }},
+    {{
+      "name": "헤이즈 교수",
+      "relations": [
+        {{"target": "클레어", "type": "ALLY", "strength": 5, "description": "탐사팀 리더", "public_stance": "ALLY", "private_feeling": "TRUST"}}
       ]
     }}
+  ]
+}}
+
+### ❌ WRONG: DO NOT DO THIS ###
+{{
+  "characters": [
+    {{"name": "클레어", "relations": [...] }}  ← WRONG! Other characters are missing!
   ]
 }}"""),
     ("human", """Story text:
@@ -149,6 +167,7 @@ Available Characters:
 {character_list}
 
 Extract relationships for ALL characters in the list.
+If there are 3 characters, return 3 entries. If there are 5 characters, return 5 entries.
 Include relationships for characters who are MENTIONED but don't directly appear in scenes.
 Keep descriptions SHORT (under 20 words).
 Create BOTH directions (A→B and B→A) for EVERY relationship.""")
@@ -275,10 +294,10 @@ async def relations_extraction_node(state: dict) -> dict:
             filtered_relations = []
             for rel in char_dump.get("relations", []):
                 target = rel.get("target", "")
-                if is_non_character(target):
-                    print(f"[RELATIONS] Filtered non-character target: '{target}' from '{char.name}'")
-                else:
-                    filtered_relations.append(rel)
+                # if is_non_character(target):
+                #     print(f"[RELATIONS] Filtered non-character target: '{target}' from '{char.name}'")
+                # else:
+                filtered_relations.append(rel)
             char_dump["relations"] = filtered_relations
             
             relations_data[char.name] = char_dump
@@ -287,8 +306,8 @@ async def relations_extraction_node(state: dict) -> dict:
             print(f"[RELATIONS] Character '{char.name}': {relation_count} relationships")
             if relation_count > 0:
                 for rel in char.relations:
-                    if not is_non_character(rel.target):
-                        print(f"  - → {rel.target}: {rel.type} (strength={rel.strength})")
+                    # if not is_non_character(rel.target):
+                    print(f"  - → {rel.target}: {rel.type} (strength={rel.strength})")
         
         if filtered_count > 0:
             print(f"[RELATIONS] Filtered {filtered_count} non-character entities")
