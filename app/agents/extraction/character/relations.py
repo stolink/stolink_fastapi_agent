@@ -113,12 +113,43 @@ RELATIONS_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
 6. Include relationships for characters who are MENTIONED but don't directly appear (e.g., family members, past acquaintances)
 
 ### RELATIONSHIP TYPES ###
-ALLY, ENEMY, RIVAL, NEUTRAL, FAMILY, BETRAYED
+ALLY, ENEMY, RIVAL, NEUTRAL, FAMILY, BETRAYED, KNOWS, PROTECTS, MENTOR
 
-### GUIDANCE ###
-- BETRAYED: Use only if a betrayal has occurred or is effectively broken. If merely suspicious, use NEUTRAL or ENEMY with 'DISTRUST' private feeling.
-- Do not invent relationship types not listed above.
-- Ensure 'The man' and 'Monseigneur Bienvenu' relationship reflects the hospitality offered (ALLY) unless hostile action is taken.
+### ⚠️ DESCRIPTION RULES (VERY IMPORTANT) ⚠️ ###
+❌ NEVER write generic descriptions like "Relationship with X" or "관계"
+✅ ALWAYS include SPECIFIC DETAILS from the text:
+  - How they know each other (과거 인연, 공유 경험)
+  - Key events or interactions between them
+  - Unique identifying details mentioned in text
+  - Emotional nuances of the relationship
+
+**Examples of GOOD descriptions:**
+- "갤러선 동료 전과자, 체크무늬 멜빵 기억" (specific shared history + unique detail)
+- "무고한 피고인을 구하기 위해 자신의 정체를 밝힘" (specific action in story)
+- "관용과 친절로 구해준 은인, 주교의 은촉대 사건" (specific event reference)
+- "과거를 알아볼 수 있는 유일한 인물, 긴장 관계" (role + emotional tone)
+
+**Examples of BAD descriptions (DO NOT USE):**
+- "Relationship with 장 발장" ❌
+- "관계" ❌
+- "동료" (too vague) ❌
+
+### ⚠️ STRENGTH SCORING GUIDE (1-10) ⚠️ ###
+The strength score reflects HOW SIGNIFICANT the relationship is in the story:
+
+| Score | Meaning | Examples |
+|-------|---------|----------|
+| 9-10 | Life-changing, central to plot | 은인, 숙적, 구원자, 생사를 함께한 관계 |
+| 7-8 | Very significant, strong bond/conflict | 오랜 동료, 강한 적대, 깊은 신뢰 |
+| 5-6 | Moderate importance | 일반적인 동료, 알게 된 사이, 약간의 갈등 |
+| 3-4 | Minor, peripheral | 한두 번 만남, 간접적 언급 |
+| 1-2 | Barely connected | 스치듯 언급, 배경 인물 |
+
+**Strength Examples from "Les Misérables":**
+- 장 발장 ↔ 주교: 10 (인생을 바꾼 은인)
+- 장 발장 ↔ 자베르: 9 (숙명적 추적자)
+- 장 발장 ↔ 갤러선 동료: 7 (19년 함께 수감)
+- 장 발장 ↔ 재판장: 4 (법정에서 단기 상호작용)
 
 ### PUBLIC vs PRIVATE ###
 - public_stance: What they SHOW (ALLY/NEUTRAL/ENEMY/RESPECT)
@@ -126,38 +157,20 @@ ALLY, ENEMY, RIVAL, NEUTRAL, FAMILY, BETRAYED
 
 ### IMPORTANT ###
 - If character A has a relationship with character B, character B MUST also have a relationship with A
-- For FAMILY relationships, both directions must be extracted (e.g., if A is B's sibling, B is also A's sibling)
-- Characters who don't directly appear but are mentioned (sick relative, distant friend, etc.) should still have relationships extracted
+- For FAMILY relationships, both directions must be extracted
+- Characters who don't directly appear but are mentioned should still have relationships extracted
 
-### OUTPUT EXAMPLE (3 characters) ###
+### OUTPUT EXAMPLE ###
 {{
   "characters": [
     {{
-      "name": "클레어",
+      "name": "장 발장",
       "relations": [
-        {{"target": "잭슨", "type": "ALLY", "strength": 6, "description": "위험한 계획을 경계함", "public_stance": "NEUTRAL", "private_feeling": "DISTRUST"}},
-        {{"target": "헤이즈 교수", "type": "ALLY", "strength": 5, "description": "유적 탐사 동료", "public_stance": "ALLY", "private_feeling": "TRUST"}}
-      ]
-    }},
-    {{
-      "name": "잭슨",
-      "relations": [
-        {{"target": "클레어", "type": "ALLY", "strength": 6, "description": "탐사팀 동료", "public_stance": "ALLY", "private_feeling": "NEUTRAL"}}
-      ]
-    }},
-    {{
-      "name": "헤이즈 교수",
-      "relations": [
-        {{"target": "클레어", "type": "ALLY", "strength": 5, "description": "탐사팀 리더", "public_stance": "ALLY", "private_feeling": "TRUST"}}
+        {{"target": "브레베", "type": "KNOWS", "strength": 7, "description": "갤러선 동료 전과자, 체크무늬 멜빵 기억", "public_stance": "NEUTRAL", "private_feeling": "NEUTRAL"}},
+        {{"target": "자베르", "type": "ENEMY", "strength": 9, "description": "자신을 알아볼 수 있는 추적자, 긴장 관계", "public_stance": "NEUTRAL", "private_feeling": "FEAR"}},
+        {{"target": "몽세뇌르 주교", "type": "ALLY", "strength": 10, "description": "관용과 친절로 구원해준 은인", "public_stance": "RESPECT", "private_feeling": "TRUST"}}
       ]
     }}
-  ]
-}}
-
-### ❌ WRONG: DO NOT DO THIS ###
-{{
-  "characters": [
-    {{"name": "클레어", "relations": [...] }}  ← WRONG! Other characters are missing!
   ]
 }}"""),
     ("human", """Story text:
@@ -167,9 +180,8 @@ Available Characters:
 {character_list}
 
 Extract relationships for ALL characters in the list.
-If there are 3 characters, return 3 entries. If there are 5 characters, return 5 entries.
-Include relationships for characters who are MENTIONED but don't directly appear in scenes.
-Keep descriptions SHORT (under 20 words).
+⚠️ IMPORTANT: Write DETAILED descriptions with SPECIFIC TEXT EVIDENCE, not generic phrases.
+⚠️ Set strength scores based on the SIGNIFICANCE of the relationship in the story (1-10).
 Create BOTH directions (A→B and B→A) for EVERY relationship.""")
 ])
 
@@ -234,12 +246,14 @@ def ensure_bidirectional_relations(relations_data: dict) -> dict:
         }
         reverse_feeling = reverse_feeling_map.get(original_feeling, original_feeling)
         
-        # Create reverse relationship
+        # Create reverse relationship - preserve original description
+        # The relationship context is typically symmetric (e.g., "갤러선 동료" applies both ways)
+        original_desc = original.get("description", "")
         reverse_rel = {
             "target": target,
             "type": rel_type,
             "strength": original.get("strength", 5),
-            "description": f"Relationship with {target}",
+            "description": original_desc if original_desc else f"{source}과(와)의 관계",
             "public_stance": original.get("public_stance", "NEUTRAL"),
             "private_feeling": reverse_feeling
         }
