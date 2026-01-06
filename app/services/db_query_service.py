@@ -87,7 +87,7 @@ class DatabaseQueryService:
                         chapter INTEGER,
                         sequence_order INTEGER,
                         participants JSONB,
-                        location_ref TEXT,
+                        location TEXT,
                         created_at TIMESTAMP DEFAULT NOW(),
                         updated_at TIMESTAMP DEFAULT NOW()
                     );
@@ -109,6 +109,10 @@ class DatabaseQueryService:
                     CREATE INDEX IF NOT EXISTS settings_project_id_idx ON settings(project_id);
                     CREATE INDEX IF NOT EXISTS events_project_id_idx ON events(project_id);
                     CREATE INDEX IF NOT EXISTS characters_project_id_idx ON characters(project_id);
+                    
+                    /* Create UNIQUE indexes for upsert support */
+                    CREATE UNIQUE INDEX IF NOT EXISTS characters_project_id_name_idx ON characters(project_id, name);
+                    CREATE UNIQUE INDEX IF NOT EXISTS settings_project_id_name_idx ON settings(project_id, name);
                 """)
 
                 logger.info("PostgreSQL schema initialized (sections, settings, events, characters tables)")
@@ -1016,7 +1020,7 @@ class DatabaseQueryService:
             logger.warning("PostgreSQL pool not available for save")
             return
 
-        logger.info("[DEBUG] Entering save_extraction_result", chars=len(characters), events=len(events))
+        logger.info("Saving extraction result", chars=len(characters), events=len(events))
 
         try:
             logger.info("[DEBUG] Acquiring PG connection...")
@@ -1042,12 +1046,15 @@ class DatabaseQueryService:
                     logger.info("[DEBUG] PG transaction complete.")
 
             # Sync to Neo4j
+            # Ensure connection is alive (reconnect if needed)
+            await self.ensure_neo4j_connected()
+            
             if self._neo4j_driver:
                 logger.info("[DEBUG] Starting Neo4j sync...")
                 await self._sync_to_neo4j(project_id, characters, events, settings_list, relationships or [])
                 logger.info("[DEBUG] Neo4j sync complete.")
             else:
-                logger.info("[DEBUG] Neo4j driver not available, skipping sync.")
+                logger.warning("[DEBUG] Neo4j driver not available after ensure_connected, skipping sync.")
 
         except Exception as e:
             logger.error("Failed to persist batch", error=str(e))
@@ -1121,11 +1128,12 @@ class DatabaseQueryService:
 
     async def _insert_event(self, conn, project_id, evt):
         query = """
-            INSERT INTO events (id, project_id, document_id, event_type, description, chapter, sequence_order, participants, location_ref, created_at, updated_at)
+            INSERT INTO events (id, project_id, document_id, event_type, description, chapter, sequence_order, participants, location, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
             ON CONFLICT (id) DO UPDATE SET
                 description = EXCLUDED.description,
                 participants = EXCLUDED.participants,
+                location = EXCLUDED.location,
                 chapter = EXCLUDED.chapter,
                 sequence_order = EXCLUDED.sequence_order,
                 updated_at = NOW()
@@ -1156,30 +1164,43 @@ class DatabaseQueryService:
 
     async def _sync_to_neo4j(self, project_id, characters, events, settings_list, relationships):
         async with self._neo4j_driver.session() as session:
-            # Characters
+            # Characters - Use (projectId, name) as the merge key for consistency with PARTICIPATES_IN
             for char in characters:
-                # Validate ID before MERGE to avoid null property error
-                import uuid
-                raw_id = char.get("id") or char.get("_id")
-                try:
-                    char_uuid = str(uuid.UUID(raw_id)) if raw_id else None
-                except (ValueError, AttributeError):
-                    char_uuid = None
-
-                # Skip if no valid ID
-                if not char_uuid:
+                # Extract name from top-level or nested profile
+                char_name = char.get("name") or (char.get("profile", {}) or {}).get("name")
+                
+                # Skip characters without name (cannot create node without name)
+                if not char_name:
                     continue
-
+                
                 await session.run(
                     """
-                    MERGE (c:Character {characterId: $id})
-                    SET c.projectId = $pid, c.name = $name, c.role = $role
+                    MERGE (c:Character {projectId: $pid, name: $name})
+                    SET c.role = $role
                     """,
-                    id=char_uuid,
                     pid=project_id,
-                    name=char.get("name"),
-                    role=char.get("role")
+                    name=char_name,
+                    role=char.get("role", "Unknown")
                 )
+            
+            # Settings (Locations)
+            for setting in settings_list:
+                setting_name = setting.get("name") or setting.get("location_name")
+                
+                if not setting_name:
+                    continue
+                
+                await session.run(
+                    """
+                    MERGE (s:Setting {projectId: $pid, name: $name})
+                    SET s.locationType = $loc_type, s.description = $desc
+                    """,
+                    pid=project_id,
+                    name=setting_name,
+                    loc_type=setting.get("location_type", "Unknown"),
+                    desc=setting.get("description", "")
+                )
+            
             # Events
             for evt in events:
                 import uuid as uuid_mod
@@ -1201,11 +1222,12 @@ class DatabaseQueryService:
                     chapter=evt.get("chapter", 0)
                 )
 
-                # 🆕 Create PARTICIPATES_IN relationships between Characters and Events
+                # Create PARTICIPATES_IN relationships between Characters and Events
                 participants = evt.get("participants", [])
                 for participant_name in participants:
                     if not participant_name:
                         continue
+                    
                     await session.run(
                         """
                         MATCH (c:Character {projectId: $pid, name: $char_name})
