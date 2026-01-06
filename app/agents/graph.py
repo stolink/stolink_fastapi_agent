@@ -217,19 +217,21 @@ async def analysis_node(state: dict) -> dict:
     """Execute all analysis agents in parallel."""
     requires_deep = state.get("requires_deep_analysis", False)
     is_short_text = state.get("is_short_text", False)
-    print(f"[ANALYSIS] Starting - requires_deep_analysis={requires_deep}, is_short_text={is_short_text}", flush=True)
+    extracted_chars = state.get("extracted_characters", [])
+    print(f"[ANALYSIS] Starting - requires_deep_analysis={requires_deep}, is_short_text={is_short_text}, extracted_characters count={len(extracted_chars)}", flush=True)
     
+    # Always run relationship analysis + consistency check (fast)
     tasks = [
         asyncio.create_task(relationship_analysis_node(state)),
+        asyncio.create_task(consistency_check_node(state)),  # Always run for consistency_report
     ]
     
-    # Conditional Deep Analysis
+    # Only run plot_node in deep analysis mode (slower)
     if requires_deep:
-        print("[ANALYSIS] Deep Analysis triggering: Plot + Consistency", flush=True)
-        tasks.append(asyncio.create_task(consistency_check_node(state)))
+        print("[ANALYSIS] Deep Analysis triggering: Plot (Consistency always runs)", flush=True)
         tasks.append(asyncio.create_task(plot_node(state)))
     else:
-        print("[ANALYSIS] Skipping Deep Analysis (Plot/Consistency)", flush=True)
+        print("[ANALYSIS] Fast Track: Consistency only (skipping Plot)", flush=True)
     
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
