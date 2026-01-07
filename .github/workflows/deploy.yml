@@ -154,7 +154,7 @@ jobs:
               \"sudo -i -u ubuntu bash -c 'mkdir -p /home/ubuntu/stolink-fastapi-agent'\",
               \"sudo rm -f /home/ubuntu/stolink-fastapi-agent/.env && echo '${ENV_BASE64}' | base64 -d | sudo -u ubuntu tee /home/ubuntu/stolink-fastapi-agent/.env > /dev/null\",
               \"sudo rm -f /home/ubuntu/stolink-fastapi-agent/docker-compose.yml && echo '${COMPOSE_BASE64}' | base64 -d | sudo -u ubuntu tee /home/ubuntu/stolink-fastapi-agent/docker-compose.yml > /dev/null\",
-              \"sudo -i -u ubuntu bash -c 'cd /home/ubuntu/stolink-fastapi-agent && echo \"${GH_PAT}\" | sudo docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin && sudo docker compose down --remove-orphans && sudo docker compose up -d --pull always && sudo docker image prune -f'\"
+              \"sudo -i -u ubuntu bash -c 'cd /home/ubuntu/stolink-fastapi-agent && echo ${GH_PAT} | sudo docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin && sudo docker compose down --remove-orphans && sudo docker compose up -d --pull always && sudo docker image prune -f'\"
             ]" \
             --timeout-seconds 300 \
             --max-concurrency "50%" \
