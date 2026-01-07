@@ -450,6 +450,35 @@ class DocumentAnalysisConsumer:
                     is_short_text=is_short_text  # Fast Track/Interactive flag
                 )
 
+                # 🆕 Check for Failure (Max Retries Exceeded)
+                # If a batch failed after max retries, it means the pipeline gave up.
+                # Continuing to process subsequent batches is wasteful and looks like a zombie loop.
+                # We interpret "Max Retries" + "Validation/Consistency Failed" as a hard stop.
+
+                from app.agents.supervisor import MAX_EXTRACTION_RETRIES
+
+                res_retry_count = pipeline_result.get("retry_count", 0)
+                res_validation = pipeline_result.get("validation_result", {})
+                res_consistency = pipeline_result.get("consistency_report", {})
+
+                failed_validation = res_validation.get("action") == "retry_extraction"
+                failed_consistency = res_consistency.get("requires_reextraction")
+
+                if res_retry_count >= MAX_EXTRACTION_RETRIES and (failed_validation or failed_consistency):
+                    logger.error(
+                        "Analysis aborted: Batch reached max retries with failures",
+                        batch_index=i,
+                        retry_count=res_retry_count,
+                        validation_action=res_validation.get("action"),
+                        document_id=document_id,
+                        trace_id=trace_id
+                    )
+                    # Mark overall result as failed (optional, but good for visibility)
+                    # But here we just break to stop the loop.
+                    # We might want to set a flag to send FAILED callback?
+                    # For now, just stopping the loop is the priority.
+                    break
+
                 # 3. Extract Results
                 chars = pipeline_result.get("extracted_characters", [])
                 evts = pipeline_result.get("extracted_events", [])
@@ -543,36 +572,36 @@ class DocumentAnalysisConsumer:
                 logger.info("Extracting relationships from character.relations.graph (fallback)")
                 extracted_rels = []
                 seen_pairs = set()  # Avoid duplicates
-                
+
                 for char_name, char_data in final_characters_map.items():
                     # Get relations from either nested format or direct format
                     relations_data = char_data.get("relations", {})
                     char_relations = []
-                    
+
                     # Handle dict format: {"graph": [...], "event_refs": [...]}
                     if isinstance(relations_data, dict):
                         char_relations = relations_data.get("graph", [])
                     # Handle list format (direct list of relations)
                     elif isinstance(relations_data, list):
                         char_relations = relations_data
-                    
+
                     for rel in char_relations:
                         target = rel.get("target", "")
                         if not target:
                             continue
-                        
+
                         # Create pair key for deduplication (sorted for bidirectional)
                         pair_key_fwd = (char_name, target)
                         pair_key_rev = (target, char_name)
-                        
+
                         # Skip if we've already seen this pair (either direction)
                         if pair_key_fwd in seen_pairs:
                             continue
-                        
-                        # Determine bidirectionality  
+
+                        # Determine bidirectionality
                         rel_type = rel.get("type", "NEUTRAL")
                         bidirectional = rel_type not in ("BETRAYED", "MENTOR")  # Unidirectional types
-                        
+
                         # Map embedded format to expected top-level format
                         extracted_rel = {
                             "source": char_name,
@@ -584,11 +613,11 @@ class DocumentAnalysisConsumer:
                         }
                         extracted_rels.append(extracted_rel)
                         seen_pairs.add(pair_key_fwd)
-                        
+
                         # Mark reverse direction as seen if bidirectional
                         if bidirectional:
                             seen_pairs.add(pair_key_rev)
-                
+
                 if extracted_rels:
                     final_relationships = extracted_rels
                     logger.info(f"Extracted {len(final_relationships)} relationships from characters (fallback)")
