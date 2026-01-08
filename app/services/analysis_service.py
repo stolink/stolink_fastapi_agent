@@ -284,6 +284,61 @@ async def run_analysis(
             if res.get("consistency_report"): final_consistency = res.get("consistency_report")
             if res.get("validation_result"): final_validation = res.get("validation_result")
 
+        # 🆕 Fallback: Extract relationships from character.relations.graph if top-level is empty
+        if not final_relationships and final_characters_map:
+            bound_logger.info("Extracting relationships from character.relations.graph (fallback)")
+            extracted_rels = []
+            seen_pairs = set()  # Avoid duplicates
+            
+            for char_name, char_data in final_characters_map.items():
+                # Get relations from either nested format or direct format
+                relations_data = char_data.get("relations", {})
+                char_relations = []
+                
+                # Handle dict format: {"graph": [...], "event_refs": [...]}
+                if isinstance(relations_data, dict):
+                    char_relations = relations_data.get("graph", [])
+                # Handle list format (direct list of relations)
+                elif isinstance(relations_data, list):
+                    char_relations = relations_data
+                
+                for rel in char_relations:
+                    target = rel.get("target", "")
+                    if not target:
+                        continue
+                    
+                    # Create pair key for deduplication (sorted for bidirectional)
+                    pair_key_fwd = (char_name, target)
+                    pair_key_rev = (target, char_name)
+                    
+                    # Skip if we've already seen this pair (either direction)
+                    if pair_key_fwd in seen_pairs:
+                        continue
+                    
+                    # Determine bidirectionality  
+                    rel_type = rel.get("type", "NEUTRAL")
+                    bidirectional = rel_type not in ("BETRAYED", "MENTOR")  # Unidirectional types
+                    
+                    # Map embedded format to expected top-level format
+                    extracted_rel = {
+                        "source": char_name,
+                        "target": target,
+                        "type": rel_type,
+                        "strength": rel.get("strength", 5),
+                        "description": rel.get("description", ""),
+                        "bidirectional": bidirectional
+                    }
+                    extracted_rels.append(extracted_rel)
+                    seen_pairs.add(pair_key_fwd)
+                    
+                    # Mark reverse direction as seen if bidirectional
+                    if bidirectional:
+                        seen_pairs.add(pair_key_rev)
+            
+            if extracted_rels:
+                final_relationships = extracted_rels
+                bound_logger.info(f"Extracted {len(final_relationships)} relationships from characters (fallback)")
+
         # 4. Construct Final Result
         processing_time_ms = int((time.time() - start_time) * 1000)
         

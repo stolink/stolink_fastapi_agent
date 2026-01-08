@@ -238,6 +238,27 @@ class CharacterDialogueMoodResult(BaseModel):
 DIALOGUE_MOOD_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """You are an expert story analyst. Extract DIALOGUE STYLE and CURRENT MOOD.
 
+### ⚠️ CRITICAL: EXTRACT EACH CHARACTER SEPARATELY ⚠️ ###
+❗ If there are 3 characters in the story (e.g., 클레어, 잭슨, 헤이즈 교수), you MUST return 3 SEPARATE character entries.
+❗ NEVER return only one character when multiple characters exist.
+❗ Even if a character has minimal dialogue, include them with inferred mood based on context.
+
+### CORRECT OUTPUT EXAMPLE (3 characters) ###
+{{
+  "characters": [
+    {{"name": "클레어", "current_mood": {{"emotion": "불안", "intensity": 7}}, ...}},
+    {{"name": "잭슨", "current_mood": {{"emotion": "흥분", "intensity": 8}}, ...}},
+    {{"name": "헤이즈 교수", "current_mood": {{"emotion": "neutral", "intensity": 5}}, ...}}
+  ]
+}}
+
+### ❌ WRONG: DO NOT DO THIS ###
+{{
+  "characters": [
+    {{"name": "클레어", "current_mood": {{"emotion": "불안"}}, ...}}  ← WRONG! Other characters are missing!
+  ]
+}}
+
 ### LANGUAGE CONSISTENCY RULE ###
 Output ALL text in the SAME language as the input.
 
@@ -283,12 +304,15 @@ This phrase was SPOKEN BY 베라, so it goes in 베라's catchphrases, not 리�
 1. Focus on dialogue style, not content
 2. current_mood is SCENE-SPECIFIC, not permanent personality
 3. current_mood.emotion is REQUIRED - always infer from context
-4. Other fields can be null if not mentioned in text"""),
+4. Other fields can be null if not mentioned in text
+
+REMEMBER: Count the characters in the story and output the SAME number of character entries!"""),
     ("human", """Story text:
 {story_text}
 
-Extract dialogue configuration and current mood for all characters.
-IMPORTANT: Every character MUST have current_mood.emotion filled (infer from context if not explicit).""")
+Extract dialogue configuration and current mood for ALL characters.
+IMPORTANT: Every character MUST have current_mood.emotion filled (infer from context if not explicit).
+If the story has 3 characters, return 3 entries. If it has 5 characters, return 5 entries.""")
 ])
 
 
