@@ -213,6 +213,27 @@ class CharacterAppearanceResult(BaseModel):
 APPEARANCE_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """You are an expert story analyst. Extract VISUAL/PHYSICAL APPEARANCE for ALL characters.
 
+### ⚠️ CRITICAL: EXTRACT EACH CHARACTER SEPARATELY ⚠️ ###
+❗ If there are 3 characters in the story (e.g., 클레어, 잭슨, 헤이즈 교수), you MUST return 3 SEPARATE character entries.
+❗ NEVER return only one character when multiple characters exist.
+❗ Even if a character has minimal appearance description, include them with whatever details are available.
+
+### CORRECT OUTPUT EXAMPLE (3 characters) ###
+{{
+  "characters": [
+    {{"name": "클레어", "hair_color": "붉은색", "physique": "athletic", ...}},
+    {{"name": "잭슨", "hair_color": null, "physique": "average", ...}},
+    {{"name": "헤이즈 교수", "hair_color": null, "physique": null, ...}}
+  ]
+}}
+
+### ❌ WRONG: DO NOT DO THIS ###
+{{
+  "characters": [
+    {{"name": "클레어", "hair_color": "붉은색", ...}}  ← WRONG! Other characters are missing!
+  ]
+}}
+
 ### LANGUAGE CONSISTENCY RULE ###
 Output ALL text in the SAME language as the input.
 If the story is in Korean, all values must be in Korean.
@@ -246,11 +267,13 @@ Face accessories like eyepatches, masks, bandages should be captured:
 1. Focus ONLY on visual/physical traits
 2. Do NOT include personality traits here
 3. Leave fields as null if not mentioned (will be replaced by defaults)
-4. Use descriptive terms suitable for image generation"""),
+4. Use descriptive terms suitable for image generation
+
+REMEMBER: Count the characters in the story and output the SAME number of character entries!"""),
     ("human", """Story text:
 {story_text}
 
-Extract visual appearance for all characters.""")
+Extract visual appearance for ALL characters. If the story has 3 characters, return 3 entries. If it has 5 characters, return 5 entries.""")
 ])
 
 

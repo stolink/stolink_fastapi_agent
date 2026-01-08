@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     global_merge_queue: str = "global_merge_queue"
     consumer_prefetch_count: int = 10
     
+    # Event Sourcing Architecture (신규)
+    analysis_events_exchange: str = "stolink.analysis.events"
+    analysis_completed_queue: str = "analysis.completed"
+    analysis_dlq: str = "analysis.dlq"
+    # 기존 Callback과 병행 운영 여부 (마이그레이션용)
+    enable_legacy_callback: bool = True
+    
     # Spring Backend
     spring_backend_url: str = "http://localhost:8080"
     spring_callback_url: str = "http://localhost:8080"
