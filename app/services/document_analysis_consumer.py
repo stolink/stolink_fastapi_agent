@@ -217,7 +217,47 @@ class DocumentAnalysisConsumer:
                 logger.error("Vector generation failed", error=str(e), document_id=document_id)
                 # Continue with analysis even if vector save fails - sections might be empty if chunking failed
 
+
             # STREAMING: Pass sections and db_service to run_analysis
+            
+            # 🆕 3.5. 맥락 유지 (Hierarchical Context) 주입
+            # -> 이전 챕터들의 요약과 관련 캐릭터 정보를 가져와서 파이프라인에 주입
+            try:
+                from app.services.hierarchical_context import get_hierarchical_context_manager
+                ctx_manager = await get_hierarchical_context_manager()
+                
+                # Context Build Call (캐릭터 이름 감지는 내부에서 텍스트 기반으로 수행될 수 있으나,
+                # 최적화를 위해 여기서는 텍스트 전체를 넘기지 않고 document_id만 넘김.
+                # 필요 시 ctx_manager.get_context_for_analysis(text=content)를 쓸 수도 있음)
+                
+                # 1. 텍스트에서 캐릭터 추출 (임시: content 사용)
+                mentioned_chars = await ctx_manager._extract_mentioned_characters(msg.project_id, content)
+                
+                logger.info("Context: Extracted mentioned characters", count=len(mentioned_chars), chars=mentioned_chars[:5])
+                
+                context_result = await ctx_manager.build_hierarchical_context(
+                    project_id=msg.project_id,
+                    current_document_id=msg.document_id,
+                    mentioned_characters=mentioned_chars,
+                    max_recent_chapters=5
+                )
+                
+                # 시스템이 생성한 Context text
+                system_context_text = context_result.get("context_text", "")
+                
+                if system_context_text:
+                    if msg.context:
+                         # 기존 컨텍스트가 있다면 뒤에 추가
+                         msg.context = f"{msg.context}\n\n{system_context_text}"
+                    else:
+                         msg.context = system_context_text
+                    
+                    logger.info("Hierarchical context injected", length=len(system_context_text))
+                    
+            except Exception as e:
+                logger.error("Failed to inject hierarchical context", error=str(e))
+                # 실패해도 계속 진행 (맥락 없이)
+
             result = await self._run_analysis(
                 content=content,
                 sections=sections,
@@ -265,7 +305,7 @@ class DocumentAnalysisConsumer:
             # 🆕 콜백 데이터 출력 (디버깅 용도)
             logger.info(
                 "Callback data to be sent",
-                callback_data=callback.model_dump(exclude_none=True),
+                callback_data=callback.model_dump(exclude_none=True, by_alias=True),
                 document_id=document_id,
                 trace_id=trace_id
             )
@@ -296,9 +336,50 @@ class DocumentAnalysisConsumer:
                 trace_id=trace_id,
                 event_sourcing=True,
             )
+
+            # 🆕 7. Global Summary Update Trigger (Every 5 chapters)
+            try:
+                from app.services.summary_service import get_summary_service, SummaryLevel
+                import asyncio
+                
+                summary_svc = await get_summary_service()
+                
+                # 현재까지의 챕터 요약 개수 확인
+                # (성능 최적화를 위해 count만 하는 쿼리가 있으면 좋겠지만, 
+                # 현재는 get_summaries_for_project로 리스트를 가져와서 길이 체크)
+                summaries = await summary_svc.get_summaries_for_project(msg.project_id, level=SummaryLevel.CHAPTER)
+                count = len(summaries)
+                
+                
+                if count > 0 and count % 5 == 0:
+                    logger.info("Triggering global summary update (5-chapter interval)", project_id=msg.project_id, current_chapter_count=count)
+                    asyncio.create_task(summary_svc.update_global_summary(msg.project_id))
+                
+                # 🆕 Level 2 Trigger (Every 25 chapters)
+                if count > 0 and count % 25 == 0:
+                    logger.info("Triggering volume summary update (25-chapter interval)", project_id=msg.project_id, current_chapter_count=count)
+                    
+                    # 최근 25개 챕터 ID 추출 (get_summaries는 최신순 반환)
+                    recent_summaries = summaries[:25]
+                    chapter_ids = [s['document_id'] for s in recent_summaries]
+                    
+                    # 권 ID 생성 (결정론적 UUID: ProjectID + Volume 번호)
+                    import uuid
+                    vol_num = count // 25
+                    vol_doc_id = str(uuid.uuid5(uuid.UUID(msg.project_id), f"Volume_{vol_num}"))
+                    
+                    asyncio.create_task(summary_svc.update_volume_summary(
+                        msg.project_id,
+                        vol_doc_id,
+                        chapter_ids
+                    ))
+                    
+            except Exception as trig_err:
+                logger.error("Failed to trigger summary updates", error=str(trig_err))
+
             # 분석 결과를 result.json에 저장
             with open("/app/result.json", "w", encoding="utf-8") as f:
-                json.dump(callback.model_dump(exclude_none=True), f, ensure_ascii=False, indent=2)
+                json.dump(callback.model_dump(exclude_none=True, by_alias=True), f, ensure_ascii=False, indent=2)
             logger.info("🎉🎉🎉 드디어 끝끝끝끝!!! 결과가 result.json에 저장되었습니다. 🎉🎉🎉")
 
         except Exception as e:
@@ -783,15 +864,19 @@ class DocumentAnalysisConsumer:
         client = get_callback_client()
 
         # Pydantic 모델에서 메타데이터 제외하고 결과 데이터만 추출 -> 'result' 필드로 들어감
-        result_payload = callback.model_dump(exclude={
-            "message_type",
-            "document_id",
-            "status",
-            "error",
-            "trace_id",
-            "parent_folder_id",
-            "processing_time_ms"
-        })
+        # Pydantic 모델에서 메타데이터 제외하고 결과 데이터만 추출 -> 'result' 필드로 들어감
+        result_payload = callback.model_dump(
+            exclude={
+                "message_type",
+                "document_id",
+                "status",
+                "error",
+                "trace_id",
+                "parent_folder_id",
+                "processing_time_ms"
+            },
+            by_alias=True
+        )
 
         # job_id 결정: 인자로 받은 것 우선, 없으면 document_id (구버전)
         final_job_id = job_id or callback.document_id

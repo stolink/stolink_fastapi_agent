@@ -115,7 +115,7 @@ class EntityCentricContextBuilder:
                 # 캐릭터 기본 정보 조회
                 result = await session.run(
                     """
-                    MATCH (c:Character {projectId: $pid, name: $name})
+                    MATCH (c:Character {project_id: $pid, name: $name})
                     RETURN c.role as role, c.status as status, 
                            c.backstory as backstory, c.aliases as aliases
                     """,
@@ -130,7 +130,7 @@ class EntityCentricContextBuilder:
                 # 캐릭터의 최근 이벤트 조회
                 result = await session.run(
                     """
-                    MATCH (c:Character {projectId: $pid, name: $name})-[:PARTICIPATES_IN]->(e:Event)
+                    MATCH (c:Character {project_id: $pid, name: $name})-[:PARTICIPATES_IN]->(e:Event)
                     RETURN e.eventId as event_id, e.narrativeSummary as summary,
                            e.description as description, e.chapter as chapter,
                            e.eventType as event_type
@@ -177,7 +177,7 @@ class EntityCentricContextBuilder:
                 # 언급된 캐릭터들과 연결된 모든 관계 조회
                 result = await session.run(
                     """
-                    MATCH (a:Character {projectId: $pid})-[r]->(b:Character {projectId: $pid})
+                    MATCH (a:Character {project_id: $pid})-[r]->(b:Character {project_id: $pid})
                     WHERE a.name IN $names OR b.name IN $names
                     AND type(r) <> 'PARTICIPATES_IN'
                     RETURN a.name as source, b.name as target, 
@@ -216,7 +216,7 @@ class EntityCentricContextBuilder:
                 # 장소 기본 정보 조회
                 result = await session.run(
                     """
-                    MATCH (s:Setting {projectId: $pid, name: $name})
+                    MATCH (s:Setting {project_id: $pid, name: $name})
                     RETURN s.locationType as location_type, 
                            s.description as description,
                            s.atmosphere as atmosphere,
@@ -233,7 +233,7 @@ class EntityCentricContextBuilder:
                 # 해당 장소에서 발생한 최근 이벤트 조회
                 result = await session.run(
                     """
-                    MATCH (e:Event)-[:HAPPENED_AT]->(s:Setting {projectId: $pid, name: $name})
+                    MATCH (e:Event)-[:HAPPENED_AT]->(s:Setting {project_id: $pid, name: $name})
                     RETURN e.narrativeSummary as summary, e.eventType as event_type
                     ORDER BY e.chapter DESC
                     LIMIT 3
