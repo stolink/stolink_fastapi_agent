@@ -1,8 +1,10 @@
-name: FastAPI Agent CI/CD (Prod)
+name: Deploy
 
 on:
   push:
-    branches: ["main"]
+    branches:
+      - release # production 환경
+      - dev # develop 환경
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -35,8 +37,8 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     needs: test
-    outputs:
-      image-tag: ${{ steps.meta.outputs.tags }}
+    # 브랜치에 따라 환경 자동 선택
+    environment: ${{ github.ref == 'refs/heads/release' && 'production' || 'develop' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,8 +59,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=latest
-            type=sha,prefix=sha-
+            type=raw,value=${{ github.ref == 'refs/heads/release' && 'latest' || 'dev-latest' }}
+            type=sha,prefix=${{ github.ref == 'refs/heads/release' && 'sha-' || 'dev-sha-' }}
 
       - name: Build and push
         uses: docker/build-push-action@v5
@@ -73,7 +75,16 @@ jobs:
   deploy:
     needs: [test, build-and-push]
     runs-on: ubuntu-latest
+    # 브랜치에 따라 환경 자동 선택
+    environment: ${{ github.ref == 'refs/heads/release' && 'production' || 'develop' }}
     steps:
+      - name: Checkout (for docker-compose.yml only)
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            docker-compose.yml
+          sparse-checkout-cone-mode: false
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -81,40 +92,98 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Deploy to EC2 via SSM
+        env:
+          AWS_BEDROCK_ACCESS_KEY_ID: ${{ secrets.AWS_BEDROCK_ACCESS_KEY_ID }}
+          AWS_BEDROCK_SECRET_ACCESS_KEY: ${{ secrets.AWS_BEDROCK_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          RABBITMQ_AGENT_HOST: ${{ secrets.RABBITMQ_AGENT_HOST }}
+          RABBITMQ_AGENT_PORT: ${{ vars.RABBITMQ_AGENT_PORT }}
+          RABBITMQ_AGENT_USER: ${{ secrets.RABBITMQ_AGENT_USER }}
+          RABBITMQ_AGENT_PASSWORD: ${{ secrets.RABBITMQ_AGENT_PASSWORD }}
+          RABBITMQ_AGENT_VHOST: ${{ vars.RABBITMQ_AGENT_VHOST }}
+          SPRING_CALLBACK_URL: http://${{ secrets.ALB_DNS_NAME }}
+          POSTGRESQL_URL: ${{ secrets.POSTGRESQL_URL }}
+          POSTGRESQL_PORT: ${{ vars.POSTGRESQL_PORT }}
+          POSTGRESQL_DATABASE: ${{ vars.POSTGRESQL_DATABASE }}
+          POSTGRESQL_USERNAME: ${{ secrets.POSTGRESQL_USERNAME }}
+          POSTGRESQL_PASSWORD: ${{ secrets.POSTGRESQL_PASSWORD }}
+          NEO4J_URI: ${{ secrets.NEO4J_URI }}
+          NEO4J_USERNAME: ${{ secrets.NEO4J_USERNAME }}
+          NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          # 브랜치에 따라 이미지 태그 결정
+          IMAGE_TAG: ${{ github.ref == 'refs/heads/release' && 'latest' || 'dev-latest' }}
         run: |
-          aws ssm send-command \
+          # .env 파일 내용 생성
+          ENV_CONTENT="AWS_BEDROCK_ACCESS_KEY_ID=${AWS_BEDROCK_ACCESS_KEY_ID}
+          AWS_BEDROCK_SECRET_ACCESS_KEY=${AWS_BEDROCK_SECRET_ACCESS_KEY}
+          AWS_REGION=${AWS_REGION}
+          GEMINI_API_KEY=${GEMINI_API_KEY}
+          RABBITMQ_AGENT_HOST=${RABBITMQ_AGENT_HOST}
+          RABBITMQ_AGENT_PORT=${RABBITMQ_AGENT_PORT}
+          RABBITMQ_AGENT_USER=${RABBITMQ_AGENT_USER}
+          RABBITMQ_AGENT_PASSWORD=${RABBITMQ_AGENT_PASSWORD}
+          RABBITMQ_AGENT_VHOST=${RABBITMQ_AGENT_VHOST}
+          SPRING_CALLBACK_URL=${SPRING_CALLBACK_URL}
+          POSTGRESQL_URL=${POSTGRESQL_URL}
+          POSTGRESQL_PORT=${POSTGRESQL_PORT}
+          POSTGRESQL_DATABASE=${POSTGRESQL_DATABASE}
+          POSTGRESQL_USERNAME=${POSTGRESQL_USERNAME}
+          POSTGRESQL_PASSWORD=${POSTGRESQL_PASSWORD}
+          NEO4J_URI=${NEO4J_URI}
+          NEO4J_USERNAME=${NEO4J_USERNAME}
+          NEO4J_PASSWORD=${NEO4J_PASSWORD}
+          IMAGE_NAME=ghcr.io/${{ github.repository }}:${IMAGE_TAG}"
+
+          # docker-compose.yml 내용 읽기
+          COMPOSE_CONTENT=$(cat docker-compose.yml)
+
+          # Base64로 인코딩하여 SSM으로 전달 (특수문자 이스케이프 문제 해결)
+          ENV_BASE64=$(echo "$ENV_CONTENT" | base64 -w 0)
+          COMPOSE_BASE64=$(echo "$COMPOSE_CONTENT" | base64 -w 0)
+
+          # SSM 명령 실행 및 Command ID 캡처
+          # dev 브랜치: dev-fastapi-agent 태그, release 브랜치: stolink-fastapi-agent 태그
+          EC2_TAG=${{ github.ref == 'refs/heads/release' && 'stolink-fastapi-agent' || 'dev-fastapi-agent' }}
+
+          COMMAND_ID=$(aws ssm send-command \
             --document-name "AWS-RunShellScript" \
-            --targets "Key=tag:tag,Values=stolink-fastapi-agent" \
-            --parameters 'commands=[
-              "sudo -i -u ubuntu bash -c '\''cd /home/ubuntu/stolink-fastapi-agent || mkdir -p /home/ubuntu/stolink-fastapi-agent && cd /home/ubuntu/stolink-fastapi-agent && if [ -d .git ]; then git fetch origin && git checkout main && git pull origin main; else git clone -b main https://github.com/stolink/stolink_fastapi_agent.git .; fi'\''",
-              "cd /home/ubuntu/stolink-fastapi-agent && sudo tee .env > /dev/null << EOF",
-              "AWS_BEDROCK_ACCESS_KEY_ID=${{ secrets.AWS_BEDROCK_ACCESS_KEY_ID }}",
-              "AWS_BEDROCK_SECRET_ACCESS_KEY=${{ secrets.AWS_BEDROCK_SECRET_ACCESS_KEY }}",
-              "AWS_REGION=${{ vars.AWS_REGION }}",
-              "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}",
-              "RABBITMQ_AGENT_HOST=${{ secrets.RABBITMQ_AGENT_HOST }}",
-              "RABBITMQ_AGENT_PORT=${{ vars.RABBITMQ_AGENT_PORT }}",
-              "RABBITMQ_AGENT_USER=${{ secrets.RABBITMQ_AGENT_USER }}",
-              "RABBITMQ_AGENT_PASSWORD=${{ secrets.RABBITMQ_AGENT_PASSWORD }}",
-              "RABBITMQ_AGENT_VHOST=${{ vars.RABBITMQ_AGENT_VHOST }}",
-              "SPRING_CALLBACK_URL=http://${{ secrets.ALB_DNS_NAME }}",
-              "POSTGRESQL_URL=${{ secrets.POSTGRESQL_URL }}",
-              "POSTGRESQL_PORT=${{ vars.POSTGRESQL_PORT }}",
-              "POSTGRESQL_DATABASE=${{ vars.POSTGRESQL_DATABASE }}",
-              "POSTGRESQL_USERNAME=${{ secrets.POSTGRESQL_USERNAME }}",
-              "POSTGRESQL_PASSWORD=${{ secrets.POSTGRESQL_PASSWORD }}",
-              "NEO4J_URI=${{ secrets.NEO4J_URI }}",
-              "NEO4J_USERNAME=${{ secrets.NEO4J_USERNAME }}",
-              "NEO4J_PASSWORD=${{ secrets.NEO4J_PASSWORD }}",
-              "IMAGE_NAME=ghcr.io/${{ github.repository }}:latest",
-              "EOF",
-              "echo ${{ secrets.GH_PAT }} | sudo docker login ghcr.io -u stolink --password-stdin",
-              "cd /home/ubuntu/stolink-fastapi-agent && sudo docker compose down --remove-orphans",
-              "cd /home/ubuntu/stolink-fastapi-agent && sudo docker compose pull",
-              "cd /home/ubuntu/stolink-fastapi-agent && sudo docker compose up -d",
-              "sudo docker image prune -f"
-            ]' \
+            --targets "Key=tag:tag,Values=${EC2_TAG}" \
+            --parameters "commands=[
+              \"sudo -i -u ubuntu bash -c 'mkdir -p /home/ubuntu/stolink-fastapi-agent'\",
+              \"sudo rm -f /home/ubuntu/stolink-fastapi-agent/.env && echo '${ENV_BASE64}' | base64 -d | sudo -u ubuntu tee /home/ubuntu/stolink-fastapi-agent/.env > /dev/null\",
+              \"sudo rm -f /home/ubuntu/stolink-fastapi-agent/docker-compose.yml && echo '${COMPOSE_BASE64}' | base64 -d | sudo -u ubuntu tee /home/ubuntu/stolink-fastapi-agent/docker-compose.yml > /dev/null\",
+              \"sudo -i -u ubuntu bash -c 'cd /home/ubuntu/stolink-fastapi-agent && echo ${GH_PAT} | sudo docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin && sudo docker compose down --remove-orphans && sudo docker compose up -d --pull always && sudo docker image prune -f'\"
+            ]" \
             --timeout-seconds 300 \
             --max-concurrency "50%" \
             --max-errors "0" \
-            --output text
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "SSM Command ID: $COMMAND_ID"
+
+          # SSM 명령 완료 대기 (최대 5분)
+          echo "Waiting for SSM command to complete..."
+          for i in {1..30}; do
+            STATUS=$(aws ssm list-commands --command-id "$COMMAND_ID" --query "Commands[0].Status" --output text)
+            echo "Attempt $i/30: Status = $STATUS"
+
+            if [ "$STATUS" = "Success" ]; then
+              echo "✅ SSM command completed successfully"
+              break
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "TimedOut" ]; then
+              echo "❌ SSM command failed with status: $STATUS"
+              # 실패 시 상세 로그 출력
+              aws ssm list-command-invocations --command-id "$COMMAND_ID" --details --query "CommandInvocations[0].CommandPlugins[0].Output" --output text
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+          if [ "$STATUS" != "Success" ]; then
+            echo "❌ SSM command did not complete in time. Last status: $STATUS"
+            exit 1
+          fi
