@@ -1015,38 +1015,27 @@ class DatabaseQueryService:
         settings_list: list[dict],
         relationships: list[dict] = None  # 🆕 Added relationships
     ) -> None:
-        """Save extracted entities to DB immediately (for Streaming)."""
-        if not self._pg_pool:
-            logger.warning("PostgreSQL pool not available for save")
-            return
-
-        logger.info("Saving extraction result", chars=len(characters), events=len(events))
+        """Save extracted entities to Neo4j for graph queries.
+        
+        🆕 Event Sourcing 아키텍처:
+        - PostgreSQL 저장 제거 (Spring Boot가 Single Source of Truth)
+        - Neo4j만 저장 (그래프 쿼리 최적화용)
+        - 분석 결과는 Event로 발행되어 Spring Boot Consumer가 RDB에 저장
+        """
+        logger.info("Saving extraction result to Neo4j only", chars=len(characters), events=len(events))
 
         try:
-            logger.info("[DEBUG] Acquiring PG connection...")
-            async with self._pg_pool.acquire() as conn:
-                async with conn.transaction():
-                    logger.info("[DEBUG] Starting PG transaction...")
+            # PostgreSQL 저장 제거 (Event Sourcing - Spring Boot가 담당)
+            # async with self._pg_pool.acquire() as conn:
+            #     async with conn.transaction():
+            #         for char in characters:
+            #             await self._upsert_character(conn, project_id, char)
+            #         for sitting in settings_list:
+            #             await self._upsert_setting(conn, project_id, sitting)
+            #         for evt in events:
+            #             await self._insert_event(conn, project_id, evt)
 
-                    # Save Characters (Upsert)
-                    logger.info("[DEBUG] Upserting characters...", count=len(characters))
-                    for char in characters:
-                        await self._upsert_character(conn, project_id, char)
-
-                    # Save Settings (Upsert)
-                    logger.info("[DEBUG] Upserting settings...", count=len(settings_list))
-                    for sitting in settings_list:
-                        await self._upsert_setting(conn, project_id, sitting)
-
-                    # Save Events (Insert)
-                    logger.info("[DEBUG] Inserting events...", count=len(events))
-                    for evt in events:
-                        await self._insert_event(conn, project_id, evt)
-
-                    logger.info("[DEBUG] PG transaction complete.")
-
-            # Sync to Neo4j
-            # Ensure connection is alive (reconnect if needed)
+            # Sync to Neo4j only (그래프 쿼리 최적화용)
             await self.ensure_neo4j_connected()
             
             if self._neo4j_driver:
@@ -1054,10 +1043,10 @@ class DatabaseQueryService:
                 await self._sync_to_neo4j(project_id, characters, events, settings_list, relationships or [])
                 logger.info("[DEBUG] Neo4j sync complete.")
             else:
-                logger.warning("[DEBUG] Neo4j driver not available after ensure_connected, skipping sync.")
+                logger.warning("[DEBUG] Neo4j driver not available, skipping sync.")
 
         except Exception as e:
-            logger.error("Failed to persist batch", error=str(e))
+            logger.error("Failed to persist to Neo4j", error=str(e))
             raise e
 
     async def _upsert_character(self, conn, project_id, char):
@@ -1163,75 +1152,157 @@ class DatabaseQueryService:
         )
 
     async def _sync_to_neo4j(self, project_id, characters, events, settings_list, relationships):
+        """Neo4j에 분석 결과 동기화.
+        
+        Spring에서 삭제된 로직을 포함하여 전체 데이터를 저장합니다.
+        """
+        import json
+        import re
+        import uuid as uuid_mod
+
         async with self._neo4j_driver.session() as session:
-            # Characters - Use (projectId, name) as the merge key for consistency with PARTICIPATES_IN
+            # ===== 1. Characters =====
+            # Spring의 saveCharacters() + updateCharacterJsonFields() 로직 통합
             for char in characters:
                 # Extract name from top-level or nested profile
                 char_name = char.get("name") or (char.get("profile", {}) or {}).get("name")
                 
-                # Skip characters without name (cannot create node without name)
                 if not char_name:
                     continue
                 
-                # Normalize name to prevent duplicates from whitespace differences
                 char_name = char_name.strip()
+                
+                # Extract profile data
+                profile = char.get("profile", {}) or {}
+                
+                # Build profile JSON for storage
+                profile_json = json.dumps(profile, ensure_ascii=False) if profile else None
+                
+                # Extract current mood
+                current_mood = char.get("current_mood", {}) or {}
+                current_mood_json = json.dumps(current_mood, ensure_ascii=False) if current_mood else None
+                
+                # Extract appearance
+                appearance = char.get("appearance", {}) or {}
+                appearance_json = json.dumps(appearance, ensure_ascii=False) if appearance else None
+                
+                # Extract relations
+                relations = char.get("relations", {}) or {}
+                relations_json = json.dumps(relations, ensure_ascii=False) if relations else None
                 
                 await session.run(
                     """
                     MERGE (c:Character {projectId: $pid, name: $name})
-                    SET c.role = $role
+                    SET c.role = $role,
+                        c.status = $status,
+                        c.age = $age,
+                        c.gender = $gender,
+                        c.profileJson = $profile_json,
+                        c.backstory = $backstory,
+                        c.currentMoodJson = $mood_json,
+                        c.appearanceJson = $appearance_json,
+                        c.relationsJson = $relations_json,
+                        c.aliases = $aliases
                     """,
                     pid=project_id,
                     name=char_name,
-                    role=char.get("role", "Unknown")
+                    role=char.get("role", "Unknown"),
+                    status=char.get("status", "Unknown"),
+                    age=profile.get("age"),
+                    gender=profile.get("gender"),
+                    profile_json=profile_json,
+                    backstory=profile.get("backstory", ""),
+                    mood_json=current_mood_json,
+                    appearance_json=appearance_json,
+                    relations_json=relations_json,
+                    aliases=char.get("aliases", [])
                 )
             
-            # Settings (Locations)
+            # ===== 2. Settings (Locations) =====
+            # Spring의 saveSettings() 로직 통합
             for setting in settings_list:
                 setting_name = setting.get("name") or setting.get("location_name")
                 
                 if not setting_name:
                     continue
                 
+                # Generate or use existing setting_id
+                raw_setting_id = setting.get("setting_id") or setting.get("id")
+                try:
+                    setting_id = str(uuid_mod.UUID(raw_setting_id)) if raw_setting_id else str(uuid_mod.uuid4())
+                except (ValueError, AttributeError):
+                    setting_id = raw_setting_id if raw_setting_id else str(uuid_mod.uuid4())
+                
                 await session.run(
                     """
                     MERGE (s:Setting {projectId: $pid, name: $name})
-                    SET s.locationType = $loc_type, s.description = $desc
+                    SET s.settingId = $setting_id,
+                        s.locationType = $loc_type,
+                        s.description = $desc,
+                        s.visualBackground = $visual_bg,
+                        s.atmosphere = $atmosphere,
+                        s.timeOfDay = $time_of_day,
+                        s.lighting = $lighting,
+                        s.weather = $weather,
+                        s.notableFeatures = $notable_features,
+                        s.significance = $significance,
+                        s.isPrimary = $is_primary
                     """,
                     pid=project_id,
                     name=setting_name,
+                    setting_id=setting_id,
                     loc_type=setting.get("location_type", "Unknown"),
-                    desc=setting.get("description", "")
+                    desc=setting.get("description", ""),
+                    visual_bg=setting.get("visual_background", ""),
+                    atmosphere=setting.get("atmosphere", ""),
+                    time_of_day=setting.get("time_of_day"),
+                    lighting=setting.get("lighting"),
+                    weather=setting.get("weather"),
+                    notable_features=setting.get("notable_features", []),
+                    significance=setting.get("significance", ""),
+                    is_primary=setting.get("is_primary", False)
                 )
             
-            # Events
+            # ===== 3. Events =====
+            # Spring의 saveEvents() 로직 통합
             for evt in events:
-                import uuid as uuid_mod
                 raw_evt_id = evt.get("event_id") or evt.get("id")
                 try:
                     evt_uuid = str(uuid_mod.UUID(raw_evt_id)) if raw_evt_id else str(uuid_mod.uuid4())
                 except (ValueError, AttributeError):
-                    # Use original event_id (e.g., "E001") if not a valid UUID
                     evt_uuid = raw_evt_id if raw_evt_id else str(uuid_mod.uuid4())
 
                 await session.run(
                     """
                     MERGE (e:Event {eventId: $id})
-                    SET e.projectId = $pid, e.description = $desc, e.chapter = $chapter
+                    SET e.projectId = $pid,
+                        e.eventType = $event_type,
+                        e.narrativeSummary = $narrative_summary,
+                        e.description = $desc,
+                        e.chapter = $chapter,
+                        e.sequenceOrder = $seq_order,
+                        e.importance = $importance,
+                        e.timestamp = $timestamp,
+                        e.locationRef = $location_ref
                     """,
                     id=evt_uuid,
                     pid=project_id,
+                    event_type=evt.get("event_type", "Unknown"),
+                    narrative_summary=evt.get("narrative_summary", ""),
                     desc=evt.get("description", "") or evt.get("summary", ""),
-                    chapter=evt.get("chapter", 0)
+                    chapter=evt.get("chapter", 0),
+                    seq_order=evt.get("sequence_order", 0),
+                    importance=evt.get("importance", 5),
+                    timestamp=evt.get("timestamp"),
+                    location_ref=evt.get("location_ref", "")
                 )
 
-                # Create PARTICIPATES_IN relationships between Characters and Events
+                # Create PARTICIPATES_IN relationships (Character -> Event)
                 participants = evt.get("participants", [])
                 for participant_name in participants:
                     if not participant_name:
                         continue
                     
-                    # Normalize to match Character node names
                     participant_name = participant_name.strip()
                     
                     await session.run(
@@ -1245,39 +1316,84 @@ class DatabaseQueryService:
                         evt_id=evt_uuid
                     )
 
-            # Relationships (Edges) 🆕
-            # Expected format: { "source": "CharName", "target": "CharName", "type": "FRIEND", "description": "..." }
+                # Create HAPPENED_AT relationship (Event -> Setting)
+                # Spring의 eventNeo4jRepository.createHappenedAtEdge() 로직
+                location_ref = evt.get("location_ref") or evt.get("location")
+                if location_ref:
+                    await session.run(
+                        """
+                        MATCH (e:Event {eventId: $evt_id})
+                        MATCH (s:Setting {projectId: $pid, name: $loc_name})
+                        MERGE (e)-[r:HAPPENED_AT]->(s)
+                        """,
+                        evt_id=evt_uuid,
+                        pid=project_id,
+                        loc_name=location_ref
+                    )
+
+            # ===== 4. Relationships (Character <-> Character) =====
+            # Spring의 saveRelationships() + createRelationship() 로직
             for rel in relationships:
                 source_name = rel.get("source")
                 target_name = rel.get("target")
-                rel_type = rel.get("relation_type", "RELATED_TO").upper().replace(" ", "_")
+                rel_type = (rel.get("type") or rel.get("relation_type") or "RELATED_TO").upper().replace(" ", "_")
 
                 if not source_name or not target_name:
                     continue
 
-                # Sanitize relationship type (Neo4j requirement)
-                import re
+                # Sanitize relationship type (Neo4j naming requirement)
                 safe_rel_type = re.sub(r'[^A-Z0-9_]', '_', rel_type)
                 if not safe_rel_type:
                     safe_rel_type = "RELATED_TO"
 
-                # We match by Name and Project ID since ID might not be known in the relationship dict easily
-                # (Unless we resolved it earlier. Using names is safer for 'extracted' data)
+                # Create relationship with properties
                 query = f"""
                     MATCH (a:Character {{projectId: $pid, name: $source}})
                     MATCH (b:Character {{projectId: $pid, name: $target}})
                     MERGE (a)-[r:{safe_rel_type}]->(b)
-                    SET r.description = $desc, r.strength = $strength
+                    SET r.description = $desc, 
+                        r.strength = $strength,
+                        r.bidirectional = $bidirectional
                 """
 
                 await session.run(
                     query,
                     pid=project_id,
-                    source=source_name,
-                    target=target_name,
+                    source=source_name.strip(),
+                    target=target_name.strip(),
                     desc=rel.get("description", ""),
-                    strength=rel.get("strength", 1.0)
+                    strength=rel.get("strength", 5),
+                    bidirectional=rel.get("bidirectional", False)
                 )
+
+                # If bidirectional, create reverse relationship
+                if rel.get("bidirectional", False):
+                    reverse_query = f"""
+                        MATCH (a:Character {{projectId: $pid, name: $source}})
+                        MATCH (b:Character {{projectId: $pid, name: $target}})
+                        MERGE (b)-[r:{safe_rel_type}]->(a)
+                        SET r.description = $desc, 
+                            r.strength = $strength,
+                            r.bidirectional = $bidirectional
+                    """
+                    await session.run(
+                        reverse_query,
+                        pid=project_id,
+                        source=source_name.strip(),
+                        target=target_name.strip(),
+                        desc=rel.get("description", ""),
+                        strength=rel.get("strength", 5),
+                        bidirectional=True
+                    )
+
+        logger.info(
+            "Neo4j sync completed",
+            project_id=project_id,
+            characters=len(characters),
+            events=len(events),
+            settings=len(settings_list),
+            relationships=len(relationships)
+        )
 
 
 

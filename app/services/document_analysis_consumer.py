@@ -25,7 +25,12 @@ from app.schemas.messages import (
     GlobalMergeCallback,
     CharacterMergeResult,
 )
+from app.schemas.event_messages import (
+    AnalysisCompletedEvent,
+    AnalysisFailedEvent,
+)
 from app.services.db_query_service import get_db_service
+from app.services.event_publisher import get_event_publisher
 from app.utils.entity_resolution import (
     find_matching_characters,
     is_same_character,
@@ -262,7 +267,20 @@ class DocumentAnalysisConsumer:
                 trace_id=trace_id
             )
 
-            await self._send_callback(callback_url, callback, job_id=job_id)
+            # 🆕 Event Sourcing: 이벤트 발행
+            await self._publish_analysis_event(
+                result=result,
+                document_id=document_id,
+                project_id=msg.project_id,
+                job_id=job_id,
+                parent_folder_id=msg.parent_folder_id,
+                trace_id=trace_id,
+                processing_time_ms=processing_time_ms,
+            )
+
+            # Legacy Callback (마이그레이션 기간 동안 병행 운영)
+            if settings.enable_legacy_callback:
+                await self._send_callback(callback_url, callback, job_id=job_id)
 
             # 6. 메시지 ACK
             await message.ack()
@@ -272,7 +290,8 @@ class DocumentAnalysisConsumer:
                 document_id=document_id,
                 success=result.success,
                 processing_time_ms=processing_time_ms,
-                trace_id=trace_id
+                trace_id=trace_id,
+                event_sourcing=True,
             )
             # 분석 결과를 result.json에 저장
             with open("/app/result.json", "w", encoding="utf-8") as f:
@@ -748,6 +767,90 @@ class DocumentAnalysisConsumer:
             document_id=callback.document_id
         )
 
+    async def _publish_analysis_event(
+        self,
+        result: ProcessingResult,
+        document_id: str,
+        project_id: str,
+        job_id: str,
+        parent_folder_id: Optional[str],
+        trace_id: str,
+        processing_time_ms: int,
+    ) -> None:
+        """분석 결과를 Event로 발행 (Event Sourcing).
+        
+        Spring Boot의 Event Consumer가 이 이벤트를 수신하여
+        RDB에 저장합니다 (Single Source of Truth).
+        """
+        try:
+            publisher = await get_event_publisher()
+            
+            if result.success:
+                # 분석 완료 이벤트
+                event = AnalysisCompletedEvent(
+                    project_id=project_id,
+                    document_id=document_id,
+                    job_id=job_id,
+                    parent_folder_id=parent_folder_id,
+                    trace_id=trace_id,
+                    sections=[
+                        {
+                            "sequence_order": i + 1,
+                            "nav_title": s.get("title", f"Section {i+1}"),
+                            "content": s.get("content", ""),
+                            "embedding": s.get("embedding"),
+                            "related_characters": s.get("related_characters", []),
+                            "related_events": s.get("related_events", []),
+                        }
+                        for i, s in enumerate(result.sections)
+                    ],
+                    characters=result.characters,
+                    events=result.events,
+                    settings=result.settings,
+                    relationships=result.relationships,
+                    plot_integration=result.plot,
+                    consistency_report=result.consistency_report,
+                    validation=result.validation,
+                    processing_time_ms=processing_time_ms,
+                )
+                
+                await publisher.publish_completed(event)
+                logger.info(
+                    "Analysis event published",
+                    event_type="ANALYSIS_COMPLETED",
+                    event_id=event.event_id,
+                    document_id=document_id,
+                )
+            else:
+                # 분석 실패 이벤트
+                error_info = result.error or {}
+                event = AnalysisFailedEvent(
+                    project_id=project_id,
+                    document_id=document_id,
+                    job_id=job_id,
+                    trace_id=trace_id,
+                    error_code=error_info.get("code", "UNKNOWN_ERROR"),
+                    error_message=error_info.get("message", "Unknown error"),
+                    error_details=error_info,
+                    processing_time_ms=processing_time_ms,
+                )
+                
+                await publisher.publish_failed(event)
+                logger.info(
+                    "Analysis event published",
+                    event_type="ANALYSIS_FAILED",
+                    event_id=event.event_id,
+                    document_id=document_id,
+                )
+                
+        except Exception as e:
+            logger.error(
+                "Failed to publish analysis event",
+                error=str(e),
+                document_id=document_id,
+            )
+            # 이벤트 발행 실패해도 분석 자체는 성공으로 처리
+            # DLQ에 저장됨 (event_publisher에서 처리)
 
 class GlobalMergeConsumer:
     """Global Merge Consumer for 2nd Pass processing.
