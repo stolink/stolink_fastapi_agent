@@ -31,6 +31,9 @@ from app.schemas.event_messages import (
 )
 from app.services.db_query_service import get_db_service
 from app.services.event_publisher import get_event_publisher
+# Context Maintenance System (Phase 1-4)
+from app.services.hierarchical_context import get_hierarchical_context_manager
+from app.services.summary_service import get_summary_service
 from app.utils.entity_resolution import (
     find_matching_characters,
     is_same_character,
@@ -411,6 +414,26 @@ class DocumentAnalysisConsumer:
                 current_context = context.copy()
 
         try:
+            # ===== Context Maintenance System Integration =====
+            # 🆕 Phase 1-4: 분석 전 계층적 컨텍스트 조회
+            historical_context_text = ""
+            try:
+                context_manager = await get_hierarchical_context_manager()
+                historical_context_text = await context_manager.get_context_for_analysis(
+                    project_id=project_id,
+                    current_text=content[:1000] if content else "",  # 첫 1000자로 캐릭터 추출
+                    current_document_id=document_id
+                )
+                logger.info(
+                    "Historical context retrieved",
+                    context_length=len(historical_context_text),
+                    project_id=project_id
+                )
+            except Exception as ctx_err:
+                logger.warning("Failed to retrieve historical context, continuing without it", error=str(ctx_err))
+                historical_context_text = ""
+            # =================================================
+            
             # 1. Prepare Batches (Streaming Units)
             # If sections exist, use them. If not (short text failed chunking), treat as one batch.
             batches = []
@@ -667,6 +690,39 @@ class DocumentAnalysisConsumer:
                 linked_sec["related_characters"] = related_chars
                 linked_sec["related_events"] = related_evts
                 linked_sections.append(linked_sec)
+
+            # ===== Context Maintenance System: Summary Generation =====
+            # 🆕 Phase 3: 분석 완료 후 챕터 요약 자동 생성
+            try:
+                summary_service = await get_summary_service()
+                
+                # 요약 생성
+                summary = await summary_service.generate_chapter_summary(
+                    content,
+                    extracted_entities={
+                        "characters": list(final_characters_map.values()),
+                        "events": final_events,
+                        "settings": final_settings
+                    }
+                )
+                
+                # 요약 저장
+                key_characters = list(final_characters_map.keys())[:5]  # 상위 5명
+                await summary_service.save_summary(
+                    document_id=document_id,
+                    project_id=project_id,
+                    summary=summary,
+                    key_characters=key_characters
+                )
+                
+                logger.info(
+                    "Chapter summary generated and saved",
+                    document_id=document_id,
+                    summary_length=len(summary)
+                )
+            except Exception as sum_err:
+                logger.warning("Failed to generate chapter summary, continuing", error=str(sum_err))
+            # =========================================================
 
             return ProcessingResult(
                 success=True,
