@@ -732,7 +732,7 @@ async def merge_character_data(
         
         full_char = {
             # === SEARCH INDEXING: Root-level fields ===
-            "_id": char_id,
+            "id": char_id,  # serialization_alias="_id" in schema
             "role": final_role,
             
             "profile": {
@@ -790,15 +790,6 @@ async def merge_character_data(
                 "intensity": 5,
                 "trigger": None,
             }),
-            # Removed: dialogue
-            # Removed: stats, state, combat, social, economy, final_stats
-
-            "meta": {
-                "created_at": None,
-                "updated_at": None,
-                "data_version": "2.0.0",
-                "lock_version": 0,
-            },
             # === Embedding for Neo4j Vector Search ===
             "embedding": await generate_character_embedding(
                 name=name,

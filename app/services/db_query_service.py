@@ -13,6 +13,7 @@ import asyncio
 from typing import Any, Optional
 import structlog
 import asyncpg
+import uuid
 from neo4j import AsyncGraphDatabase
 from neo4j.exceptions import ServiceUnavailable, SessionExpired
 
@@ -338,7 +339,7 @@ class DatabaseQueryService:
             return []
 
         query = """
-            MATCH (c:Character {name: $name, projectId: $project_id})-[r]-(other:Character)
+            MATCH (c:Character {name: $name, project_id: $project_id})-[r]-(other:Character)
             RETURN
                 c.name AS source,
                 type(r) AS relation_type,
@@ -376,7 +377,7 @@ class DatabaseQueryService:
             return []
 
         query = """
-            MATCH (source:Character {projectId: $project_id})-[r]->(target:Character)
+            MATCH (source:Character {project_id: $project_id})-[r]->(target:Character)
             RETURN
                 source.name AS source_name,
                 type(r) AS relation_type,
@@ -439,7 +440,7 @@ class DatabaseQueryService:
             async with self._neo4j_driver.session() as session:
                 # 캐릭터 수
                 result = await session.run(
-                    "MATCH (c:Character {projectId: $pid}) RETURN count(c) as cnt",
+                    "MATCH (c:Character {project_id: $pid}) RETURN count(c) as cnt",
                     pid=project_id
                 )
                 record = await result.single()
@@ -447,7 +448,7 @@ class DatabaseQueryService:
                 
                 # 이벤트 수
                 result = await session.run(
-                    "MATCH (e:Event {projectId: $pid}) RETURN count(e) as cnt",
+                    "MATCH (e:Event {project_id: $pid}) RETURN count(e) as cnt",
                     pid=project_id
                 )
                 record = await result.single()
@@ -455,7 +456,7 @@ class DatabaseQueryService:
                 
                 # 장소 수
                 result = await session.run(
-                    "MATCH (s:Setting {projectId: $pid}) RETURN count(s) as cnt",
+                    "MATCH (s:Setting {project_id: $pid}) RETURN count(s) as cnt",
                     pid=project_id
                 )
                 record = await result.single()
@@ -525,7 +526,7 @@ class DatabaseQueryService:
             return []
 
         query = """
-            MATCH (c:Character {projectId: $project_id})
+            MATCH (c:Character {project_id: $project_id})
             WHERE c.embedding IS NOT NULL
             WITH c, vector.similarity.cosine(c.embedding, $embedding) AS score
             WHERE score > 0.6
@@ -569,7 +570,7 @@ class DatabaseQueryService:
             return []
 
         query = """
-            MATCH (e:Event {projectId: $project_id})
+            MATCH (e:Event {project_id: $project_id})
             WHERE e.embedding IS NOT NULL
             WITH e, vector.similarity.cosine(e.embedding, $embedding) AS score
             WHERE score > 0.6
@@ -1250,6 +1251,72 @@ class DatabaseQueryService:
             evt.get("location_ref", "")
         )
 
+    async def save_sections(self, document_id: str, sections: list[dict]) -> int:
+        """Save semantic sections with embeddings to PostgreSQL.
+        
+        Args:
+            document_id: Document UUID
+            sections: List of section dicts from ChunkingService
+            
+        Returns:
+            Number of saved sections
+        """
+        if not self._pg_pool:
+            logger.warning("PostgreSQL pool not available, skipping section save")
+            return 0
+            
+        if not sections:
+            return 0
+
+        logger.info("Saving vector sections", document_id=document_id, count=len(sections))
+        
+        saved_count = 0
+        try:
+            async with self._pg_pool.acquire() as conn:
+                # Prepare statement for bulk insert
+                # Note: We use execute_many for better performance
+                
+                # First delete existing sections for this document to avoid duplicates
+                # (Optional: depends on business logic, here we replace)
+                await conn.execute("DELETE FROM sections WHERE document_id = $1", document_id)
+                
+                # Insert new sections
+                data_list = []
+                for idx, section in enumerate(sections):
+                    sec_id = str(uuid.uuid4())
+                    content = section.get("content", "")
+                    embedding = section.get("embedding") # List[float]
+                    nav_title = section.get("title", f"Section {idx+1}")
+                    
+                    # embedding must be passed as list of floats, asyncpg/pgvector handles it
+                    # But sometimes it might be numpy array
+                    if hasattr(embedding, "tolist"):
+                        embedding = embedding.tolist()
+                        
+                    data_list.append((
+                        sec_id, 
+                        document_id, 
+                        content, 
+                        embedding, 
+                        idx + 1, 
+                        nav_title
+                    ))
+                
+                if data_list:
+                    # executemany works with list of tuples
+                    await conn.executemany("""
+                        INSERT INTO sections (id, document_id, content, embedding, sequence_order, nav_title, created_at, updated_at)
+                        VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+                    """, data_list)
+                    saved_count = len(data_list)
+                    
+        except Exception as e:
+            logger.error("Failed to save sections to PG", error=str(e), document_id=document_id)
+            # Don't raise, just log error so analysis can continue
+            return 0
+            
+        return saved_count
+
     async def _sync_to_neo4j(self, project_id, characters, events, settings_list, relationships):
         """Neo4j에 분석 결과 동기화.
         
@@ -1291,7 +1358,7 @@ class DatabaseQueryService:
                 
                 await session.run(
                     """
-                    MERGE (c:Character {projectId: $pid, name: $name})
+                    MERGE (c:Character {project_id: $pid, name: $name})
                     SET c.role = $role,
                         c.status = $status,
                         c.age = $age,
@@ -1334,7 +1401,7 @@ class DatabaseQueryService:
                 
                 await session.run(
                     """
-                    MERGE (s:Setting {projectId: $pid, name: $name})
+                    MERGE (s:Setting {project_id: $pid, name: $name})
                     SET s.settingId = $setting_id,
                         s.locationType = $loc_type,
                         s.description = $desc,
@@ -1374,7 +1441,7 @@ class DatabaseQueryService:
                 await session.run(
                     """
                     MERGE (e:Event {eventId: $id})
-                    SET e.projectId = $pid,
+                    SET e.project_id = $pid,
                         e.eventType = $event_type,
                         e.narrativeSummary = $narrative_summary,
                         e.description = $desc,
@@ -1406,7 +1473,7 @@ class DatabaseQueryService:
                     
                     await session.run(
                         """
-                        MATCH (c:Character {projectId: $pid, name: $char_name})
+                        MATCH (c:Character {project_id: $pid, name: $char_name})
                         MATCH (e:Event {eventId: $evt_id})
                         MERGE (c)-[r:PARTICIPATES_IN]->(e)
                         """,
@@ -1422,7 +1489,7 @@ class DatabaseQueryService:
                     await session.run(
                         """
                         MATCH (e:Event {eventId: $evt_id})
-                        MATCH (s:Setting {projectId: $pid, name: $loc_name})
+                        MATCH (s:Setting {project_id: $pid, name: $loc_name})
                         MERGE (e)-[r:HAPPENED_AT]->(s)
                         """,
                         evt_id=evt_uuid,
@@ -1447,8 +1514,8 @@ class DatabaseQueryService:
 
                 # Create relationship with properties
                 query = f"""
-                    MATCH (a:Character {{projectId: $pid, name: $source}})
-                    MATCH (b:Character {{projectId: $pid, name: $target}})
+                    MATCH (a:Character {{project_id: $pid, name: $source}})
+                    MATCH (b:Character {{project_id: $pid, name: $target}})
                     MERGE (a)-[r:{safe_rel_type}]->(b)
                     SET r.description = $desc, 
                         r.strength = $strength,
@@ -1468,8 +1535,8 @@ class DatabaseQueryService:
                 # If bidirectional, create reverse relationship
                 if rel.get("bidirectional", False):
                     reverse_query = f"""
-                        MATCH (a:Character {{projectId: $pid, name: $source}})
-                        MATCH (b:Character {{projectId: $pid, name: $target}})
+                        MATCH (a:Character {{project_id: $pid, name: $source}})
+                        MATCH (b:Character {{project_id: $pid, name: $target}})
                         MERGE (b)-[r:{safe_rel_type}]->(a)
                         SET r.description = $desc, 
                             r.strength = $strength,
