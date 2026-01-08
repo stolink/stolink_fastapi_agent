@@ -252,7 +252,7 @@ class HierarchicalContextManager:
                 async with self._summary_service._db_service._neo4j_driver.session() as session:
                     result = await session.run(
                         """
-                        MATCH (c:Character {project_id: $pid})
+                        MATCH (c:Character {projectId: $pid})
                         RETURN c.name as name, c.aliases as aliases
                         """,
                         pid=project_id

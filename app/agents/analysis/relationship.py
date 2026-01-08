@@ -94,6 +94,12 @@ For each character pair with a relationship:
   ]
 }}
 
+=== LANGUAGE INSTRUCTION ===
+**CRITICAL**: Respond in the SAME language as the input text.
+- If the input is in Korean (한글), ALL relationship descriptions MUST be in Korean.
+- If the input is in English, ALL descriptions MUST be in English.
+- Keep technical field names (like "source", "relation_type") in English, but "description" content should match the input language.
+
 === PENALTY WARNING ===
 If you use a character name NOT in the Available Characters list,
 the output will be REJECTED because it breaks database referential integrity."""),
