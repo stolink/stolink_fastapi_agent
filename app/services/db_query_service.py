@@ -413,6 +413,98 @@ class DatabaseQueryService:
             logger.error("Failed to generate embedding", error=str(e))
             return []
 
+    # ===== Adaptive RAG (Phase 1) =====
+
+    async def get_project_stats(self, project_id: str) -> dict[str, int]:
+        """프로젝트의 엔티티 통계 조회.
+        
+        적응형 top_k 계산에 사용됩니다.
+        
+        Args:
+            project_id: Project UUID
+            
+        Returns:
+            Dict with character_count, event_count, setting_count
+        """
+        stats = {
+            "character_count": 0,
+            "event_count": 0,
+            "setting_count": 0
+        }
+        
+        if not self._neo4j_driver:
+            return stats
+        
+        try:
+            async with self._neo4j_driver.session() as session:
+                # 캐릭터 수
+                result = await session.run(
+                    "MATCH (c:Character {projectId: $pid}) RETURN count(c) as cnt",
+                    pid=project_id
+                )
+                record = await result.single()
+                stats["character_count"] = record["cnt"] if record else 0
+                
+                # 이벤트 수
+                result = await session.run(
+                    "MATCH (e:Event {projectId: $pid}) RETURN count(e) as cnt",
+                    pid=project_id
+                )
+                record = await result.single()
+                stats["event_count"] = record["cnt"] if record else 0
+                
+                # 장소 수
+                result = await session.run(
+                    "MATCH (s:Setting {projectId: $pid}) RETURN count(s) as cnt",
+                    pid=project_id
+                )
+                record = await result.single()
+                stats["setting_count"] = record["cnt"] if record else 0
+                
+        except Exception as e:
+            logger.error("Failed to get project stats", error=str(e))
+        
+        return stats
+
+    async def get_adaptive_top_k(self, project_id: str) -> int:
+        """프로젝트 분량에 따른 적응형 top_k 계산.
+        
+        분량이 많은 프로젝트일수록 더 많은 컨텍스트를 검색합니다.
+        
+        Args:
+            project_id: Project UUID
+            
+        Returns:
+            적응형 top_k 값 (10-40 범위)
+        """
+        stats = await self.get_project_stats(project_id)
+        
+        base_k = 10
+        char_count = stats.get("character_count", 0)
+        event_count = stats.get("event_count", 0)
+        
+        # 캐릭터 50명 이상 → top_k 증가
+        if char_count > 50:
+            base_k = min(25, base_k + char_count // 10)
+        elif char_count > 20:
+            base_k = min(15, base_k + char_count // 20)
+        
+        # 이벤트 100개 이상 → top_k 추가 증가
+        if event_count > 100:
+            base_k = min(40, base_k + event_count // 20)
+        elif event_count > 50:
+            base_k = min(25, base_k + event_count // 25)
+        
+        logger.info(
+            "Adaptive top_k calculated",
+            project_id=project_id,
+            char_count=char_count,
+            event_count=event_count,
+            top_k=base_k
+        )
+        
+        return base_k
+
     async def search_similar_characters(
         self,
         project_id: str,
@@ -506,7 +598,7 @@ class DatabaseQueryService:
         project_id: str,
         current_characters: list[dict],
         current_events: list[dict],
-        top_k: int = 10
+        top_k: int = None  # None이면 적응형 top_k 사용
     ) -> dict[str, Any]:
         """Retrieve relevant historical data using RAG.
 
@@ -517,7 +609,7 @@ class DatabaseQueryService:
             project_id: Project UUID
             current_characters: Currently extracted characters
             current_events: Currently extracted events
-            top_k: Number of results per category
+            top_k: Number of results per category (None = adaptive)
 
         Returns:
             Dict with 'characters' and 'events' lists
@@ -525,13 +617,19 @@ class DatabaseQueryService:
         result = {
             "characters": [],
             "events": [],
-            "search_performed": False
+            "search_performed": False,
+            "top_k_used": 0
         }
 
         if not self._neo4j_driver:
             return result
 
         try:
+            # 적응형 top_k 사용 (None이면 자동 계산)
+            if top_k is None:
+                top_k = await self.get_adaptive_top_k(project_id)
+            result["top_k_used"] = top_k
+
             # Build query text from current characters
             char_names = []
             for c in current_characters:
@@ -573,7 +671,8 @@ class DatabaseQueryService:
             logger.info(
                 "RAG search completed",
                 chars_found=len(result["characters"]),
-                events_found=len(result["events"])
+                events_found=len(result["events"]),
+                top_k=top_k
             )
 
         except Exception as e:
