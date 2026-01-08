@@ -235,8 +235,10 @@ APPEARANCE_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
 }}
 
 ### LANGUAGE CONSISTENCY RULE ###
-Output ALL text in the SAME language as the input.
-If the story is in Korean, all values must be in Korean.
+**CRITICAL**: Respond in the SAME language as the input text.
+- If the input is in Korean (한글), ALL text fields (physique, expressions, descriptions, etc.) MUST be in Korean.
+- If the input is in English, ALL text fields MUST be in English.
+- Keep technical field names (like "name", "hair_color") in English, but content values should match the input language.
 
 ### CRITICAL: NAME EXTRACTION RULE ###
 When a character is introduced as "베라(Vera)" or "리안(Lian)", use ONLY the Korean name.

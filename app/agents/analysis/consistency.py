@@ -76,7 +76,13 @@ Your job is to find ALL inconsistencies and contradictions across story elements
 - MEDIUM severity: -10 points each
 - LOW severity: -5 points each
 
-If score <= 50 or any HIGH severity conflict: requires_reextraction = true"""),
+If score <= 50 or any HIGH severity conflict: requires_reextraction = true
+
+=== LANGUAGE INSTRUCTION ===
+**CRITICAL**: Respond in the SAME language as the input DATA.
+- If the input characters/events data is in Korean (한글), ALL conflict descriptions, warnings, and recommendations MUST be in Korean.
+- If the input data is in English, ALL text fields MUST be in English.
+- Keep technical field names (like "type", "severity") in English, but "description" content should match the input language."""),
     ("human", """=== CURRENT CHAPTER DATA ===
 
 **Characters (Current):**

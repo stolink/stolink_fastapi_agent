@@ -13,6 +13,9 @@ import time
 
 from langgraph.graph import StateGraph, START, END
 
+# Language detection
+from app.utils.language_detector import detect_language
+
 # Character Team (Hierarchical Multi-Agent System) - Direct graph access
 from app.agents.extraction.character.supervisor import character_team_graph
 from app.agents.extraction.character.state import CharacterTeamState
@@ -36,6 +39,7 @@ class AnalysisState(TypedDict, total=False):
     callback_url: str
     requires_deep_analysis: bool
     is_short_text: bool  # 🆕 Fast Track flag
+    response_language: str  # "ko" or "en" - detected from input text
     
     # Tracing
     trace_id: str
@@ -378,6 +382,10 @@ async def run_analysis_pipeline(
 ) -> dict[str, Any]:
     """Run the complete analysis pipeline with Supervisor."""
     
+    # 🆕 Detect language from input content
+    response_language = detect_language(content)
+    print(f"[PIPELINE] Detected language: {response_language}", flush=True)
+    
     # 🆕 디버그 로그
     print(f"[PIPELINE] run_analysis_pipeline called with requires_deep_analysis={requires_deep_analysis}, is_short_text={is_short_text}", flush=True)
     
@@ -390,6 +398,7 @@ async def run_analysis_pipeline(
         "trace_id": trace_id,
         "requires_deep_analysis": requires_deep_analysis,
         "is_short_text": is_short_text, # 🆕 Add to state
+        "response_language": response_language,  # 🆕 Add detected language
         "existing_characters": existing_characters or [],
         "existing_events": existing_events or [],
         "existing_relationships": existing_relationships or [],

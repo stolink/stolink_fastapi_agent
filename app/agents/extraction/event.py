@@ -94,6 +94,12 @@ For each event, you MUST provide:
 - prev_event_id: Previous event ID or null
 - importance: 1-10
 
+=== LANGUAGE INSTRUCTION ===
+**CRITICAL**: Respond in the SAME language as the input text.
+- If the input is in Korean (한글), ALL text fields (narrative_summary, description, etc.) MUST be in Korean.
+- If the input is in English, ALL text fields MUST be in English.
+- Keep technical field names (like "event_id", "event_type") in English, but content values should match the input language.
+
 Your goal is to capture the DRAMA and ACTION of the scene."""),
     ("human", """Text to analyze:
 {story_text}
