@@ -377,7 +377,7 @@ class DatabaseQueryService:
             return []
 
         query = """
-            MATCH (source:Character {project_id: $project_id})-[r]->(target:Character)
+            MATCH (source:Character {projectId: $project_id})-[r]->(target:Character)
             RETURN
                 source.name AS source_name,
                 type(r) AS relation_type,
@@ -440,7 +440,7 @@ class DatabaseQueryService:
             async with self._neo4j_driver.session() as session:
                 # 캐릭터 수
                 result = await session.run(
-                    "MATCH (c:Character {project_id: $pid}) RETURN count(c) as cnt",
+                    "MATCH (c:Character {projectId: $pid}) RETURN count(c) as cnt",
                     pid=project_id
                 )
                 record = await result.single()
@@ -448,7 +448,7 @@ class DatabaseQueryService:
                 
                 # 이벤트 수
                 result = await session.run(
-                    "MATCH (e:Event {project_id: $pid}) RETURN count(e) as cnt",
+                    "MATCH (e:Event {projectId: $pid}) RETURN count(e) as cnt",
                     pid=project_id
                 )
                 record = await result.single()
@@ -456,7 +456,7 @@ class DatabaseQueryService:
                 
                 # 장소 수
                 result = await session.run(
-                    "MATCH (s:Setting {project_id: $pid}) RETURN count(s) as cnt",
+                    "MATCH (s:Setting {projectId: $pid}) RETURN count(s) as cnt",
                     pid=project_id
                 )
                 record = await result.single()
@@ -526,7 +526,7 @@ class DatabaseQueryService:
             return []
 
         query = """
-            MATCH (c:Character {project_id: $project_id})
+            MATCH (c:Character {projectId: $project_id})
             WHERE c.embedding IS NOT NULL
             WITH c, vector.similarity.cosine(c.embedding, $embedding) AS score
             WHERE score > 0.6
@@ -570,7 +570,7 @@ class DatabaseQueryService:
             return []
 
         query = """
-            MATCH (e:Event {project_id: $project_id})
+            MATCH (e:Event {projectId: $project_id})
             WHERE e.embedding IS NOT NULL
             WITH e, vector.similarity.cosine(e.embedding, $embedding) AS score
             WHERE score > 0.6
@@ -1288,16 +1288,20 @@ class DatabaseQueryService:
                     embedding = section.get("embedding") # List[float]
                     nav_title = section.get("title", f"Section {idx+1}")
                     
-                    # embedding must be passed as list of floats, asyncpg/pgvector handles it
-                    # But sometimes it might be numpy array
+                    # Convert embedding to JSON string for pgvector
+                    # pgvector expects format: "[0.1, 0.2, 0.3, ...]"
                     if hasattr(embedding, "tolist"):
                         embedding = embedding.tolist()
+                    
+                    # Convert to JSON string
+                    import json
+                    embedding_str = json.dumps(embedding) if embedding else None
                         
                     data_list.append((
                         sec_id, 
                         document_id, 
                         content, 
-                        embedding, 
+                        embedding_str,  # pgvector accepts JSON string
                         idx + 1, 
                         nav_title
                     ))
@@ -1358,7 +1362,7 @@ class DatabaseQueryService:
                 
                 await session.run(
                     """
-                    MERGE (c:Character {project_id: $pid, name: $name})
+                    MERGE (c:Character {projectId: $pid, name: $name})
                     SET c.role = $role,
                         c.status = $status,
                         c.age = $age,
@@ -1401,7 +1405,7 @@ class DatabaseQueryService:
                 
                 await session.run(
                     """
-                    MERGE (s:Setting {project_id: $pid, name: $name})
+                    MERGE (s:Setting {projectId: $pid, name: $name})
                     SET s.settingId = $setting_id,
                         s.locationType = $loc_type,
                         s.description = $desc,
@@ -1473,7 +1477,7 @@ class DatabaseQueryService:
                     
                     await session.run(
                         """
-                        MATCH (c:Character {project_id: $pid, name: $char_name})
+                        MATCH (c:Character {projectId: $pid, name: $char_name})
                         MATCH (e:Event {eventId: $evt_id})
                         MERGE (c)-[r:PARTICIPATES_IN]->(e)
                         """,
@@ -1489,7 +1493,7 @@ class DatabaseQueryService:
                     await session.run(
                         """
                         MATCH (e:Event {eventId: $evt_id})
-                        MATCH (s:Setting {project_id: $pid, name: $loc_name})
+                        MATCH (s:Setting {projectId: $pid, name: $loc_name})
                         MERGE (e)-[r:HAPPENED_AT]->(s)
                         """,
                         evt_id=evt_uuid,
@@ -1514,8 +1518,8 @@ class DatabaseQueryService:
 
                 # Create relationship with properties
                 query = f"""
-                    MATCH (a:Character {{project_id: $pid, name: $source}})
-                    MATCH (b:Character {{project_id: $pid, name: $target}})
+                    MATCH (a:Character {{projectId: $pid, name: $source}})
+                    MATCH (b:Character {{projectId: $pid, name: $target}})
                     MERGE (a)-[r:{safe_rel_type}]->(b)
                     SET r.description = $desc, 
                         r.strength = $strength,
@@ -1535,8 +1539,8 @@ class DatabaseQueryService:
                 # If bidirectional, create reverse relationship
                 if rel.get("bidirectional", False):
                     reverse_query = f"""
-                        MATCH (a:Character {{project_id: $pid, name: $source}})
-                        MATCH (b:Character {{project_id: $pid, name: $target}})
+                        MATCH (a:Character {{projectId: $pid, name: $source}})
+                        MATCH (b:Character {{projectId: $pid, name: $target}})
                         MERGE (b)-[r:{safe_rel_type}]->(a)
                         SET r.description = $desc, 
                             r.strength = $strength,

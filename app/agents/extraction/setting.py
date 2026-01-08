@@ -71,6 +71,12 @@ For each setting, you MUST provide:
 - significance: Story importance
 - is_primary: true if action happens here
 
+=== LANGUAGE INSTRUCTION ===
+**CRITICAL**: Respond in the SAME language as the input text.
+- If the input is in Korean (한글), ALL text fields (visual_background, descriptions, atmosphere, etc.) MUST be in Korean.
+- If the input is in English, ALL text fields MUST be in English.
+- Keep technical field names (like "setting_id", "location_type") in English, but content values should match the input language.
+
 === PENALTY WARNING -> GUIDELINE ===
 Focus purely on the visual environment. If character names or actions are mentioned, rephrase to focus on the effect they have on the environment (e.g., "footsteps on snow" -> "snowy path with footprints").
 
