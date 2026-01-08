@@ -231,7 +231,7 @@ JSON 형식으로 답변하세요:
             async with self._db_service._neo4j_driver.session() as session:
                 result = await session.run(
                     """
-                    MATCH (c:Character {project_id: $pid, name: $name})
+                    MATCH (c:Character {projectId: $pid, name: $name})
                     RETURN c.role as role, c.backstory as backstory,
                            c.profileJson as profile_json
                     """,
@@ -270,7 +270,7 @@ JSON 형식으로 답변하세요:
             async with self._db_service._neo4j_driver.session() as session:
                 result = await session.run(
                     """
-                    MATCH (c:Character {project_id: $pid, name: $name})-[:PARTICIPATES_IN]->(e:Event)
+                    MATCH (c:Character {projectId: $pid, name: $name})-[:PARTICIPATES_IN]->(e:Event)
                     RETURN e.narrativeSummary as summary, e.description as description
                     ORDER BY e.chapter DESC, e.sequenceOrder DESC
                     LIMIT $limit

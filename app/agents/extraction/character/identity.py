@@ -173,6 +173,12 @@ If the story is in Korean, all values must be in Korean.
 ### KOREAN NAME RULE ###
 When a character is introduced as "베라(Vera)", extract ONLY the Korean name "베라".
 
+=== LANGUAGE INSTRUCTION ===
+**CRITICAL**: Respond in the SAME language as the input text.
+- If the input is in Korean (한글), ALL text fields (name, backstory, occupation, faction, aliases, etc.) MUST be in Korean.
+- If the input is in English, ALL text fields MUST be in English.
+- Keep technical field names (like "name", "age", "role") in English, but content values should match the input language.
+
 ### EXTRACTION FOCUS ###
 For EACH character, extract:
 - name: Character's PROPER NAME (REQUIRED)
