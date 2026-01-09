@@ -14,7 +14,7 @@ Validates outputs from:
 - Setting Agent: extracted_settings
 - Relationship Agent: relationship_graph
 - Consistency Agent: consistency_report
-- Plot Agent: plot
+# Removed: Plot Agent
 """
 import json
 import time
@@ -50,7 +50,7 @@ VALIDATION_RULES = {
     "extracted_settings": {
         "required": False,
         "penalty_missing": 5,
-        "required_fields": ["location_name"]
+        "required_fields": ["name"]
     },
     "relationship_graph": {
         "required": False,
@@ -61,12 +61,8 @@ VALIDATION_RULES = {
         "required": True,
         "penalty_missing": 15,
         "required_fields": ["overall_score"]
-    },
-    "plot": {
-        "required": False,
-        "penalty_missing": 5,
-        "required_fields": []
     }
+    # Removed: "plot"
 }
 
 
@@ -335,16 +331,9 @@ def repair_missing_participants(state: dict) -> tuple:
                     "appearance": {},
                     "relations": {
                         "graph": [],
-                        "event_refs": [],
-                        "location_context": None
+                        "event_refs": []
                     },
-                    "current_mood": None,
-                    "meta": {
-                        "created_at": None,
-                        "updated_at": None,
-                        "data_version": "2.0.0",
-                        "lock_version": 0
-                    },
+                    # Removed: meta (not needed)
                     "embedding": []
                 }
                 characters.append(new_char)

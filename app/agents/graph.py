@@ -21,7 +21,7 @@ from app.agents.extraction.setting import setting_extraction_node
 # Removed: dialogue_analysis_node, emotion_tracking_node
 from app.agents.analysis.relationship import relationship_analysis_node
 from app.agents.analysis.consistency import consistency_check_node
-from app.agents.analysis.plot import plot_node
+# Removed: plot_node
 from app.agents.analysis.global_resolution import GlobalResolutionAgent, GlobalResolutionResult
 from app.agents.validation.validator import validator_node
 
@@ -55,7 +55,7 @@ class AnalysisState(TypedDict, total=False):
     # Analysis results
     relationship_graph: dict
     consistency_report: dict
-    plot: dict
+    # Removed: plot
     
     # Validation
     validation_result: dict
@@ -202,7 +202,7 @@ async def extraction_node(state: dict) -> dict:
             if char_name and char_to_events.get(char_name):
                 # Ensure relations dict exists
                 if "relations" not in char:
-                    char["relations"] = {"graph": [], "event_refs": [], "location_context": None}
+                    char["relations"] = {"graph": [], "event_refs": []}
                 
                 char["relations"]["event_refs"] = char_to_events[char_name]
                 print(f"[EXTRACTION] Linked {len(char_to_events[char_name])} events to {char_name}", flush=True)
@@ -226,12 +226,7 @@ async def analysis_node(state: dict) -> dict:
         asyncio.create_task(consistency_check_node(state)),  # Always run for consistency_report
     ]
     
-    # Only run plot_node in deep analysis mode (slower)
-    if requires_deep:
-        print("[ANALYSIS] Deep Analysis triggering: Plot (Consistency always runs)", flush=True)
-        tasks.append(asyncio.create_task(plot_node(state)))
-    else:
-        print("[ANALYSIS] Fast Track: Consistency only (skipping Plot)", flush=True)
+    # Removed: plot_node (no longer needed)
     
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
@@ -399,7 +394,6 @@ async def run_analysis_pipeline(
         "extracted_settings": [],
         "relationship_graph": {},
         "consistency_report": {},
-        "plot": {},
         "validation_result": {},
         "extraction_done": False,
         "analysis_done": False,

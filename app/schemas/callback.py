@@ -2,12 +2,12 @@
 
 Includes all data categories that Spring Boot expects:
 - Characters, Events, Settings, Relationships
-- Plot, Consistency Report, Validation
+- Consistency Report, Validation
 """
 from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
-from app.schemas.plot import PlotResult
+# Removed: from app.schemas.plot import PlotResult
 from app.schemas.consistency import ConsistencyReport
 from app.schemas.validation import ValidationResult
 
@@ -34,8 +34,8 @@ class FullAnalysisResult(BaseModel):
     settings: list[dict[str, Any]] = Field(default_factory=list)
     relationships: list[dict[str, Any]] = Field(default_factory=list)
     
-    # Level 2 Analysis Results (renamed: plot_integration → plot)
-    plot: dict[str, Any] = Field(default_factory=dict)
+    # Level 2 Analysis Results
+    # Removed: plot
     consistency_report: dict[str, Any] = Field(default_factory=dict)
     validation: dict[str, Any] = Field(default_factory=dict)
     
@@ -53,9 +53,9 @@ class AnalysisCallbackPayload(BaseModel):
     result: Optional[FullAnalysisResult] = Field(default=None, description="Analysis results")
     error: Optional[str] = Field(default=None, description="Error message if failed")
     
-    class Config:
-        populate_by_name = True
-        json_schema_extra = {
+    model_config = {
+        "populate_by_name": True,
+        "json_schema_extra": {
             "example": {
                 "jobId": "job-12345",
                 "status": "COMPLETED",
@@ -64,10 +64,6 @@ class AnalysisCallbackPayload(BaseModel):
                     "events": [{"event_id": "E001", "description": "Arin enters the forest"}],
                     "settings": [{"setting_id": "loc_forest_01", "location_name": "Dark Forest"}],
                     "relationships": [{"source": "Arin", "target": "Kael", "relation_type": "ALLY"}],
-                    "plot": {
-                        "summary": {"narrative": "..."},
-                        "foreshadowing": [{"foreshadow_id": "F001", "hint_text": "..."}]
-                    },
                     "consistency_report": {
                         "overall_score": 95,
                         "conflicts": [],
@@ -87,3 +83,4 @@ class AnalysisCallbackPayload(BaseModel):
                 "error": None
             }
         }
+    }

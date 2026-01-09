@@ -131,7 +131,24 @@ class DatabaseQueryService:
                 max_connection_lifetime=300,
                 connection_timeout=30,
             )
-            logger.info("Neo4j driver initialized")
+            
+            # Initialize Schema (Constraints & Indexes)
+            async with self._neo4j_driver.session() as session:
+                # 1. Character
+                await session.run("CREATE CONSTRAINT character_id_unique IF NOT EXISTS FOR (c:Character) REQUIRE c.id IS UNIQUE")
+                await session.run("CREATE INDEX character_project_id_idx IF NOT EXISTS FOR (c:Character) ON (c.project_id)")
+                await session.run("CREATE INDEX character_name_idx IF NOT EXISTS FOR (c:Character) ON (c.name)")
+                
+                # 2. Event
+                await session.run("CREATE CONSTRAINT event_id_unique IF NOT EXISTS FOR (e:Event) REQUIRE e.eventId IS UNIQUE")
+                await session.run("CREATE INDEX event_project_id_idx IF NOT EXISTS FOR (e:Event) ON (e.project_id)")
+                
+                # 3. Setting
+                await session.run("CREATE CONSTRAINT setting_id_unique IF NOT EXISTS FOR (s:Setting) REQUIRE s.settingId IS UNIQUE")
+                await session.run("CREATE INDEX setting_project_id_idx IF NOT EXISTS FOR (s:Setting) ON (s.project_id)")
+                await session.run("CREATE INDEX setting_name_idx IF NOT EXISTS FOR (s:Setting) ON (s.name)")
+            
+            logger.info("Neo4j driver initialized and schema constraints applied")
         except Exception as e:
             logger.error("Failed to initialize Neo4j driver", error=str(e))
             self._neo4j_driver = None
@@ -1140,7 +1157,7 @@ class DatabaseQueryService:
             
             if self._neo4j_driver:
                 logger.info("[DEBUG] Starting Neo4j sync...")
-                await self._sync_to_neo4j(project_id, characters, events, settings_list, relationships or [])
+                await self._sync_to_neo4j(project_id, document_id, characters, events, settings_list, relationships or [])
                 logger.info("[DEBUG] Neo4j sync complete.")
             else:
                 logger.warning("[DEBUG] Neo4j driver not available, skipping sync.")
@@ -1288,10 +1305,16 @@ class DatabaseQueryService:
                     embedding = section.get("embedding") # List[float]
                     nav_title = section.get("title", f"Section {idx+1}")
                     
-                    # embedding must be passed as list of floats, asyncpg/pgvector handles it
-                    # But sometimes it might be numpy array
-                    if hasattr(embedding, "tolist"):
-                        embedding = embedding.tolist()
+                    # embedding must be passed as string format '[1.0, 2.0, ...]' for asyncpg if not using type codec
+                    if embedding is not None:
+                        if hasattr(embedding, "tolist"):
+                            embedding = str(embedding.tolist())
+                        elif isinstance(embedding, list):
+                            embedding = str(embedding)
+                        else:
+                            embedding = str(embedding)
+                    else:
+                        embedding = None
                         
                     data_list.append((
                         sec_id, 
@@ -1317,7 +1340,44 @@ class DatabaseQueryService:
             
         return saved_count
 
-    async def _sync_to_neo4j(self, project_id, characters, events, settings_list, relationships):
+    async def _cleanup_document_data(self, session, document_id: str) -> None:
+        """재분석 전 document의 기존 데이터 정리.
+        
+        Character와 Setting의 source_documents에서 document_id를 제거하고,
+        더 이상 참조되지 않는 엔티티는 삭제합니다.
+        """
+        # Character cleanup
+        await session.run("""
+            MATCH (c:Character)
+            WHERE $doc_id IN coalesce(c.source_documents, [])
+            SET c.source_documents = [d IN c.source_documents WHERE d <> $doc_id]
+            
+            WITH c
+            WHERE size(coalesce(c.source_documents, [])) = 0
+            DETACH DELETE c
+        """, doc_id=document_id)
+        
+        # Setting cleanup
+        await session.run("""
+            MATCH (s:Setting)
+            WHERE $doc_id IN coalesce(s.source_documents, [])
+            SET s.source_documents = [d IN s.source_documents WHERE d <> $doc_id]
+            
+            WITH s
+            WHERE size(coalesce(s.source_documents, [])) = 0
+            DETACH DELETE s
+        """, doc_id=document_id)
+        
+        # Event cleanup (Events는 document-scoped로 ID에 doc_id 포함)
+        await session.run("""
+            MATCH (e:Event)
+            WHERE e.eventId STARTS WITH $doc_id_prefix
+            DETACH DELETE e
+        """, doc_id_prefix=f"{document_id}_")
+        
+        print(f"[NEO4J] Cleaned up existing data for document: {document_id}")
+
+    async def _sync_to_neo4j(self, project_id, document_id, characters, events, settings_list, relationships):
         """Neo4j에 분석 결과 동기화.
         
         Spring에서 삭제된 로직을 포함하여 전체 데이터를 저장합니다.
@@ -1327,6 +1387,9 @@ class DatabaseQueryService:
         import uuid as uuid_mod
 
         async with self._neo4j_driver.session() as session:
+            # 🆕 Step 0: Cleanup existing document data before re-analysis
+            await self._cleanup_document_data(session, document_id)
+            
             # ===== 1. Characters =====
             # Spring의 saveCharacters() + updateCharacterJsonFields() 로직 통합
             for char in characters:
@@ -1368,10 +1431,16 @@ class DatabaseQueryService:
                         c.currentMoodJson = $mood_json,
                         c.appearanceJson = $appearance_json,
                         c.relationsJson = $relations_json,
-                        c.aliases = $aliases
+                        c.aliases = $aliases,
+                        c.source_documents = CASE 
+                            WHEN c.source_documents IS NULL THEN [$doc_id]
+                            WHEN NOT $doc_id IN c.source_documents THEN c.source_documents + $doc_id
+                            ELSE c.source_documents
+                        END
                     """,
                     pid=project_id,
                     name=char_name,
+                    doc_id=document_id,
                     role=char.get("role", "Unknown"),
                     status=char.get("status", "Unknown"),
                     age=profile.get("age"),
@@ -1381,13 +1450,13 @@ class DatabaseQueryService:
                     mood_json=current_mood_json,
                     appearance_json=appearance_json,
                     relations_json=relations_json,
-                    aliases=char.get("aliases", [])
+                    aliases=char.get("aliases") or []
                 )
             
             # ===== 2. Settings (Locations) =====
             # Spring의 saveSettings() 로직 통합
             for setting in settings_list:
-                setting_name = setting.get("name") or setting.get("location_name")
+                setting_name = setting.get("name")
                 
                 if not setting_name:
                     continue
@@ -1399,10 +1468,12 @@ class DatabaseQueryService:
                 except (ValueError, AttributeError):
                     setting_id = raw_setting_id if raw_setting_id else str(uuid_mod.uuid4())
                 
+                
                 await session.run(
                     """
-                    MERGE (s:Setting {project_id: $pid, name: $name})
-                    SET s.settingId = $setting_id,
+                    MERGE (s:Setting {settingId: $setting_id})
+                    SET s.project_id = $pid,
+                        s.name = $name,
                         s.locationType = $loc_type,
                         s.description = $desc,
                         s.visualBackground = $visual_bg,
@@ -1412,11 +1483,17 @@ class DatabaseQueryService:
                         s.weather = $weather,
                         s.notableFeatures = $notable_features,
                         s.significance = $significance,
-                        s.isPrimary = $is_primary
+                        s.isPrimary = $is_primary,
+                        s.source_documents = CASE 
+                            WHEN s.source_documents IS NULL THEN [$doc_id]
+                            WHEN NOT $doc_id IN s.source_documents THEN s.source_documents + $doc_id
+                            ELSE s.source_documents
+                        END
                     """,
                     pid=project_id,
                     name=setting_name,
                     setting_id=setting_id,
+                    doc_id=document_id,
                     loc_type=setting.get("location_type", "Unknown"),
                     desc=setting.get("description", ""),
                     visual_bg=setting.get("visual_background", ""),
@@ -1431,16 +1508,20 @@ class DatabaseQueryService:
             
             # ===== 3. Events =====
             # Spring의 saveEvents() 로직 통합
+            # 🆕 Event ID는 document-scoped: {document_id}_{event_id}
             for evt in events:
                 raw_evt_id = evt.get("event_id") or evt.get("id")
+                # Document-scoped event ID
+                evt_id_with_doc = f"{document_id}_{raw_evt_id}" if raw_evt_id else f"{document_id}_{uuid_mod.uuid4()}"
+                
                 try:
                     evt_uuid = str(uuid_mod.UUID(raw_evt_id)) if raw_evt_id else str(uuid_mod.uuid4())
                 except (ValueError, AttributeError):
-                    evt_uuid = raw_evt_id if raw_evt_id else str(uuid_mod.uuid4())
+                    evt_uuid = evt_id_with_doc
 
                 await session.run(
                     """
-                    MERGE (e:Event {eventId: $id})
+                    MERGE (e:Event {eventId: $id_with_doc})
                     SET e.project_id = $pid,
                         e.eventType = $event_type,
                         e.narrativeSummary = $narrative_summary,
@@ -1451,6 +1532,7 @@ class DatabaseQueryService:
                         e.timestamp = $timestamp,
                         e.locationRef = $location_ref
                     """,
+                    id_with_doc=evt_id_with_doc,
                     id=evt_uuid,
                     pid=project_id,
                     event_type=evt.get("event_type", "Unknown"),

@@ -63,7 +63,7 @@ class ChapterSummaryService:
         # 장소 이름 추출
         setting_names = []
         for s in extracted_entities.get("settings", []):
-            name = s.get("name") or s.get("location_name")
+            name = s.get("name")
             if name:
                 setting_names.append(name)
         

@@ -253,7 +253,7 @@ class HierarchicalContextManager:
                     result = await session.run(
                         """
                         MATCH (c:Character {project_id: $pid})
-                        RETURN c.name as name, c.aliases as aliases
+                        RETURN c.name as name, COALESCE(c.aliases, []) as aliases
                         """,
                         pid=project_id
                     )

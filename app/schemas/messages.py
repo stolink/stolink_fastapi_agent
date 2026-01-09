@@ -180,11 +180,11 @@ class DocumentAnalysisMessage(BaseModel):
     callback_url: str = Field(..., description="결과 콜백 URL")
     context: Optional[AnalysisContext] = Field(None, description="기존 데이터 컨텍스트")
     trace_id: Optional[str] = Field(None, description="추적 ID")
-
-    class Config:
-        populate_by_name = True
-        allow_population_by_field_name = True
-        extra = "ignore"  # Allow Spring to send additional fields
+    
+    model_config = {
+        "populate_by_name": True,
+        "extra": "ignore"  # Allow Spring to send additional fields
+    }
 
 
 class GlobalMergeMessage(BaseModel):
@@ -212,13 +212,13 @@ class DocumentAnalysisCallback(BaseModel):
     parent_folder_id: Optional[str] = Field(None, description="상위 FOLDER UUID")
     status: str = Field(..., description="COMPLETED 또는 FAILED")
     error: Optional[dict] = Field(None, description="에러 정보")
-    sections: list[SectionOutput] = Field(default_factory=list, description="생성된 Section 목록")
+    sections: Optional[list[SectionOutput]] = Field(None, description="생성된 Section 목록 - AI 백엔드에만 저장, Callback에서 제외")
     characters: list[dict] = Field(default_factory=list, description="추출된 캐릭터")
     events: list[dict] = Field(default_factory=list, description="추출된 이벤트")
     settings: list[dict] = Field(default_factory=list, description="추출된 배경/장소")
     relationships: list[dict] = Field(default_factory=list, description="캐릭터 간 관계")  # 🆕
-    # 🆕 Level 2 Analysis Results (Spring 요청)
-    plot_integration: Optional[dict] = Field(None, description="플롯 분석 (복선, 서사 아크, 상징)")
+    # 🆕 Level 2 Analysis Results (Spring 요청) - plot removed
+    # Removed: plot_integration
     consistency_report: Optional[dict] = Field(None, description="일관성 검증 결과")
     validation: Optional[dict] = Field(None, description="검증 결과 (품질 점수, 액션 등)")
     processing_time_ms: Optional[int] = Field(None, description="처리 시간(ms)")

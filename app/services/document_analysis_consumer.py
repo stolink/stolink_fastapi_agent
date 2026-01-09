@@ -273,28 +273,19 @@ class DocumentAnalysisConsumer:
 
             processing_time_ms = int((time.time() - start_time) * 1000)
 
-            # 5. Callback 전송
+
+            # 5. Callback 전송 - sections 필드 완전히 제거
             callback = DocumentAnalysisCallback(
                 document_id=document_id,
                 parent_folder_id=msg.parent_folder_id,
                 status="COMPLETED" if result.success else "FAILED",
                 error=result.error,
-                sections=[
-                    SectionOutput(
-                        sequence_order=i+1,
-                        nav_title=s.get("title", f"Section {i+1}"),
-                        content=s.get("content", ""),
-                        embedding=s.get("embedding"),
-                        related_characters=s.get("related_characters", []),
-                        related_events=s.get("related_events", [])
-                    ) for i, s in enumerate(result.sections)
-                ],
+                # sections 파라미터 자체를 제거 - JSON에 나타나지 않음
                 characters=result.characters,
                 events=result.events,
                 settings=result.settings,
                 relationships=result.relationships,  # 🆕 관계 데이터 추가
-                # 🆕 Level 2 Analysis Results
-                plot_integration=result.plot,
+                # 🆕 Level 2 Analysis Results (plot removed)
                 consistency_report=result.consistency_report,
                 validation=result.validation,  # 검증 결과 추가
                 processing_time_ms=processing_time_ms,
@@ -530,10 +521,10 @@ class DocumentAnalysisConsumer:
             logger.info(f"Starting Streaming Analysis: {len(batches)} batches")
 
             # Accumulators for Final Callback (Lightweight)
-            final_characters_map = {} # dedupe by name for the report
-            final_events = []
-            final_settings = []
-            final_relationships = []  # 🆕 관계 데이터 축적
+            final_characters_map = {}  # dedupe by name
+            final_events_map = {}      # 🆕 dedupe by event_id
+            final_settings_map = {}    # 🆕 dedupe by setting_id
+            final_relationships = []   # 🆕 관계 데이터 축적
             final_plot = {}
             final_consistency = {}
             final_validation = {}  # 🆕 검증 결과
@@ -621,10 +612,22 @@ class DocumentAnalysisConsumer:
                 # 🆕 관계 데이터 추출 (relationship_graph에서)
                 rel_graph = pipeline_result.get("relationship_graph", {})
                 batch_relationships = []
+                
+                # 🆕 Debug: Log relationship extraction
+                logger.info(f"[RELATIONSHIPS] 🔍 Batch {i+1}: Checking pipeline_result for relationship_graph")
+                logger.info(f"[RELATIONSHIPS] 🔍 relationship_graph exists: {bool(rel_graph)}")
+                
                 if rel_graph and isinstance(rel_graph, dict):
                     batch_relationships = rel_graph.get("relationships", [])
+                    logger.info(f"[RELATIONSHIPS] 🔍 Batch {i+1}: Extracted {len(batch_relationships)} relationships from rel_graph")
                     if batch_relationships:
+                        logger.info(f"[RELATIONSHIPS] ✅ Batch {i+1}: Adding {len(batch_relationships)} relationships to final list")
+                        logger.info(f"[RELATIONSHIPS] 🔍 First relationship: {batch_relationships[0]}")
                         final_relationships.extend(batch_relationships)
+                    else:
+                        logger.info(f"[RELATIONSHIPS] ⚠️ Batch {i+1}: relationship_graph exists but relationships array is empty")
+                else:
+                    logger.info(f"[RELATIONSHIPS] ⚠️ Batch {i+1}: No valid relationship_graph in pipeline_result")
 
                 # 4. Immediate Persistence
                 # 4. Immediate Persistence
@@ -683,8 +686,26 @@ class DocumentAnalysisConsumer:
                     c_name = c.get("name") or c.get("profile", {}).get("name")
                     if c_name:
                         final_characters_map[c_name] = c
-                final_events.extend(evts)
-                final_settings.extend(stgs)
+                
+                # 🆕 Events: dedupe by event_id
+                for e in evts:
+                    evt_id = e.get("event_id") or e.get("id")
+                    if evt_id:
+                        final_events_map[evt_id] = e
+                    else:
+                        # No ID, skip (shouldn't happen)
+                        logger.warning("Event without ID, skipping", event=e)
+                
+                # 🆕 Settings: dedupe by setting_id
+                for s in stgs:
+                    setting_id = s.get("setting_id") or s.get("id")
+                    if setting_id:
+                        final_settings_map[setting_id] = s
+                    else:
+                        # Fallback to name if no ID
+                        s_name = s.get("name")
+                        if s_name:
+                            final_settings_map[s_name] = s
 
                 if pipeline_result.get("plot"): final_plot = pipeline_result.get("plot")
                 if pipeline_result.get("consistency_report"): final_consistency = pipeline_result.get("consistency_report")
@@ -692,7 +713,8 @@ class DocumentAnalysisConsumer:
 
             # 🆕 Fallback: Extract relationships from character.relations.graph if top-level is empty
             if not final_relationships and final_characters_map:
-                logger.info("Extracting relationships from character.relations.graph (fallback)")
+                logger.info("[RELATIONSHIPS] 🔄 Triggering fallback: Extracting from character.relations.graph")
+                logger.info(f"[RELATIONSHIPS] 🔍 Characters available for fallback: {len(final_characters_map)}")
                 extracted_rels = []
                 seen_pairs = set()  # Avoid duplicates
 
@@ -707,6 +729,9 @@ class DocumentAnalysisConsumer:
                     # Handle list format (direct list of relations)
                     elif isinstance(relations_data, list):
                         char_relations = relations_data
+                    
+                    if char_relations:
+                        logger.info(f"[RELATIONSHIPS] 🔍 Character '{char_name}' has {len(char_relations)} relations in embedded data")
 
                     for rel in char_relations:
                         target = rel.get("target", "")
@@ -743,10 +768,30 @@ class DocumentAnalysisConsumer:
 
                 if extracted_rels:
                     final_relationships = extracted_rels
-                    logger.info(f"Extracted {len(final_relationships)} relationships from characters (fallback)")
+                    logger.info(f"[RELATIONSHIPS] ✅ Fallback extracted {len(final_relationships)} relationships from character data")
+                    logger.info(f"[RELATIONSHIPS] 🔍 Sample relationship: {final_relationships[0]}")
+                else:
+                    logger.warning("[RELATIONSHIPS] ⚠️ Fallback found no relationships in character.relations.graph")
+            else:
+                if final_relationships:
+                    logger.info(f"[RELATIONSHIPS] ✅ Using {len(final_relationships)} relationships from pipeline (no fallback needed)")
+                else:
+                    logger.warning(f"[RELATIONSHIPS] ⚠️ No relationships extracted and no characters for fallback (chars: {len(final_characters_map)})")
 
             processing_time_ms = int((time.time() - start_time) * 1000)
 
+            # 🆕 Convert dict back to list for final output
+            final_events = list(final_events_map.values())
+            final_settings = list(final_settings_map.values())
+            
+            logger.info(
+                "Final aggregation complete",
+                characters=len(final_characters_map),
+                events=len(final_events),
+                settings=len(final_settings),
+                relationships=len(final_relationships)
+            )
+            
             # 🆕 Link characters and events to sections
             linked_sections = []
             for i, sec in enumerate(sections):
@@ -949,7 +994,7 @@ class DocumentAnalysisConsumer:
                     events=result.events,
                     settings=result.settings,
                     relationships=result.relationships,
-                    plot_integration=result.plot,
+                    # Removed: plot_integration
                     consistency_report=result.consistency_report,
                     validation=result.validation,
                     processing_time_ms=processing_time_ms,

@@ -94,6 +94,12 @@ For each event, you MUST provide:
 - prev_event_id: Previous event ID or null
 - importance: 1-10
 
+=== LANGUAGE CONSISTENCY RULE ===
+**CRITICAL**: Output ALL text content in the SAME LANGUAGE as the input.
+- If the input text is in Korean (한국어), ALL descriptions MUST be in Korean.
+- If the input text is in English, all descriptions must be in English.
+- Never mix languages.
+
 Your goal is to capture the DRAMA and ACTION of the scene."""),
     ("human", """Text to analyze:
 {story_text}
@@ -175,7 +181,7 @@ async def event_extraction_node(state: dict) -> dict:
         if name:
             available_characters.append(name)
     
-    available_settings = [s.get("location_name") or s.get("name", "") for s in settings if s.get("location_name") or s.get("name")]
+    available_settings = [s.get("name", "") for s in settings if s.get("name")]
     
     print(f"[EVENT] Available characters: {available_characters}")
     print(f"[EVENT] Available settings: {available_settings}")

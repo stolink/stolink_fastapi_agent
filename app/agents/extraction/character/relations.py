@@ -30,7 +30,6 @@ class CharacterRelations(BaseModel):
     """Single character's relationships."""
     name: str = Field(..., description="Character name for matching")
     relations: list[Relationship] = Field(default_factory=list, description="Relationships with other characters")
-    location_context: Optional[str] = Field(None, description="Current location description")
     
     @field_validator('relations', mode='before')
     @classmethod
@@ -268,8 +267,7 @@ def ensure_bidirectional_relations(relations_data: dict) -> dict:
             # Source character doesn't exist in relations_data, create entry
             relations_data[source] = {
                 "name": source,
-                "relations": [reverse_rel],
-                "location_context": None
+                "relations": [reverse_rel]
             }
             print(f"[RELATIONS] Created new entry for {source} with reverse relation to {target}")
     

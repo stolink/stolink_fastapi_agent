@@ -52,13 +52,6 @@ class CharacterRelationship(BaseModel):
     private_feeling: Optional[str] = Field(None, description="Inner feeling")
 
 
-class CurrentMood(BaseModel):
-    """Scene-specific emotional state."""
-    emotion: Optional[str] = Field(None, description="Primary emotion")
-    intensity: Optional[int] = Field(5, ge=1, le=10, description="Emotion intensity 1-10")
-    trigger: Optional[str] = Field(None, description="What caused this emotion")
-
-
 class PersonalityTraits(BaseModel):
     """Personality traits object."""
     core_traits: list[str] = Field(default_factory=list, description="Core personality traits")
@@ -108,7 +101,6 @@ class CharacterRelations(BaseModel):
     """Character relationships and world knowledge."""
     graph: list[CharacterRelationship] = Field(default_factory=list, description="Relationships")
     event_refs: list[str] = Field(default_factory=list, description="Event IDs")
-    location_context: Optional[str] = Field(None, description="Current location")
     
     @field_validator('graph', 'event_refs', mode='before')
     @classmethod
@@ -141,9 +133,6 @@ class FullCharacter(BaseModel):
     
     # Relationships
     relations: CharacterRelations = Field(default_factory=CharacterRelations)
-    
-    # Current Mood
-    current_mood: Optional[CurrentMood] = Field(None, description="Emotional state")
     
     # Embedding
     embedding: list[float] = Field(default_factory=list, description="Vector for Neo4j")
