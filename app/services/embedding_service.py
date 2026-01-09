@@ -62,14 +62,13 @@ class EmbeddingService:
         self._redis = None
         try:
              import redis
-             self._redis = redis.Redis(
-                 host=settings.redis_host,
-                 port=settings.redis_port,
-                 db=settings.redis_db,
-                 decode_responses=False # We store bytes/json
+             # redis.from_url()로 연결 (rediss:// TLS 자동 지원)
+             self._redis = redis.from_url(
+                 settings.redis_url,
+                 decode_responses=False  # We store bytes/json
              )
              self._redis.ping()
-             logger.info("Redis cache initialized for embeddings")
+             logger.info("Redis cache initialized for embeddings", url=settings.redis_url.split("@")[-1])  # 비밀번호 제외 로깅
         except Exception as e:
              logger.warning(f"Redis cache init failed: {e}. Caching disabled.")
              self._redis = None
