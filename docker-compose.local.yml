@@ -40,11 +40,13 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_BEDROCK_SECRET_ACCESS_KEY}
       AWS_REGION: us-east-1
       # RabbitMQ (Spring의 AI Agent용 RabbitMQ에 연결)
-      RABBITMQ_HOST: stolink-rabbitmq-agent
+      # Spring의 docker-compose.local.yml 기준: stolink-rabbitmq-local
+      RABBITMQ_HOST: stolink-rabbitmq-local
       RABBITMQ_PORT: 5672
-      RABBITMQ_USER: guest
-      RABBITMQ_PASSWORD: guest
-      RABBITMQ_VHOST: stolink
+      # RabbitMQ 컨테이너에 VHost 설정이 없으므로 기본값 '/' 사용 (Spring 설정의 stolink vhost는 생성되지 않았을 수 있음)
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
       # Document Analysis Architecture
       DOCUMENT_ANALYSIS_QUEUE: document_analysis_queue
       GLOBAL_MERGE_QUEUE: global_merge_queue
@@ -54,12 +56,12 @@ services:
       POSTGRES_HOST: stolink-postgres-local
       POSTGRES_PORT: 5432
       POSTGRES_DB: stolink
-      POSTGRES_USER: stolink
-      POSTGRES_PASSWORD: stolink123
+      POSTGRES_USER: ${POSTGRES_USER:-stolink}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stolink123}
       # Neo4j (Spring의 Neo4j에 연결)
       NEO4J_URI: bolt://stolink-neo4j-local:7687
-      NEO4J_USER: neo4j
-      NEO4J_PASSWORD: stolink123
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-stolink123}
       # FastAPI
       FASTAPI_PORT: 8001
       DEBUG: "true"
@@ -67,6 +69,8 @@ services:
       - "8001:8001"
     networks:
       - stolink-shared-network
+    volumes:
+      - ./:/app
     healthcheck:
       test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')" ]
       interval: 30s

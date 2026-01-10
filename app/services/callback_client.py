@@ -128,6 +128,7 @@ class CallbackClient:
         # 일단 Pydantic 모델 대신 딕셔너리로 직접 구성
 
         payload_dict = {
+            "message_type": "DOCUMENT_ANALYSIS_RESULT",  # 🆕 Spring Backend 라우팅용
             "jobId": job_id, # "job_id" -> "jobId" (Spring Convention)
             "status": status,
             "error": error

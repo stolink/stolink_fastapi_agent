@@ -205,6 +205,23 @@ class SectionOutput(BaseModel):
     related_events: list[str] = Field(default_factory=list, description="관련 이벤트 ID")
 
 
+
+class DocumentSummaryOutput(BaseModel):
+    """문서 요약 구조화된 데이터 (Spring RDB 저장용)"""
+    summary: str = Field(..., description="요약 텍스트")
+    key_characters: list[str] = Field(default_factory=list, description="핵심 등장인물")
+    key_events: list[str] = Field(default_factory=list, description="핵심 사건")
+    level: int = Field(default=3, description="요약 레벨 (3=CHAPTER)")
+
+class CharacterTimelineOutput(BaseModel):
+    """캐릭터 타임라인 구조화된 데이터 (Spring RDB 저장용)"""
+    character_name: str = Field(..., description="캐릭터 이름")
+    chapter: int = Field(..., description="챕터 번호")
+    current_location: Optional[str] = Field(None, description="현재 위치")
+    emotional_state: Optional[str] = Field(None, description="감정 상태")
+    health_status: Optional[str] = Field(None, description="건강 상태")
+    state_changes: Optional[dict] = Field(default_factory=dict, description="상태 변경 사항 (JSONB)")
+
 class DocumentAnalysisCallback(BaseModel):
     """Python → Spring: 문서 분석 결과 콜백."""
     message_type: str = Field(default="DOCUMENT_ANALYSIS_RESULT")
@@ -213,14 +230,12 @@ class DocumentAnalysisCallback(BaseModel):
     status: str = Field(..., description="COMPLETED 또는 FAILED")
     error: Optional[dict] = Field(None, description="에러 정보")
     sections: Optional[list[SectionOutput]] = Field(None, description="생성된 Section 목록 - AI 백엔드에만 저장, Callback에서 제외")
-    characters: list[dict] = Field(default_factory=list, description="추출된 캐릭터")
-    events: list[dict] = Field(default_factory=list, description="추출된 이벤트")
-    settings: list[dict] = Field(default_factory=list, description="추출된 배경/장소")
-    relationships: list[dict] = Field(default_factory=list, description="캐릭터 간 관계")  # 🆕
     # 🆕 Level 2 Analysis Results (Spring 요청) - plot removed
     # Removed: plot_integration
     consistency_report: Optional[dict] = Field(None, description="일관성 검증 결과")
     validation: Optional[dict] = Field(None, description="검증 결과 (품질 점수, 액션 등)")
+    document_summary: Optional[DocumentSummaryOutput] = Field(None, description="문서 요약 (Spring RDB 저장용)")
+    character_timelines: Optional[list[CharacterTimelineOutput]] = Field(None, description="캐릭터 타임라인 (Spring RDB 저장용)")
     processing_time_ms: Optional[int] = Field(None, description="처리 시간(ms)")
     trace_id: Optional[str] = Field(None, description="추적 ID")
 

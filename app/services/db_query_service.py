@@ -548,7 +548,7 @@ class DatabaseQueryService:
             WITH c, vector.similarity.cosine(c.embedding, $embedding) AS score
             WHERE score > 0.6
             RETURN c.name AS name, c.status AS status, c.role AS role,
-                   c.traits AS traits, score
+                   c.profileJson AS profile, score
             ORDER BY score DESC
             LIMIT $top_k
         """
@@ -592,7 +592,7 @@ class DatabaseQueryService:
             WITH e, vector.similarity.cosine(e.embedding, $embedding) AS score
             WHERE score > 0.6
             RETURN e.eventId AS event_id, e.description AS description,
-                   e.participants AS participants, e.chapter AS chapter, score
+                   e.participantsJson AS participants, e.chapter AS chapter, score
             ORDER BY score DESC
             LIMIT $top_k
         """
@@ -1127,6 +1127,7 @@ class DatabaseQueryService:
     async def save_extraction_result(
         self,
         project_id: str,
+        document_id: str,  # 🆕 Added for source tracking
         characters: list[dict],
         events: list[dict],
         settings_list: list[dict],
@@ -1268,6 +1269,141 @@ class DatabaseQueryService:
             evt.get("location_ref", "")
         )
 
+    async def get_previous_section_hashes(self, document_id: str) -> list[dict]:
+        """Get previously saved section hashes for incremental analysis.
+        
+        Returns:
+            List of dicts with sequence_order and content_hash
+        """
+        if not self._pg_pool:
+            return []
+            
+        try:
+            async with self._pg_pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT sequence_order, content_hash, nav_title
+                    FROM sections
+                    WHERE document_id = $1
+                    ORDER BY sequence_order
+                """, document_id)
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.warning(f"Failed to get section hashes: {e}")
+            return []
+
+    def detect_change_point(
+        self, 
+        previous_hashes: list[dict], 
+        new_sections: list[dict]
+    ) -> int:
+        """Detect first section that changed.
+        
+        Args:
+            previous_hashes: List of {sequence_order, content_hash} from DB
+            new_sections: List of section dicts with content
+            
+        Returns:
+            0-based index of first changed section, or -1 if no change
+        """
+        import hashlib
+        
+        # 🆕 If no previous hashes exist, this is first analysis - analyze everything
+        if not previous_hashes:
+            logger.info("[INCREMENTAL] No previous hashes found, full analysis required")
+            return 0
+        
+        for i, section in enumerate(new_sections):
+            content = section.get("content", "")
+            new_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]
+            
+            # If we've run out of previous sections, this is new content
+            if i >= len(previous_hashes):
+                logger.info(f"[INCREMENTAL] New section detected at index {i}")
+                return i
+            
+            # If hash doesn't match, this section changed
+            old_h = previous_hashes[i].get("content_hash")
+            if old_h != new_hash:
+                logger.info(f"[INCREMENTAL] Change detected at section {i+1}", old=old_h, new=new_hash)
+                return i
+            else:
+                logger.debug(f"[INCREMENTAL] Section {i+1} match", hash=new_hash)
+        
+        # All sections match - check if there are fewer sections now
+        if len(new_sections) < len(previous_hashes):
+            logger.info("[INCREMENTAL] Sections were removed, full re-analysis needed")
+            return 0
+        
+        # No changes
+        return -1
+
+    async def get_previous_summary(self, document_id: str) -> Optional[str]:
+        """Get previous document summary for context in incremental analysis."""
+        if not self._pg_pool:
+            return None
+            
+        try:
+            async with self._pg_pool.acquire() as conn:
+                row = await conn.fetchrow("""
+                    SELECT summary FROM document_summaries
+                    WHERE document_id = $1
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """, document_id)
+                return row['summary'] if row else None
+        except Exception as e:
+            logger.warning(f"Failed to get previous summary: {e}")
+            return None
+
+    async def get_intra_chapter_summaries(
+        self,
+        project_id: str,
+        parent_folder_id: str,
+        current_document_id: str,
+        limit: int = 5
+    ) -> list[str]:
+        """Get summaries of other documents in the same chapter (parent_folder).
+        
+        This provides context for the current document by fetching summaries
+        of preceding documents in the same chapter/folder.
+        
+        Args:
+            project_id: Project UUID
+            parent_folder_id: Parent folder ID (represents chapter)
+            current_document_id: Current document ID (to exclude)
+            limit: Maximum number of summaries to retrieve
+            
+        Returns:
+            List of summary strings from earlier documents in same chapter
+        """
+        if not self._pg_pool or not parent_folder_id:
+            return []
+            
+        try:
+            async with self._pg_pool.acquire() as conn:
+                # Join documents and document_summaries to get summaries
+                # of documents in the same parent folder, ordered by creation
+                rows = await conn.fetch("""
+                    SELECT ds.summary
+                    FROM document_summaries ds
+                    JOIN documents d ON ds.document_id = d.id
+                    WHERE d.parent_id = $1
+                      AND d.project_id = $2
+                      AND d.id != $3
+                      AND ds.level = 3
+                    ORDER BY d.created_at ASC
+                    LIMIT $4
+                """, parent_folder_id, project_id, current_document_id, limit)
+                
+                summaries = [row['summary'] for row in rows if row.get('summary')]
+                logger.info(f"[INTRA-CHAPTER] Retrieved {len(summaries)} summaries from same chapter")
+                return summaries
+                
+        except Exception as e:
+            # If documents table structure is different, log and return empty
+            logger.warning(f"[INTRA-CHAPTER] Failed to get intra-chapter summaries: {e}")
+            return []
+
     async def save_sections(self, document_id: str, sections: list[dict]) -> int:
         """Save semantic sections with embeddings to PostgreSQL.
         
@@ -1305,6 +1441,10 @@ class DatabaseQueryService:
                     embedding = section.get("embedding") # List[float]
                     nav_title = section.get("title", f"Section {idx+1}")
                     
+                    # 🆕 Generate content hash for incremental analysis
+                    import hashlib
+                    content_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]
+                    
                     # embedding must be passed as string format '[1.0, 2.0, ...]' for asyncpg if not using type codec
                     if embedding is not None:
                         if hasattr(embedding, "tolist"):
@@ -1322,14 +1462,15 @@ class DatabaseQueryService:
                         content, 
                         embedding, 
                         idx + 1, 
-                        nav_title
+                        nav_title,
+                        content_hash  # 🆕
                     ))
                 
                 if data_list:
                     # executemany works with list of tuples
                     await conn.executemany("""
-                        INSERT INTO sections (id, document_id, content, embedding, sequence_order, nav_title, created_at, updated_at)
-                        VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+                        INSERT INTO sections (id, document_id, content, embedding, sequence_order, nav_title, content_hash, created_at, updated_at)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
                     """, data_list)
                     saved_count = len(data_list)
                     
@@ -1377,6 +1518,99 @@ class DatabaseQueryService:
         
         print(f"[NEO4J] Cleaned up existing data for document: {document_id}")
 
+    async def _find_similar_character(
+        self, session, project_id: str, embedding: list[float], threshold: float = 0.92
+    ) -> Optional[str]:
+        """Find existing character with similar embedding using cosine similarity."""
+        if not embedding:
+            return None
+            
+        try:
+            result = await session.run("""
+                MATCH (c:Character {project_id: $pid})
+                WHERE c.embedding IS NOT NULL
+                WITH c, 
+                     reduce(dot = 0.0, i IN range(0, size(c.embedding)-1) | 
+                         dot + c.embedding[i] * $emb[i]) /
+                     (sqrt(reduce(a = 0.0, i IN range(0, size(c.embedding)-1) | a + c.embedding[i]^2)) *
+                      sqrt(reduce(b = 0.0, i IN range(0, size($emb)-1) | b + $emb[i]^2))) AS score
+                WHERE score > $threshold
+                RETURN c.name AS name, score
+                ORDER BY score DESC
+                LIMIT 1
+            """, pid=project_id, emb=embedding, threshold=threshold)
+            
+            record = await result.single()
+            if record:
+                logger.info(f"[DEDUP] Found similar character: {record['name']} (score={record['score']:.3f})")
+                return record['name']
+            return None
+        except Exception as e:
+            logger.warning(f"[DEDUP] Character similarity search failed: {e}")
+            return None
+
+    async def _find_similar_event(
+        self, session, project_id: str, embedding: list[float], threshold: float = 0.92
+    ) -> Optional[str]:
+        """Find existing event with similar embedding using cosine similarity."""
+        if not embedding:
+            return None
+            
+        try:
+            result = await session.run("""
+                MATCH (e:Event {project_id: $pid})
+                WHERE e.embedding IS NOT NULL
+                WITH e,
+                     reduce(dot = 0.0, i IN range(0, size(e.embedding)-1) | 
+                         dot + e.embedding[i] * $emb[i]) /
+                     (sqrt(reduce(a = 0.0, i IN range(0, size(e.embedding)-1) | a + e.embedding[i]^2)) *
+                      sqrt(reduce(b = 0.0, i IN range(0, size($emb)-1) | b + $emb[i]^2))) AS score
+                WHERE score > $threshold
+                RETURN e.narrativeSummary AS summary, score
+                ORDER BY score DESC
+                LIMIT 1
+            """, pid=project_id, emb=embedding, threshold=threshold)
+            
+            record = await result.single()
+            if record:
+                logger.info(f"[DEDUP] Found similar event (score={record['score']:.3f})")
+                return record['summary']
+            return None
+        except Exception as e:
+            logger.warning(f"[DEDUP] Event similarity search failed: {e}")
+            return None
+
+    async def _find_similar_setting(
+        self, session, project_id: str, embedding: list[float], threshold: float = 0.92
+    ) -> Optional[str]:
+        """Find existing setting with similar embedding using cosine similarity."""
+        if not embedding:
+            return None
+            
+        try:
+            result = await session.run("""
+                MATCH (s:Setting {project_id: $pid})
+                WHERE s.embedding IS NOT NULL
+                WITH s,
+                     reduce(dot = 0.0, i IN range(0, size(s.embedding)-1) | 
+                         dot + s.embedding[i] * $emb[i]) /
+                     (sqrt(reduce(a = 0.0, i IN range(0, size(s.embedding)-1) | a + s.embedding[i]^2)) *
+                      sqrt(reduce(b = 0.0, i IN range(0, size($emb)-1) | b + $emb[i]^2))) AS score
+                WHERE score > $threshold
+                RETURN s.name AS name, score
+                ORDER BY score DESC
+                LIMIT 1
+            """, pid=project_id, emb=embedding, threshold=threshold)
+            
+            record = await result.single()
+            if record:
+                logger.info(f"[DEDUP] Found similar setting: {record['name']} (score={record['score']:.3f})")
+                return record['name']
+            return None
+        except Exception as e:
+            logger.warning(f"[DEDUP] Setting similarity search failed: {e}")
+            return None
+
     async def _sync_to_neo4j(self, project_id, document_id, characters, events, settings_list, relationships):
         """Neo4j에 분석 결과 동기화.
         
@@ -1387,8 +1621,10 @@ class DatabaseQueryService:
         import uuid as uuid_mod
 
         async with self._neo4j_driver.session() as session:
-            # 🆕 Step 0: Cleanup existing document data before re-analysis
-            await self._cleanup_document_data(session, document_id)
+            # 🆕 Cleanup 제거: Merge-with-History가 자동으로 처리
+            # Cleanup하면 기존 데이터 삭제 후 재생성 → 불필요한 DB 부하
+            # 작가가 글을 추가할 때마다 기존 정보가 사라지는 문제 방지
+            # await self._cleanup_document_data(session, document_id)
             
             # ===== 1. Characters =====
             # Spring의 saveCharacters() + updateCharacterJsonFields() 로직 통합
@@ -1417,26 +1653,77 @@ class DatabaseQueryService:
                 
                 # Extract relations
                 relations = char.get("relations", {}) or {}
+                # Extract relations
+                relations = char.get("relations", {}) or {}
                 relations_json = json.dumps(relations, ensure_ascii=False) if relations else None
+
+                # Extract embedding
+                embedding = char.get("embedding") # List[float]
+                
+                # 🆕 Embedding-based deduplication: Find similar existing character
+                existing_name = await self._find_similar_character(session, project_id, embedding)
+                if existing_name and existing_name.lower() != char_name.lower():
+                    logger.info(f"[DEDUP] Merging '{char_name}' with existing '{existing_name}'")
+                    # Add current name as alias to existing character
+                    await session.run("""
+                        MATCH (c:Character {project_id: $pid, name: $existing_name})
+                        SET c.aliases = CASE
+                            WHEN c.aliases IS NULL THEN [$new_alias]
+                            WHEN NOT $new_alias IN c.aliases THEN c.aliases + $new_alias
+                            ELSE c.aliases
+                        END
+                    """, pid=project_id, existing_name=existing_name, new_alias=char_name)
+                    char_name = existing_name  # Use existing name for MERGE
                 
                 await session.run(
                     """
                     MERGE (c:Character {project_id: $pid, name: $name})
-                    SET c.role = $role,
-                        c.status = $status,
-                        c.age = $age,
-                        c.gender = $gender,
-                        c.profileJson = $profile_json,
-                        c.backstory = $backstory,
-                        c.currentMoodJson = $mood_json,
-                        c.appearanceJson = $appearance_json,
-                        c.relationsJson = $relations_json,
-                        c.aliases = $aliases,
+                    SET 
+                        // Merge-with-History: Keep first non-null value
+                        c.role = CASE 
+                            WHEN c.role IS NULL OR c.role = 'Unknown' THEN $role
+                            WHEN $role IS NULL OR $role = 'Unknown' THEN c.role
+                            WHEN size($role) > size(coalesce(c.role, '')) THEN $role
+                            ELSE c.role
+                        END,
+                        c.status = coalesce(c.status, $status),
+                        c.age = coalesce(c.age, $age),
+                        c.gender = coalesce(c.gender, $gender),
+                        
+                        // Keep longer/more detailed version
+                        c.profileJson = CASE
+                            WHEN $profile_json IS NULL THEN c.profileJson
+                            WHEN c.profileJson IS NULL THEN $profile_json
+                            WHEN size($profile_json) > size(c.profileJson) THEN $profile_json
+                            ELSE c.profileJson
+                        END,
+                        c.backstory = CASE
+                            WHEN $backstory IS NULL THEN c.backstory
+                            WHEN c.backstory IS NULL THEN $backstory
+                            WHEN size($backstory) > size(c.backstory) THEN $backstory
+                            ELSE c.backstory
+                        END,
+                        
+                        c.currentMoodJson = $mood_json,  // Always update mood (temporal)
+                        c.appearanceJson = coalesce(c.appearanceJson, $appearance_json),
+                        c.relationsJson = coalesce(c.relationsJson, $relations_json),
+                        
+                        // Merge aliases (always set property, even if empty)
+                        c.aliases = CASE
+                            WHEN $aliases IS NULL OR size($aliases) = 0 THEN coalesce(c.aliases, [])
+                            WHEN c.aliases IS NULL THEN $aliases
+                            ELSE c.aliases + [a IN $aliases WHERE NOT a IN c.aliases]
+                        END,
+                        
+                        // Source documents tracking
                         c.source_documents = CASE 
                             WHEN c.source_documents IS NULL THEN [$doc_id]
                             WHEN NOT $doc_id IN c.source_documents THEN c.source_documents + $doc_id
                             ELSE c.source_documents
-                        END
+                        END,
+
+                        // Save Embedding (Vector)
+                        c.embedding = $embedding
                     """,
                     pid=project_id,
                     name=char_name,
@@ -1450,7 +1737,8 @@ class DatabaseQueryService:
                     mood_json=current_mood_json,
                     appearance_json=appearance_json,
                     relations_json=relations_json,
-                    aliases=char.get("aliases") or []
+                    aliases=char.get("aliases") or [],
+                    embedding=embedding
                 )
             
             # ===== 2. Settings (Locations) =====
@@ -1461,34 +1749,84 @@ class DatabaseQueryService:
                 if not setting_name:
                     continue
                 
-                # Generate or use existing setting_id
-                raw_setting_id = setting.get("setting_id") or setting.get("id")
-                try:
-                    setting_id = str(uuid_mod.UUID(raw_setting_id)) if raw_setting_id else str(uuid_mod.uuid4())
-                except (ValueError, AttributeError):
-                    setting_id = raw_setting_id if raw_setting_id else str(uuid_mod.uuid4())
+                # 🆕 Generate DETERMINISTIC setting_id from project_id + name
+                # This ensures same setting always gets same ID, avoiding UNIQUE constraint violations
+                setting_id = str(uuid_mod.uuid5(uuid_mod.UUID(project_id), f"setting_{setting_name}"))
                 
+                # 🆕 Generate embedding for setting if not present
+                setting_embedding = setting.get("embedding")
+                if not setting_embedding:
+                    # Generate embedding from name + description
+                    setting_text = f"{setting_name}: {setting.get('description', '')}"
+                    try:
+                        setting_embedding = await self.get_embedding(setting_text)
+                    except Exception:
+                        setting_embedding = None
                 
+                # 🆕 Embedding-based deduplication: Find similar existing setting
+                existing_name = await self._find_similar_setting(session, project_id, setting_embedding)
+                if existing_name and existing_name.lower() != setting_name.lower():
+                    logger.info(f"[DEDUP] Merging setting '{setting_name}' with existing '{existing_name}'")
+                    # Add current name as alias
+                    await session.run("""
+                        MATCH (s:Setting {project_id: $pid, name: $existing_name})
+                        SET s.aliases = CASE
+                            WHEN s.aliases IS NULL THEN [$new_alias]
+                            WHEN NOT $new_alias IN s.aliases THEN s.aliases + $new_alias
+                            ELSE s.aliases
+                        END
+                    """, pid=project_id, existing_name=existing_name, new_alias=setting_name)
+                    setting_name = existing_name  # Use existing name for MERGE
+
                 await session.run(
                     """
-                    MERGE (s:Setting {settingId: $setting_id})
-                    SET s.project_id = $pid,
-                        s.name = $name,
-                        s.locationType = $loc_type,
-                        s.description = $desc,
-                        s.visualBackground = $visual_bg,
-                        s.atmosphere = $atmosphere,
-                        s.timeOfDay = $time_of_day,
-                        s.lighting = $lighting,
-                        s.weather = $weather,
-                        s.notableFeatures = $notable_features,
-                        s.significance = $significance,
-                        s.isPrimary = $is_primary,
+                    MERGE (s:Setting {project_id: $pid, name: $name})
+                    SET 
+                        s.settingId = coalesce(s.settingId, $setting_id),
+                        
+                        // Merge-with-History: Keep first non-null value
+                        s.locationType = coalesce(s.locationType, $loc_type),
+                        
+                        // Keep longer description
+                        s.description = CASE
+                            WHEN $desc IS NULL THEN s.description
+                            WHEN s.description IS NULL THEN $desc
+                            WHEN size($desc) > size(s.description) THEN $desc
+                            ELSE s.description
+                        END,
+                        s.visualBackground = CASE
+                            WHEN $visual_bg IS NULL THEN s.visualBackground
+                            WHEN s.visualBackground IS NULL THEN $visual_bg
+                            WHEN size($visual_bg) > size(s.visualBackground) THEN $visual_bg
+                            ELSE s.visualBackground
+                        END,
+                        
+                        s.atmosphere = coalesce(s.atmosphere, $atmosphere),
+                        s.timeOfDay = coalesce(s.timeOfDay, $time_of_day),
+                        s.lighting = coalesce(s.lighting, $lighting),
+                        s.weather = coalesce(s.weather, $weather),
+                        
+                        // Merge notable features (accumulate)
+                        s.notableFeatures = CASE
+                            WHEN s.notableFeatures IS NULL THEN $notable_features
+                            WHEN $notable_features IS NULL THEN s.notableFeatures
+                            ELSE [f IN (s.notableFeatures + $notable_features) WHERE f IS NOT NULL]
+                        END,
+                        
+                        s.significance = coalesce(s.significance, $significance),
+                        s.isPrimary = coalesce(s.isPrimary, $is_primary),
+                        s.parentLocation = $parent_location,
+                        s.artStyle = $art_style,
+                        
+                        // Source documents tracking
                         s.source_documents = CASE 
                             WHEN s.source_documents IS NULL THEN [$doc_id]
                             WHEN NOT $doc_id IN s.source_documents THEN s.source_documents + $doc_id
                             ELSE s.source_documents
-                        END
+                        END,
+                        
+                        // Save Embedding (Vector)
+                        s.embedding = $embedding
                     """,
                     pid=project_id,
                     name=setting_name,
@@ -1503,7 +1841,10 @@ class DatabaseQueryService:
                     weather=setting.get("weather"),
                     notable_features=setting.get("notable_features", []),
                     significance=setting.get("significance", ""),
-                    is_primary=setting.get("is_primary", False)
+                    is_primary=setting.get("is_primary", False),
+                    parent_location=setting.get("parent_location"),
+                    art_style=setting.get("art_style"),
+                    embedding=setting_embedding
                 )
             
             # ===== 3. Events =====
@@ -1519,30 +1860,55 @@ class DatabaseQueryService:
                 except (ValueError, AttributeError):
                     evt_uuid = evt_id_with_doc
 
+                # 🆕 Embedding-based deduplication: Find similar existing event
+                evt_embedding = evt.get("embedding")
+                narrative_summary = evt.get("narrative_summary", "")
+                
+                existing_summary = await self._find_similar_event(session, project_id, evt_embedding)
+                if existing_summary and existing_summary != narrative_summary:
+                    logger.info(f"[DEDUP] Found similar event, using existing summary")
+                    narrative_summary = existing_summary  # Use existing for MERGE
+
                 await session.run(
                     """
-                    MERGE (e:Event {eventId: $id_with_doc})
-                    SET e.project_id = $pid,
+                    MERGE (e:Event {project_id: $pid, narrativeSummary: $narrative_summary})
+                    SET e.eventId = coalesce(e.eventId, $id_with_doc),
                         e.eventType = $event_type,
-                        e.narrativeSummary = $narrative_summary,
                         e.description = $desc,
                         e.chapter = $chapter,
                         e.sequenceOrder = $seq_order,
                         e.importance = $importance,
                         e.timestamp = $timestamp,
-                        e.locationRef = $location_ref
+                        e.locationRef = $location_ref,
+                        e.prevEventId = $prev_event_id,
+                        e.documentId = CASE 
+                            WHEN e.documentId IS NULL THEN $doc_id
+                            WHEN NOT $doc_id IN coalesce(e.source_documents, []) THEN e.documentId
+                            ELSE e.documentId
+                        END,
+                        e.source_documents = CASE 
+                            WHEN e.source_documents IS NULL THEN [$doc_id]
+                            WHEN NOT $doc_id IN e.source_documents THEN e.source_documents + $doc_id
+                            ELSE e.source_documents
+                        END,
+                        
+                        // Save Embedding (Vector)
+                        e.embedding = $embedding
                     """,
                     id_with_doc=evt_id_with_doc,
                     id=evt_uuid,
                     pid=project_id,
+                    doc_id=document_id,
                     event_type=evt.get("event_type", "Unknown"),
-                    narrative_summary=evt.get("narrative_summary", ""),
+                    narrative_summary=narrative_summary,  # Use dedup-checked variable
                     desc=evt.get("description", "") or evt.get("summary", ""),
                     chapter=evt.get("chapter", 0),
                     seq_order=evt.get("sequence_order", 0),
                     importance=evt.get("importance", 5),
                     timestamp=evt.get("timestamp"),
-                    location_ref=evt.get("location_ref", "")
+                    location_ref=evt.get("location_ref", ""),
+                    prev_event_id=evt.get("prev_event_id"),
+                    embedding=evt.get("embedding")
                 )
 
                 # Create PARTICIPATES_IN relationships (Character -> Event)
@@ -1556,12 +1922,12 @@ class DatabaseQueryService:
                     await session.run(
                         """
                         MATCH (c:Character {project_id: $pid, name: $char_name})
-                        MATCH (e:Event {eventId: $evt_id})
+                        MATCH (e:Event {project_id: $pid, narrativeSummary: $narrative_summary})
                         MERGE (c)-[r:PARTICIPATES_IN]->(e)
                         """,
                         pid=project_id,
                         char_name=participant_name,
-                        evt_id=evt_uuid
+                        narrative_summary=evt.get("narrative_summary", "")
                     )
 
                 # Create HAPPENED_AT relationship (Event -> Setting)
@@ -1570,12 +1936,12 @@ class DatabaseQueryService:
                 if location_ref:
                     await session.run(
                         """
-                        MATCH (e:Event {eventId: $evt_id})
+                        MATCH (e:Event {project_id: $pid, narrativeSummary: $narrative_summary})
                         MATCH (s:Setting {project_id: $pid, name: $loc_name})
                         MERGE (e)-[r:HAPPENED_AT]->(s)
                         """,
-                        evt_id=evt_uuid,
                         pid=project_id,
+                        narrative_summary=evt.get("narrative_summary", ""),
                         loc_name=location_ref
                     )
 
@@ -1601,7 +1967,12 @@ class DatabaseQueryService:
                     MERGE (a)-[r:{safe_rel_type}]->(b)
                     SET r.description = $desc, 
                         r.strength = $strength,
-                        r.bidirectional = $bidirectional
+                        r.bidirectional = $bidirectional,
+                        r.emotionalBond = $emotional_bond,
+                        r.functionalTrust = $functional_trust,
+                        r.valueAlignment = $value_alignment,
+                        r.interdependence = $interdependence,
+                        r.latentTension = $latent_tension
                 """
 
                 await session.run(
@@ -1611,7 +1982,12 @@ class DatabaseQueryService:
                     target=target_name.strip(),
                     desc=rel.get("description", ""),
                     strength=rel.get("strength", 5),
-                    bidirectional=rel.get("bidirectional", False)
+                    bidirectional=rel.get("bidirectional", False),
+                    emotional_bond=rel.get("emotional_bond", 5),
+                    functional_trust=rel.get("functional_trust", 5),
+                    value_alignment=rel.get("value_alignment", 5),
+                    interdependence=rel.get("interdependence", 5),
+                    latent_tension=rel.get("latent_tension", 1)
                 )
 
                 # If bidirectional, create reverse relationship
@@ -1622,7 +1998,12 @@ class DatabaseQueryService:
                         MERGE (b)-[r:{safe_rel_type}]->(a)
                         SET r.description = $desc, 
                             r.strength = $strength,
-                            r.bidirectional = $bidirectional
+                            r.bidirectional = $bidirectional,
+                            r.emotionalBond = $emotional_bond,
+                            r.functionalTrust = $functional_trust,
+                            r.valueAlignment = $value_alignment,
+                            r.interdependence = $interdependence,
+                            r.latentTension = $latent_tension
                     """
                     await session.run(
                         reverse_query,
@@ -1631,7 +2012,12 @@ class DatabaseQueryService:
                         target=target_name.strip(),
                         desc=rel.get("description", ""),
                         strength=rel.get("strength", 5),
-                        bidirectional=True
+                        bidirectional=True,
+                        emotional_bond=rel.get("emotional_bond", 5),
+                        functional_trust=rel.get("functional_trust", 5),
+                        value_alignment=rel.get("value_alignment", 5),
+                        interdependence=rel.get("interdependence", 5),
+                        latent_tension=rel.get("latent_tension", 1)
                     )
 
         logger.info(

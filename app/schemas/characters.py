@@ -66,7 +66,6 @@ class PersonalityTraits(BaseModel):
 
 class CharacterProfile(BaseModel):
     """Character profile information."""
-    character_id: Optional[str] = Field(None, description="Character ID")
     name: Optional[str] = Field(None, description="Character name")
     age: Optional[int] = Field(None, ge=0, description="Character age")
     gender: Optional[str] = Field(None, description="Gender")

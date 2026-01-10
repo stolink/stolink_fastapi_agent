@@ -32,7 +32,14 @@ class CharacterTimeline:
         document_id: str = None,
         state_snapshot: dict = None
     ) -> Optional[str]:
-        """캐릭터 상태 스냅샷 저장.
+        """캐릭터 상태 스냅샷 저장 (DEPRECATED - No longer saves to PostgreSQL).
+        
+        ⚠️ MIGRATION NOTE:
+        This method no longer saves character timelines to AI Backend PostgreSQL.
+        Timeline data should be sent to Spring Backend via callback payload instead.
+        
+        This method is kept for backward compatibility but only returns
+        a generated UUID without performing any database operations.
         
         Args:
             project_id: Project UUID
@@ -48,62 +55,19 @@ class CharacterTimeline:
                 }
         
         Returns:
-            생성된 timeline ID 또는 None
+            Generated UUID (no DB write performed)
         """
-        if not self._db_service._pg_pool:
-            logger.warning("PostgreSQL not available for timeline tracking")
-            return None
-        
         import uuid
         
-        state_snapshot = state_snapshot or {}
+        logger.info(
+            "track_character_state called (DEPRECATED - no DB write)",
+            character=character_name,
+            chapter=chapter,
+            project_id=project_id
+        )
         
-        query = """
-            INSERT INTO character_timeline 
-            (id, project_id, character_name, chapter, document_id,
-             health_status, emotional_state, current_location, state_changes, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            ON CONFLICT (project_id, character_name, chapter) DO UPDATE SET
-                health_status = EXCLUDED.health_status,
-                emotional_state = EXCLUDED.emotional_state,
-                current_location = EXCLUDED.current_location,
-                state_changes = EXCLUDED.state_changes,
-                created_at = EXCLUDED.created_at
-            RETURNING id
-        """
-        
-        try:
-            timeline_id = str(uuid.uuid4())
-            async with self._db_service._pg_pool.acquire() as conn:
-                result = await conn.fetchval(
-                    query,
-                    timeline_id,
-                    project_id,
-                    character_name,
-                    chapter,
-                    document_id,
-                    state_snapshot.get("health", "unknown"),
-                    state_snapshot.get("mood", "neutral"),
-                    state_snapshot.get("location", ""),
-                    state_snapshot.get("state_changes", {}),
-                    datetime.utcnow()
-                )
-                
-                logger.info(
-                    "Character timeline tracked",
-                    character=character_name,
-                    chapter=chapter,
-                    timeline_id=result
-                )
-                return result
-                
-        except Exception as e:
-            # 테이블이 없으면 무시
-            if "character_timeline" in str(e) and "does not exist" in str(e):
-                logger.warning("character_timeline table not yet created")
-                return None
-            logger.error("Failed to track character timeline", error=str(e))
-            return None
+        # Return a UUID for compatibility, but don't save to DB
+        return str(uuid.uuid4())
     
     async def get_character_arc(
         self,

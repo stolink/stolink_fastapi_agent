@@ -35,7 +35,7 @@ class ChapterSummaryService:
         chapter_content: str,
         extracted_entities: dict,
         max_sentences: int = 5
-    ) -> str:
+    ) -> dict:
         """챕터 분석 완료 후 요약 생성.
         
         Args:
@@ -44,7 +44,12 @@ class ChapterSummaryService:
             max_sentences: 최대 문장 수
             
         Returns:
-            생성된 요약 문자열
+            dict: {
+                "summary": str,
+                "key_characters": list[str],
+                "key_events": list[str],
+                "level": int
+            }
         """
         # 캐릭터 이름 추출
         char_names = []
@@ -60,23 +65,31 @@ class ChapterSummaryService:
             if summary:
                 event_summaries.append(summary[:100])
         
-        # 장소 이름 추출
+        # 장소 이름 추출 (사용하지 않더라도 추출 로직 유지)
         setting_names = []
         for s in extracted_entities.get("settings", []):
             name = s.get("name")
             if name:
                 setting_names.append(name)
         
+        summary_text = ""
         # LLM 사용 시
         if self._llm_service:
-            return await self._generate_with_llm(
+            summary_text = await self._generate_with_llm(
                 chapter_content, char_names, event_summaries, setting_names, max_sentences
             )
-        
-        # 폴백: 간단한 템플릿 기반 요약
-        return self._generate_fallback_summary(
-            char_names, event_summaries, setting_names
-        )
+        else:
+            # 폴백: 간단한 템플릿 기반 요약
+            summary_text = self._generate_fallback_summary(
+                char_names, event_summaries, setting_names
+            )
+            
+        return {
+            "summary": summary_text,
+            "key_characters": char_names[:10],  # 상위 10개로 제한
+            "key_events": event_summaries[:5],  # 상위 5개로 제한
+            "level": SummaryLevel.CHAPTER
+        }
     
     async def _generate_with_llm(
         self,
@@ -134,7 +147,14 @@ class ChapterSummaryService:
         key_characters: list[str] = None,
         key_events: list[str] = None
     ) -> Optional[str]:
-        """요약 저장.
+        """요약 저장 (DEPRECATED - No longer saves to PostgreSQL).
+        
+        ⚠️ MIGRATION NOTE:
+        This method no longer saves summaries to AI Backend PostgreSQL.
+        Summaries are now sent to Spring Backend via callback payload.
+        
+        This method is kept for backward compatibility but only returns
+        a generated UUID without performing any database operations.
         
         Args:
             document_id: Document UUID
@@ -145,54 +165,19 @@ class ChapterSummaryService:
             key_events: 핵심 이벤트 ID들
             
         Returns:
-            생성된 요약 ID 또는 None
+            Generated UUID (no DB write performed)
         """
-        if not self._db_service._pg_pool:
-            logger.warning("PostgreSQL not available for summary save")
-            return None
-        
         import uuid
         
-        query = """
-            INSERT INTO document_summaries 
-            (id, document_id, project_id, level, summary, key_characters, key_events, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT (document_id, level) DO UPDATE SET
-                summary = EXCLUDED.summary,
-                key_characters = EXCLUDED.key_characters,
-                key_events = EXCLUDED.key_events,
-                created_at = EXCLUDED.created_at
-            RETURNING id
-        """
+        logger.info(
+            "save_summary called (DEPRECATED - no DB write)",
+            document_id=document_id,
+            level=level,
+            summary_length=len(summary)
+        )
         
-        try:
-            summary_id = str(uuid.uuid4())
-            async with self._db_service._pg_pool.acquire() as conn:
-                result = await conn.fetchval(
-                    query,
-                    summary_id,
-                    document_id,
-                    project_id,
-                    level,
-                    summary,
-                    key_characters or [],
-                    key_events or [],
-                    datetime.utcnow()
-                )
-                logger.info(
-                    "Summary saved",
-                    document_id=document_id,
-                    level=level,
-                    summary_id=result
-                )
-                return result
-        except Exception as e:
-            # 테이블이 없으면 무시 (마이그레이션 전)
-            if "document_summaries" in str(e) and "does not exist" in str(e):
-                logger.warning("document_summaries table not yet created")
-                return None
-            logger.error("Failed to save summary", error=str(e))
-            return None
+        # Return a UUID for compatibility, but don't save to DB
+        return str(uuid.uuid4())
     
     async def get_summaries_for_project(
         self,
