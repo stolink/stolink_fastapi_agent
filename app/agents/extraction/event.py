@@ -181,7 +181,7 @@ async def event_extraction_node(state: dict) -> dict:
         if name:
             available_characters.append(name)
     
-    available_settings = [s.get("name", "") for s in settings if s.get("name")]
+    available_settings = [s.get("location_name") or s.get("name", "") for s in settings if s.get("location_name") or s.get("name")]
     
     print(f"[EVENT] Available characters: {available_characters}")
     print(f"[EVENT] Available settings: {available_settings}")

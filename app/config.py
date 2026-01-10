@@ -30,9 +30,7 @@ class Settings(BaseSettings):
     # Note: rabbitmq_analysis_queue removed (legacy). Use document_analysis_queue instead.
     
     # Redis (Caching)
-    redis_host: str = "localhost"
-    redis_port: int = 6379
-    redis_db: int = 0
+    redis_url: str = "redis://localhost:6379/0"
     
     # Document Analysis Architecture (대용량 분석)
     document_analysis_queue: str = "document_analysis_queue"

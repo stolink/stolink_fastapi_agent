@@ -394,7 +394,7 @@ class DatabaseQueryService:
             return []
 
         query = """
-            MATCH (source:Character {project_id: $project_id})-[r]->(target:Character)
+            MATCH (source:Character {projectId: $project_id})-[r]->(target:Character)
             RETURN
                 source.name AS source_name,
                 type(r) AS relation_type,
@@ -457,7 +457,7 @@ class DatabaseQueryService:
             async with self._neo4j_driver.session() as session:
                 # 캐릭터 수
                 result = await session.run(
-                    "MATCH (c:Character {project_id: $pid}) RETURN count(c) as cnt",
+                    "MATCH (c:Character {projectId: $pid}) RETURN count(c) as cnt",
                     pid=project_id
                 )
                 record = await result.single()
@@ -465,7 +465,7 @@ class DatabaseQueryService:
                 
                 # 이벤트 수
                 result = await session.run(
-                    "MATCH (e:Event {project_id: $pid}) RETURN count(e) as cnt",
+                    "MATCH (e:Event {projectId: $pid}) RETURN count(e) as cnt",
                     pid=project_id
                 )
                 record = await result.single()
@@ -473,7 +473,7 @@ class DatabaseQueryService:
                 
                 # 장소 수
                 result = await session.run(
-                    "MATCH (s:Setting {project_id: $pid}) RETURN count(s) as cnt",
+                    "MATCH (s:Setting {projectId: $pid}) RETURN count(s) as cnt",
                     pid=project_id
                 )
                 record = await result.single()
@@ -587,7 +587,7 @@ class DatabaseQueryService:
             return []
 
         query = """
-            MATCH (e:Event {project_id: $project_id})
+            MATCH (e:Event {projectId: $project_id})
             WHERE e.embedding IS NOT NULL
             WITH e, vector.similarity.cosine(e.embedding, $embedding) AS score
             WHERE score > 0.6
@@ -1460,7 +1460,7 @@ class DatabaseQueryService:
                         sec_id, 
                         document_id, 
                         content, 
-                        embedding, 
+                        embedding_str,  # pgvector accepts JSON string
                         idx + 1, 
                         nav_title,
                         content_hash  # 🆕
@@ -1962,8 +1962,8 @@ class DatabaseQueryService:
 
                 # Create relationship with properties
                 query = f"""
-                    MATCH (a:Character {{project_id: $pid, name: $source}})
-                    MATCH (b:Character {{project_id: $pid, name: $target}})
+                    MATCH (a:Character {{projectId: $pid, name: $source}})
+                    MATCH (b:Character {{projectId: $pid, name: $target}})
                     MERGE (a)-[r:{safe_rel_type}]->(b)
                     SET r.description = $desc, 
                         r.strength = $strength,
@@ -1993,8 +1993,8 @@ class DatabaseQueryService:
                 # If bidirectional, create reverse relationship
                 if rel.get("bidirectional", False):
                     reverse_query = f"""
-                        MATCH (a:Character {{project_id: $pid, name: $source}})
-                        MATCH (b:Character {{project_id: $pid, name: $target}})
+                        MATCH (a:Character {{projectId: $pid, name: $source}})
+                        MATCH (b:Character {{projectId: $pid, name: $target}})
                         MERGE (b)-[r:{safe_rel_type}]->(a)
                         SET r.description = $desc, 
                             r.strength = $strength,

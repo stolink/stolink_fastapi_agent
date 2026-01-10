@@ -3,9 +3,7 @@ services:
   # AI Backend - FastAPI + LangGraph
   # ============================================
   ai-backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${IMAGE_NAME}
     container_name: stolink-fastapi-agent
     environment:
       # AWS Bedrock
@@ -41,7 +39,13 @@ services:
     ports:
       - "8000:8000"
     healthcheck:
-      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3

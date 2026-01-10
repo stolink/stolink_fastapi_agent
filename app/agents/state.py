@@ -24,7 +24,8 @@ class AnalysisState(TypedDict, total=False):
     job_id: str
     callback_url: str
     requires_deep_analysis: bool
-    
+    response_language: str  # "ko" or "en" - detected from input text
+
     # Tracing
     trace_id: str
     
