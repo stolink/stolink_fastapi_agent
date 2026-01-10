@@ -1448,13 +1448,13 @@ class DatabaseQueryService:
                     # embedding must be passed as string format '[1.0, 2.0, ...]' for asyncpg if not using type codec
                     if embedding is not None:
                         if hasattr(embedding, "tolist"):
-                            embedding = str(embedding.tolist())
+                            embedding_str = str(embedding.tolist())
                         elif isinstance(embedding, list):
-                            embedding = str(embedding)
+                            embedding_str = str(embedding)
                         else:
-                            embedding = str(embedding)
+                            embedding_str = str(embedding)
                     else:
-                        embedding = None
+                        embedding_str = None
                         
                     data_list.append((
                         sec_id, 
