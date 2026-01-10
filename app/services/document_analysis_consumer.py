@@ -24,6 +24,8 @@ from app.schemas.messages import (
     GlobalMergeMessage,
     GlobalMergeCallback,
     CharacterMergeResult,
+    DocumentSummaryOutput,
+    CharacterTimelineOutput,
 )
 from app.schemas.event_messages import (
     AnalysisCompletedEvent,
@@ -57,6 +59,8 @@ class ProcessingResult:
     plot: Optional[dict] = None
     consistency_report: Optional[dict] = None
     validation: Optional[dict] = None  # 검증 결과 추가
+    document_summary: Optional[DocumentSummaryOutput] = None  # 🆕 문서 요약 (구조화됨)
+    character_timelines: Optional[list[CharacterTimelineOutput]] = None  # 🆕 캐릭터 타임라인 (구조화됨)
     error: Optional[dict] = None
     processing_time_ms: int = 0
 
@@ -106,9 +110,11 @@ class DocumentAnalysisConsumer:
         await self._channel.set_qos(prefetch_count=settings.consumer_prefetch_count)
 
         # 큐 선언 (없으면 생성)
+        # Spring Backend와 동일한 priority 설정 필요
         self._queue = await self._channel.declare_queue(
             settings.document_analysis_queue,
-            durable=True
+            durable=True,
+            arguments={'x-max-priority': 10}
         )
 
         # 메시지 수신 시작
@@ -264,6 +270,7 @@ class DocumentAnalysisConsumer:
                 db_service=db_service,
                 document_id=document_id,
                 project_id=msg.project_id,
+                parent_folder_id=msg.parent_folder_id,  # 🆕 인트라-챕터 컨텍스트용
                 context=msg.context,
 
                 trace_id=trace_id,
@@ -273,30 +280,19 @@ class DocumentAnalysisConsumer:
 
             processing_time_ms = int((time.time() - start_time) * 1000)
 
-            # 5. Callback 전송
+
+            # 5. Callback 전송 - sections 필드 완전히 제거
             callback = DocumentAnalysisCallback(
                 document_id=document_id,
                 parent_folder_id=msg.parent_folder_id,
                 status="COMPLETED" if result.success else "FAILED",
                 error=result.error,
-                sections=[
-                    SectionOutput(
-                        sequence_order=i+1,
-                        nav_title=s.get("title", f"Section {i+1}"),
-                        content=s.get("content", ""),
-                        embedding=s.get("embedding"),
-                        related_characters=s.get("related_characters", []),
-                        related_events=s.get("related_events", [])
-                    ) for i, s in enumerate(result.sections)
-                ],
-                characters=result.characters,
-                events=result.events,
-                settings=result.settings,
-                relationships=result.relationships,  # 🆕 관계 데이터 추가
-                # 🆕 Level 2 Analysis Results
-                plot_integration=result.plot,
+                # sections 파라미터 자체를 제거 - JSON에 나타나지 않음
+                # 🆕 Level 2 Analysis Results (plot removed)
                 consistency_report=result.consistency_report,
                 validation=result.validation,  # 검증 결과 추가
+                document_summary=result.document_summary,  # 🆕 Spring Backend로 요약 전송
+                character_timelines=result.character_timelines or [],  # 🆕 타임라인 전송
                 processing_time_ms=processing_time_ms,
                 trace_id=trace_id
             )
@@ -453,9 +449,10 @@ class DocumentAnalysisConsumer:
         db_service,
         document_id: str,
         project_id: str,
-        context: Optional[dict],
+        parent_folder_id: str = None,  # 🆕 인트라-챕터 컨텍스트용
+        context: Optional[dict] = None,
 
-        trace_id: str,
+        trace_id: str = "",
         requires_deep_analysis: bool = False,
         analysis_type: str = "full_manuscript"  # 🆕 분석 유형 파라미터
     ) -> ProcessingResult:
@@ -496,23 +493,69 @@ class DocumentAnalysisConsumer:
 
         try:
             # ===== Context Maintenance System Integration =====
-            # 🆕 Phase 1-4: 분석 전 계층적 컨텍스트 조회
-            historical_context_text = ""
+            # 🆕 Phase 1-4: RAG 기반 계층적 컨텍스트 조회
+            # Vector Search + Keyword Matching을 통해 관련 캐릭터/사건 조회
             try:
                 context_manager = await get_hierarchical_context_manager()
-                historical_context_text = await context_manager.get_context_for_analysis(
+                
+                # Retrieve structured context data (dict)
+                context_data = await context_manager.retrieve_analysis_context_data(
                     project_id=project_id,
-                    current_text=content[:1000] if content else "",  # 첫 1000자로 캐릭터 추출
-                    current_document_id=document_id
+                    current_text=content[:2000] if content else "",  # RAG용 쿼리 (앞부분)
+                    current_document_id=document_id,
+                    parent_folder_id=parent_folder_id  # 🆕 인트라-챕터 컨텍스트용
                 )
+                
+                # 1. Update current_context with retrieved Characters
+                # EntityCentricContextBuilder returns detailed histories, we need to adapt to existing_characters format
+                # Format: {"name": str, "role": str}
+                entity_context = context_data.get("entity_context") or {}
+                char_histories = entity_context.get("character_histories", [])
+                
+                retrieved_chars_count = 0
+                for ch in char_histories:
+                    c_name = ch.get("name")
+                    if not c_name: continue
+                    
+                    # Deduplicate against existing list
+                    exists = any(ex.get("name") == c_name for ex in current_context["existing_characters"])
+                    if not exists:
+                        current_context["existing_characters"].append({
+                            "name": c_name,
+                            "role": ch.get("role", "Unknown"),
+                            "status": ch.get("status", "Unknown")
+                            # Can add more fields if run_analysis_pipeline supports them
+                        })
+                        retrieved_chars_count += 1
+                
+                # 2. Update current_context with retrieved Events (RAG)
+                # Format: {"id": str, "summary": str}
+                similar_events = context_data.get("similar_events", [])
+                retrieved_events_count = 0
+                for evt in similar_events:
+                    evt_id = evt.get("event_id")
+                    if not evt_id: continue
+                    
+                    exists = any(ex.get("id") == evt_id for ex in current_context["existing_events"])
+                    if not exists:
+                        current_context["existing_events"].append({
+                            "id": evt_id,
+                            "summary": evt.get("description", ""),
+                            "chapter": evt.get("chapter")
+                        })
+                        retrieved_events_count += 1
+
                 logger.info(
-                    "Historical context retrieved",
-                    context_length=len(historical_context_text),
-                    project_id=project_id
+                    "RAG context retrieved & merged",
+                    project_id=project_id,
+                    new_chars=retrieved_chars_count,
+                    new_events=retrieved_events_count,
+                    total_chars=len(current_context["existing_characters"]),
+                    total_events=len(current_context["existing_events"])
                 )
+                
             except Exception as ctx_err:
-                logger.warning("Failed to retrieve historical context, continuing without it", error=str(ctx_err))
-                historical_context_text = ""
+                logger.warning("Failed to retrieve/merge RAG context", error=str(ctx_err))
             # =================================================
             
             # 1. Prepare Batches (Streaming Units)
@@ -527,19 +570,80 @@ class DocumentAnalysisConsumer:
             else:
                 batches = [{"content": content, "nav_title": "Full Text"}]
 
-            logger.info(f"Starting Streaming Analysis: {len(batches)} batches")
+            # 🆕 ===== INCREMENTAL ANALYSIS: Detect change point =====
+            start_batch_index = 0
+            previous_summary_context = ""
+            
+            try:
+                # Get previous section hashes for this document
+                previous_hashes = await db_service.get_previous_section_hashes(document_id)
+                
+                if previous_hashes and sections:
+                    # Detect first changed section
+                    change_point = db_service.detect_change_point(previous_hashes, sections)
+                    
+                    if change_point == -1:
+                        # No content changes detected
+                        # Check if previous summary exists (confirmation of successful previous analysis)
+                        previous_summary_context = await db_service.get_previous_summary(document_id)
+                        
+                        if previous_summary_context:
+                            logger.info("[INCREMENTAL] No changes detected and previous summary exists. Using cached results.")
+                            return ProcessingResult(
+                                success=True,
+                                sections=sections,
+                                characters=[],
+                                events=[],
+                                settings=[],
+                                processing_time_ms=int((time.time() - start_time) * 1000)
+                            )
+                        else:
+                            # Content matches but no summary -> Previous analysis likely failed
+                            logger.info("[INCREMENTAL] No changes detected BUT sections have no summary. Forcing re-analysis.")
+                            start_batch_index = 0
+                            
+                    elif change_point > 0:
+                        # Skip unchanged sections
+                        start_batch_index = change_point
+                        logger.info(f"[INCREMENTAL] Skipping {change_point} unchanged sections, starting from section {change_point + 1}")
+                        
+                        # Get previous summary for context
+                        previous_summary_context = await db_service.get_previous_summary(document_id) or ""
+                        if previous_summary_context:
+                            logger.info("[INCREMENTAL] Using previous summary as context for analysis")
+                    else:
+                        logger.info("[INCREMENTAL] First section changed, full re-analysis required")
+                else:
+                    logger.info("[INCREMENTAL] No previous analysis found, performing full analysis")
+                    
+            except Exception as incr_err:
+                logger.warning(f"[INCREMENTAL] Change detection failed, falling back to full analysis: {incr_err}")
+            # ============================================================
+
+            logger.info(f"Starting Streaming Analysis: {len(batches)} total batches, starting from index {start_batch_index}")
 
             # Accumulators for Final Callback (Lightweight)
-            final_characters_map = {} # dedupe by name for the report
-            final_events = []
-            final_settings = []
-            final_relationships = []  # 🆕 관계 데이터 축적
+            final_characters_map = {}  # dedupe by name
+            final_events_map = {}      # 🆕 dedupe by event_id
+            final_settings_map = {}    # 🆕 dedupe by setting_id
+            final_relationships = []   # 🆕 관계 데이터 축적
             final_plot = {}
             final_consistency = {}
             final_validation = {}  # 🆕 검증 결과
 
             for i, batch in enumerate(batches):
+                # 🆕 Skip unchanged sections in incremental mode
+                if i < start_batch_index:
+                    logger.info(f"[INCREMENTAL] Skipping unchanged batch {i+1}/{len(batches)}")
+                    continue
+                    
                 batch_content = batch["content"]
+                
+                # 🆕 Prepend previous summary as context for first analyzed batch
+                if i == start_batch_index and previous_summary_context:
+                    batch_content = f"[이전 내용 요약]\n{previous_summary_context}\n\n[새로 추가된 내용]\n{batch_content}"
+                    logger.info(f"[INCREMENTAL] Added previous summary context to batch {i+1}")
+                
                 logger.info(f"Processing Batch {i+1}/{len(batches)}", size=len(batch_content))
 
                 # 2. Run Pipeline for Batch
@@ -621,10 +725,22 @@ class DocumentAnalysisConsumer:
                 # 🆕 관계 데이터 추출 (relationship_graph에서)
                 rel_graph = pipeline_result.get("relationship_graph", {})
                 batch_relationships = []
+                
+                # 🆕 Debug: Log relationship extraction
+                logger.info(f"[RELATIONSHIPS] 🔍 Batch {i+1}: Checking pipeline_result for relationship_graph")
+                logger.info(f"[RELATIONSHIPS] 🔍 relationship_graph exists: {bool(rel_graph)}")
+                
                 if rel_graph and isinstance(rel_graph, dict):
                     batch_relationships = rel_graph.get("relationships", [])
+                    logger.info(f"[RELATIONSHIPS] 🔍 Batch {i+1}: Extracted {len(batch_relationships)} relationships from rel_graph")
                     if batch_relationships:
+                        logger.info(f"[RELATIONSHIPS] ✅ Batch {i+1}: Adding {len(batch_relationships)} relationships to final list")
+                        logger.info(f"[RELATIONSHIPS] 🔍 First relationship: {batch_relationships[0]}")
                         final_relationships.extend(batch_relationships)
+                    else:
+                        logger.info(f"[RELATIONSHIPS] ⚠️ Batch {i+1}: relationship_graph exists but relationships array is empty")
+                else:
+                    logger.info(f"[RELATIONSHIPS] ⚠️ Batch {i+1}: No valid relationship_graph in pipeline_result")
 
                 # 4. Immediate Persistence
                 # 4. Immediate Persistence
@@ -632,6 +748,7 @@ class DocumentAnalysisConsumer:
                 try:
                     await db_service.save_extraction_result(
                         project_id,
+                        document_id,  # Pass document_id for source tracking
                         chars,
                         evts,
                         stgs,
@@ -683,8 +800,26 @@ class DocumentAnalysisConsumer:
                     c_name = c.get("name") or c.get("profile", {}).get("name")
                     if c_name:
                         final_characters_map[c_name] = c
-                final_events.extend(evts)
-                final_settings.extend(stgs)
+                
+                # 🆕 Events: dedupe by event_id
+                for e in evts:
+                    evt_id = e.get("event_id") or e.get("id")
+                    if evt_id:
+                        final_events_map[evt_id] = e
+                    else:
+                        # No ID, skip (shouldn't happen)
+                        logger.warning("Event without ID, skipping", event=e)
+                
+                # 🆕 Settings: dedupe by setting_id
+                for s in stgs:
+                    setting_id = s.get("setting_id") or s.get("id")
+                    if setting_id:
+                        final_settings_map[setting_id] = s
+                    else:
+                        # Fallback to name if no ID
+                        s_name = s.get("name")
+                        if s_name:
+                            final_settings_map[s_name] = s
 
                 if pipeline_result.get("plot"): final_plot = pipeline_result.get("plot")
                 if pipeline_result.get("consistency_report"): final_consistency = pipeline_result.get("consistency_report")
@@ -692,7 +827,8 @@ class DocumentAnalysisConsumer:
 
             # 🆕 Fallback: Extract relationships from character.relations.graph if top-level is empty
             if not final_relationships and final_characters_map:
-                logger.info("Extracting relationships from character.relations.graph (fallback)")
+                logger.info("[RELATIONSHIPS] 🔄 Triggering fallback: Extracting from character.relations.graph")
+                logger.info(f"[RELATIONSHIPS] 🔍 Characters available for fallback: {len(final_characters_map)}")
                 extracted_rels = []
                 seen_pairs = set()  # Avoid duplicates
 
@@ -707,6 +843,9 @@ class DocumentAnalysisConsumer:
                     # Handle list format (direct list of relations)
                     elif isinstance(relations_data, list):
                         char_relations = relations_data
+                    
+                    if char_relations:
+                        logger.info(f"[RELATIONSHIPS] 🔍 Character '{char_name}' has {len(char_relations)} relations in embedded data")
 
                     for rel in char_relations:
                         target = rel.get("target", "")
@@ -743,10 +882,69 @@ class DocumentAnalysisConsumer:
 
                 if extracted_rels:
                     final_relationships = extracted_rels
-                    logger.info(f"Extracted {len(final_relationships)} relationships from characters (fallback)")
+                    logger.info(f"[RELATIONSHIPS] ✅ Fallback extracted {len(final_relationships)} relationships from character data")
+                    logger.info(f"[RELATIONSHIPS] 🔍 Sample relationship: {final_relationships[0]}")
+                else:
+                    logger.warning("[RELATIONSHIPS] ⚠️ Fallback found no relationships in character.relations.graph")
+            else:
+                if final_relationships:
+                    logger.info(f"[RELATIONSHIPS] ✅ Using {len(final_relationships)} relationships from pipeline (no fallback needed)")
+                else:
+                    logger.warning(f"[RELATIONSHIPS] ⚠️ No relationships extracted and no characters for fallback (chars: {len(final_characters_map)})")
+
+
+            # 🆕 [FIX] Inject extracted relationships back into Character objects
+            if final_relationships:
+                logger.info(f"[RELATIONSHIPS] 🔄 Injecting {len(final_relationships)} relationships back into characters for result.json")
+                
+                # Initialize relations for all characters
+                for c_name, c_data in final_characters_map.items():
+                    if "relations" not in c_data or not isinstance(c_data["relations"], dict):
+                        c_data["relations"] = {"graph": [], "event_refs": []}
+                    else:
+                        c_data["relations"]["graph"] = [] # Reset for fresh injection
+                
+                # Distribute relationships
+                for rel in final_relationships:
+                    src = rel.get("source")
+                    if src and src in final_characters_map:
+                        final_characters_map[src]["relations"]["graph"].append(rel)
 
             processing_time_ms = int((time.time() - start_time) * 1000)
 
+            # 🆕 Convert dict back to list for final output
+            final_events = list(final_events_map.values())
+            final_settings = list(final_settings_map.values())
+            
+            logger.info(
+                "Final aggregation complete",
+                characters=len(final_characters_map),
+                events=len(final_events),
+                settings=len(final_settings),
+                relationships=len(final_relationships)
+            )
+
+            # 🆕 [DEBUG] Save result.json locally for user verification
+            try:
+                import json
+                debug_result = {
+                    "message_type": "DOCUMENT_ANALYSIS_RESULT",
+                    "document_id": document_id,
+                    "status": "COMPLETED",
+                    "characters": list(final_characters_map.values()),
+                    "events": final_events,
+                    "settings": final_settings,
+                    "relationships": final_relationships,
+                    "plot": final_plot,
+                    "consistency_report": final_consistency,
+                    "validation_result": final_validation
+                }
+                with open("result.json", "w", encoding="utf-8") as f:
+                    json.dump(debug_result, f, ensure_ascii=False, indent=2)
+                logger.info("[DEBUG] Saved result.json successfully")
+            except Exception as e:
+                logger.error(f"[DEBUG] Failed to save result.json: {e}")
+            
             # 🆕 Link characters and events to sections
             linked_sections = []
             for i, sec in enumerate(sections):
@@ -774,11 +972,12 @@ class DocumentAnalysisConsumer:
 
             # ===== Context Maintenance System: Summary Generation =====
             # 🆕 Phase 3: 분석 완료 후 챕터 요약 자동 생성
+            document_summary: Optional[DocumentSummaryOutput] = None
             try:
                 summary_service = await get_summary_service()
                 
-                # 요약 생성
-                summary = await summary_service.generate_chapter_summary(
+                # 요약 생성 (Returns dict)
+                summary_data = await summary_service.generate_chapter_summary(
                     content,
                     extracted_entities={
                         "characters": list(final_characters_map.values()),
@@ -787,23 +986,21 @@ class DocumentAnalysisConsumer:
                     }
                 )
                 
-                # 요약 저장
-                key_characters = list(final_characters_map.keys())[:5]  # 상위 5명
-                await summary_service.save_summary(
-                    document_id=document_id,
-                    project_id=project_id,
-                    summary=summary,
-                    key_characters=key_characters
-                )
+                if summary_data:
+                    document_summary = DocumentSummaryOutput(**summary_data)
                 
                 logger.info(
-                    "Chapter summary generated and saved",
+                    "Chapter summary generated (will be sent to Spring via callback)",
                     document_id=document_id,
-                    summary_length=len(summary)
+                    summary_length=len(document_summary.summary) if document_summary else 0
                 )
             except Exception as sum_err:
                 logger.warning("Failed to generate chapter summary, continuing", error=str(sum_err))
             # =========================================================
+
+            # 🆕 Character Timeline Collection (for future use)
+            # Currently returns empty list, but typed Correctly
+            character_timelines: list[CharacterTimelineOutput] = []
 
             return ProcessingResult(
                 success=True,
@@ -815,6 +1012,8 @@ class DocumentAnalysisConsumer:
                 plot=final_plot,
                 consistency_report=final_consistency,
                 validation=final_validation if final_validation else None,
+                document_summary=document_summary,  # 🆕 Structured Output
+                character_timelines=character_timelines,  # 🆕 Typed List
                 processing_time_ms=processing_time_ms
             )
 
@@ -881,14 +1080,6 @@ class DocumentAnalysisConsumer:
         # job_id 결정: 인자로 받은 것 우선, 없으면 document_id (구버전)
         final_job_id = job_id or callback.document_id
 
-        # 🆕 Sanitize Payload: Remove complex fields that might cause 500 in Spring
-        if "characters" in result_payload and isinstance(result_payload["characters"], list):
-            for char in result_payload["characters"]:
-                # User requested to restore relations field
-                # if "relations" in char:
-                #    del char["relations"]
-                pass
-
         logger.info("Sending analysis callback", job_id=final_job_id, status=callback.status)
 
         await client.send_analysis_callback(
@@ -945,13 +1136,12 @@ class DocumentAnalysisConsumer:
                         }
                         for i, s in enumerate(result.sections)
                     ],
-                    characters=result.characters,
-                    events=result.events,
-                    settings=result.settings,
-                    relationships=result.relationships,
-                    plot_integration=result.plot,
+                    # Removed: characters, events, settings, relationships (Synced to Neo4j directly)
+                    # Removed: plot_integration
                     consistency_report=result.consistency_report,
                     validation=result.validation,
+                    document_summary=result.document_summary.model_dump() if result.document_summary else None,
+                    character_timelines=[t.model_dump() for t in result.character_timelines] if result.character_timelines else [],
                     processing_time_ms=processing_time_ms,
                 )
                 
@@ -1023,9 +1213,11 @@ class GlobalMergeConsumer:
         await self._channel.set_qos(prefetch_count=1)  # 동시에 1개만 처리
 
         # 큐 선언 (없으면 생성)
+        # Spring Backend와 동일한 priority 설정 (일관성 유지)
         self._queue = await self._channel.declare_queue(
             settings.global_merge_queue,
-            durable=True
+            durable=True,
+            arguments={'x-max-priority': 10}
         )
 
         # 메시지 수신 시작

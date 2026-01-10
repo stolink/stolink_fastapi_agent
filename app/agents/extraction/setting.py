@@ -59,7 +59,7 @@ Input: "이민호가 나무 뒤에서 비웃으며 나타났다."
 For each setting, you MUST provide:
 - setting_id: Unique ID like "loc_forest_01"
 - name: Short location name
-- location_name: Same as name (for display)
+
 - location_type: One of: indoor, outdoor, castle, city, village, forest, mountain, sea, dungeon, road, other
 - visual_background: Detailed environment description (NO characters!)
 - atmosphere: Mood keywords
@@ -79,6 +79,12 @@ For each setting, you MUST provide:
 
 === PENALTY WARNING -> GUIDELINE ===
 Focus purely on the visual environment. If character names or actions are mentioned, rephrase to focus on the effect they have on the environment (e.g., "footsteps on snow" -> "snowy path with footprints").
+
+=== LANGUAGE CONSISTENCY RULE ===
+**CRITICAL**: Output ALL text content in the SAME LANGUAGE as the input.
+- If the input text is in Korean (한국어), ALL descriptions MUST be in Korean.
+- If the input text is in English, all descriptions must be in English.
+- Never mix languages.
 
 Your goal is valid JSON output of the environment description."""),
     ("human", """Text to analyze:
@@ -148,10 +154,7 @@ async def setting_extraction_node(state: dict) -> dict:
         # Convert to dict for state storage
         settings = [s.model_dump() for s in result.settings]
         
-        # Ensure location_name is set (fallback to name if missing)
-        for setting in settings:
-            if not setting.get("location_name") and setting.get("name"):
-                setting["location_name"] = setting["name"]
+        # No need to set location_name (removed attribute)
         
         print(f"[SETTING] Successfully extracted {len(settings)} settings")
         
@@ -244,7 +247,7 @@ def create_fallback_settings(content: str) -> list[dict]:
             settings.append({
                 "setting_id": f"loc_fallback_{len(settings)+1}",
                 "name": name,
-                "location_name": name,
+
                 "location_type": loc_type,
                 "visual_background": visual,
                 "atmosphere": "mysterious" if "어둠" in content else "neutral",
@@ -262,7 +265,7 @@ def create_fallback_settings(content: str) -> list[dict]:
         settings.append({
             "setting_id": "loc_default_01",
             "name": "Unknown Location",
-            "location_name": "Unknown Location",
+
             "location_type": "other",
             "visual_background": "Generic environment with neutral lighting and standard textures",
             "atmosphere": "neutral",

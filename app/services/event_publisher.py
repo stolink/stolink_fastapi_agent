@@ -57,10 +57,15 @@ class AnalysisEventPublisher:
             )
             
             # 큐 선언 및 바인딩
-            # 1. Analysis Completed Queue
+            # 1. Analysis Completed Queue (with DLQ routing)
+            # Spring Backend와 동일한 DLQ 설정 필요
             completed_queue = await self._channel.declare_queue(
                 settings.analysis_completed_queue,
-                durable=True
+                durable=True,
+                arguments={
+                    'x-dead-letter-exchange': '',  # 기본 exchange
+                    'x-dead-letter-routing-key': settings.analysis_dlq
+                }
             )
             await completed_queue.bind(
                 self._exchange,

@@ -30,7 +30,9 @@ class Settings(BaseSettings):
     # Note: rabbitmq_analysis_queue removed (legacy). Use document_analysis_queue instead.
     
     # Redis (Caching)
-    redis_url: str = "redis://localhost:6379/0"
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_db: int = 0
     
     # Document Analysis Architecture (대용량 분석)
     document_analysis_queue: str = "document_analysis_queue"
@@ -74,6 +76,11 @@ class Settings(BaseSettings):
     def postgres_url(self) -> str:
         """PostgreSQL connection URL."""
         return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+    
+    @property
+    def redis_url(self) -> str:
+        """Redis connection URL."""
+        return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
 
 
 @lru_cache

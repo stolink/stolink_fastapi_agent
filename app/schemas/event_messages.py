@@ -38,16 +38,14 @@ class AnalysisCompletedEvent(BaseModel):
     trace_id: Optional[str] = Field(None, description="분산 추적 ID")
     
     # 분석 결과 페이로드
-    sections: list[dict] = Field(default_factory=list, description="생성된 Section 목록")
-    characters: list[dict] = Field(default_factory=list, description="추출된 캐릭터")
-    events: list[dict] = Field(default_factory=list, description="추출된 이벤트")
-    settings: list[dict] = Field(default_factory=list, description="추출된 배경/장소")
-    relationships: list[dict] = Field(default_factory=list, description="캐릭터 간 관계")
+    # sections: AI 백엔드 PostgreSQL에서만 사용, Event Sourcing에서 제외
     
     # Level 2 분석 결과
-    plot_integration: Optional[dict] = Field(None, description="플롯 분석 (복선, 서사 아크, 상징)")
+    # Removed: plot_integration
     consistency_report: Optional[dict] = Field(None, description="일관성 검증 결과")
     validation: Optional[dict] = Field(None, description="검증 결과 (품질 점수, 액션 등)")
+    document_summary: Optional[dict] = Field(None, description="문서 요약 (RDB 저장용 - 구조화됨)")
+    character_timelines: Optional[list[dict]] = Field(None, description="캐릭터 타임라인 (RDB 저장용 - 구조화됨)")
     
     # 처리 정보
     processing_time_ms: int = Field(default=0, description="처리 시간(ms)")

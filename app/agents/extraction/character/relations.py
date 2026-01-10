@@ -20,8 +20,16 @@ class Relationship(BaseModel):
     """Single relationship entry - matches result.json schema."""
     target: str = Field(..., description="Target character name")
     type: str = Field(..., description="ALLY/ENEMY/RIVAL/NEUTRAL/FAMILY/BETRAYED")
-    strength: int = Field(5, ge=1, le=10, description="Relationship intensity 1-10")
-    description: Optional[str] = Field(None, description="Brief description of relationship")
+    strength: int = Field(5, ge=1, le=10, description="Overall Significance (1-10)")
+    
+    # 5D Relationship Metrics (Orthogonal)
+    emotional_bond: int = Field(5, ge=1, le=10, description="정서적 유대 (0-10): Intimacy/Affection")
+    functional_trust: int = Field(5, ge=1, le=10, description="기능적 신뢰 (0-10): Competence/Reliability")
+    value_alignment: int = Field(5, ge=1, le=10, description="가치관 일치 (0-10): Ideology/Morals")
+    interdependence: int = Field(5, ge=1, le=10, description="상호 의존성 (0-10): Structural/Systemic Need")
+    latent_tension: int = Field(1, ge=1, le=10, description="잠재적 긴장 (0-10): Conflict Probability/Subtext")
+
+    description: Optional[str] = Field(None, description="Detailed basis for these metrics (Specific events/history)")
     public_stance: Optional[str] = Field(None, description="Outward: ALLY/NEUTRAL/ENEMY/RESPECT")
     private_feeling: Optional[str] = Field(None, description="Inner: TRUST/DISTRUST/LOVE/HATE/FEAR/GUILT/CURIOSITY/ANGER")
 
@@ -30,7 +38,6 @@ class CharacterRelations(BaseModel):
     """Single character's relationships."""
     name: str = Field(..., description="Character name for matching")
     relations: list[Relationship] = Field(default_factory=list, description="Relationships with other characters")
-    location_context: Optional[str] = Field(None, description="Current location description")
     
     @field_validator('relations', mode='before')
     @classmethod
@@ -135,17 +142,42 @@ ALLY, ENEMY, RIVAL, NEUTRAL, FAMILY, BETRAYED, KNOWS, PROTECTS, MENTOR
 - "동료" (too vague) ❌
 
 ### ⚠️ STRENGTH SCORING GUIDE (1-10) ⚠️ ###
-The strength score reflects HOW SIGNIFICANT the relationship is in the story:
+The strength score reflects HOW SIGNIFICANT the relationship is in the story (Plot Relevance).
 
-| Score | Meaning | Examples |
-|-------|---------|----------|
-| 9-10 | Life-changing, central to plot | 은인, 숙적, 구원자, 생사를 함께한 관계 |
-| 7-8 | Very significant, strong bond/conflict | 오랜 동료, 강한 적대, 깊은 신뢰 |
-| 5-6 | Moderate importance | 일반적인 동료, 알게 된 사이, 약간의 갈등 |
-| 3-4 | Minor, peripheral | 한두 번 만남, 간접적 언급 |
-| 1-2 | Barely connected | 스치듯 언급, 배경 인물 |
+### ⚠️ 5-DIMENSIONAL METRICS (1-10) ⚠️ ###
+Measure these 5 ORTHOGONAL dimensions regardless of overall strength.
 
-**Strength Examples from "Les Misérables":**
+1. **Emotional Bond (정서적 유대)**: Pure emotional intimacy/affection.
+   - 10: Soulmate, Parent/Child, Deepest Love.
+   - 1: Total stranger or pure apathy.
+   - *Example*: "My annoying brother" -> High Bond (8), even if annoying.
+
+2. **Functional Trust (기능적 신뢰)**: Trust in ability/competence.
+   - 10: "I trust him with my life/mission." (Sherlock & Watson)
+   - 1: "He will fail/mess up." (Incompetent minion)
+   - *Example*: Business partner -> High Trust (9), Low Bond (3).
+
+3. **Value Alignment (가치관 일치)**: Ideology, morals, political views.
+   - 10: Same crusade/belief system.
+   - 1: Fundamental opposites (Hero vs Villain with opposing philosophies).
+   - *Example*: Professor X & Magneto -> High Bond (8), Low Alignment (2).
+
+4. **Interdependence (상호 의존성)**: Structural/systemic need (Gain/Loss calculation).
+   - 10: Cannot survive/succeed without each other (Siamese twins, Pilot & Navigator).
+   - 1: Completely independent.
+   - *Example*: Forced teammates -> High Interdependence (9), Low Bond (2).
+
+5. **Latent Tension (잠재적 긴장)**: Unspoken conflict, suspense, subtext.
+   - 10: "Something will explode soon." (Traitors, hidden love, ticking bomb).
+   - 1: Stable, boring, predictable.
+   - *Example*: "Keep your friends close, enemies closer" -> High Tension (9).
+
+### METRIC EXAMPLES ###
+- **Sherlock & Watson**: Trust(10), Bond(8), Alignment(9), Interdep(9), Tension(2)
+- **Prof X & Magneto**: Trust(9), Bond(9), Alignment(2), Interdep(5), Tension(8)
+- **Toxic Couple**: Bond(9), Trust(2), Alignment(4), Interdep(8), Tension(9)
+
+### STRENGTH EXAMPLES ###
 - 장 발장 ↔ 주교: 10 (인생을 바꾼 은인)
 - 장 발장 ↔ 자베르: 9 (숙명적 추적자)
 - 장 발장 ↔ 갤러선 동료: 7 (19년 함께 수감)
@@ -166,9 +198,10 @@ The strength score reflects HOW SIGNIFICANT the relationship is in the story:
     {{
       "name": "장 발장",
       "relations": [
-        {{"target": "브레베", "type": "KNOWS", "strength": 7, "description": "갤러선 동료 전과자, 체크무늬 멜빵 기억", "public_stance": "NEUTRAL", "private_feeling": "NEUTRAL"}},
-        {{"target": "자베르", "type": "ENEMY", "strength": 9, "description": "자신을 알아볼 수 있는 추적자, 긴장 관계", "public_stance": "NEUTRAL", "private_feeling": "FEAR"}},
-        {{"target": "몽세뇌르 주교", "type": "ALLY", "strength": 10, "description": "관용과 친절로 구원해준 은인", "public_stance": "RESPECT", "private_feeling": "TRUST"}}
+      "relations": [
+        {{"target": "브레베", "type": "KNOWS", "strength": 7, "emotional_bond": 4, "functional_trust": 6, "value_alignment": 3, "interdependence": 8, "latent_tension": 2, "description": "갤러선 동료 전과자, 체크무늬 멜빵 기억", "public_stance": "NEUTRAL", "private_feeling": "NEUTRAL"}},
+        {{"target": "자베르", "type": "ENEMY", "strength": 9, "emotional_bond": 2, "functional_trust": 9, "value_alignment": 1, "interdependence": 5, "latent_tension": 9, "description": "자신을 알아볼 수 있는 숙적", "public_stance": "NEUTRAL", "private_feeling": "FEAR"}}
+      ]
       ]
     }}
   ]
@@ -252,7 +285,19 @@ def ensure_bidirectional_relations(relations_data: dict) -> dict:
         reverse_rel = {
             "target": target,
             "type": rel_type,
+            "type": rel_type,
             "strength": original.get("strength", 5),
+            # 5D Metrics Logic
+            # Symmetric (Copy)
+            "value_alignment": original.get("value_alignment", 5),
+            "interdependence": original.get("interdependence", 5),
+            "latent_tension": original.get("latent_tension", 1),
+            # Asymmetric (Default to Neutral 5, let Agnet infer later if possible, but here we fallback)
+            # Or assume SOME correlation? No, keep neutrality or copy if we assume high reciprocity.
+            # Strategy: Default to 5 (Neutral) for asymmetric emotional/trust.
+            "emotional_bond": 5, 
+            "functional_trust": 5,
+            
             "description": original_desc if original_desc else f"{source}과(와)의 관계",
             "public_stance": original.get("public_stance", "NEUTRAL"),
             "private_feeling": reverse_feeling
@@ -268,8 +313,7 @@ def ensure_bidirectional_relations(relations_data: dict) -> dict:
             # Source character doesn't exist in relations_data, create entry
             relations_data[source] = {
                 "name": source,
-                "relations": [reverse_rel],
-                "location_context": None
+                "relations": [reverse_rel]
             }
             print(f"[RELATIONS] Created new entry for {source} with reverse relation to {target}")
     

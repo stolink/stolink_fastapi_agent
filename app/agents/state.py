@@ -25,7 +25,7 @@ class AnalysisState(TypedDict, total=False):
     callback_url: str
     requires_deep_analysis: bool
     response_language: str  # "ko" or "en" - detected from input text
-    
+
     # Tracing
     trace_id: str
     
@@ -43,7 +43,7 @@ class AnalysisState(TypedDict, total=False):
     # Analysis results
     relationship_graph: dict
     consistency_report: dict
-    plot: dict
+    # Removed: plot
     
     # Validation
     validation_result: dict
@@ -79,8 +79,7 @@ class StoryAnalysisState(BaseModel):
     document_id: str = Field(..., description="Document UUID")
     job_id: str = Field(..., description="Analysis job UUID")
     callback_url: str = Field(..., description="Spring callback endpoint")
-    requires_deep_analysis: bool = Field(default=False, description="Whether to run deep analysis (plot, consistency)")
-    response_language: str = Field(default="en", description="Response language: 'ko' for Korean, 'en' for English")
+    requires_deep_analysis: bool = Field(default=False, description="Whether to run deep analysis (consistency)")
     
     # ===== Tracing =====
     trace_id: str = Field(default="", description="Global trace ID for distributed tracing")
@@ -131,10 +130,7 @@ class StoryAnalysisState(BaseModel):
         default_factory=dict,
         description="Consistency report by ConsistencyCheckerAgent"
     )
-    plot: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Plot analysis by PlotAgent"
-    )
+    # Removed: plot (PlotAgent removed)
     
     # ===== Level 3: Validation Results =====
     validation_result: dict[str, Any] = Field(

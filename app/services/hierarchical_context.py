@@ -36,7 +36,9 @@ class HierarchicalContextManager:
         self,
         project_id: str,
         current_document_id: str = None,
+        parent_folder_id: str = None,  # 🆕 현재 챕터(폴더) ID
         mentioned_characters: list[str] = None,
+        similar_events: list[dict] = None,  # 🆕 RAG로 찾은 유사 이벤트
         max_recent_chapters: int = 5
     ) -> dict[str, Any]:
         """분석 시 사용할 계층적 컨텍스트 구축.
@@ -44,7 +46,9 @@ class HierarchicalContextManager:
         Args:
             project_id: Project UUID
             current_document_id: 현재 분석 중인 문서 ID
+            parent_folder_id: 현재 문서의 상위 폴더(챕터) ID
             mentioned_characters: 현재 텍스트에서 언급된 캐릭터 이름들
+            similar_events: 벡터 검색으로 찾은 유사 과거 사건들
             max_recent_chapters: 포함할 최근 챕터 요약 수
             
         Returns:
@@ -54,7 +58,9 @@ class HierarchicalContextManager:
             "novel_summary": None,
             "volume_summary": None,
             "recent_chapters": [],
+            "intra_chapter_summaries": [],  # 🆕 같은 챕터 내 이전 문서 요약
             "entity_context": None,
+            "similar_events": similar_events or [],
             "context_text": ""
         }
         
@@ -80,6 +86,14 @@ class HierarchicalContextManager:
                 project_id, current_document_id, max_recent_chapters
             )
             context["recent_chapters"] = recent_chapters
+            
+            # 🆕 같은 챕터 내 이전 문서들의 요약 (Intra-chapter Context)
+            if parent_folder_id and current_document_id:
+                db = self._summary_service._db_service
+                intra_summaries = await db.get_intra_chapter_summaries(
+                    project_id, parent_folder_id, current_document_id, limit=5
+                )
+                context["intra_chapter_summaries"] = intra_summaries
             
             # 엔티티 중심 컨텍스트 (Phase 2 통합)
             if mentioned_characters and self._context_builder:
@@ -128,6 +142,18 @@ class HierarchicalContextManager:
             parts.append("## 최근 챕터")
             for i, summary in enumerate(context["recent_chapters"], 1):
                 parts.append(f"{i}. {summary}")
+        
+        # 🆕 같은 챕터 내 이전 문서 요약 (현재 진행 중인 챕터의 앞부분)
+        if context.get("intra_chapter_summaries"):
+            parts.append("## 현재 챕터의 앞부분 요약")
+            for i, summary in enumerate(context["intra_chapter_summaries"], 1):
+                parts.append(f"{i}. {summary}")
+        
+        # 🆕 RAG: 유사 과거 사건
+        if context.get("similar_events"):
+            parts.append("## 관련 과거 사건 (RAG)")
+            for evt in context["similar_events"]:
+                parts.append(f"- (Ch.{evt.get('chapter', '?')}) {evt.get('description', '')[:200]}")
         
         # ===== 캐릭터 중심 섹션 (Phase 6-2) =====
         if context.get("entity_context"):
@@ -230,6 +256,58 @@ class HierarchicalContextManager:
         
         return context.get("context_text", "")
     
+    async def retrieve_analysis_context_data(
+        self,
+        project_id: str,
+        current_text: str,
+        current_document_id: str = None,
+        parent_folder_id: str = None  # 🆕 현재 문서의 상위 폴더(챕터) ID
+    ) -> dict[str, Any]:
+        """RAG 포함 분석용 컨텍스트 데이터 조회 (Vector Search + Keyword).
+        
+        Returns:
+            Dict containing 'entity_context', 'similar_events', etc.
+        """
+        db = self._summary_service._db_service
+        
+        # 1. 텍스트 임베딩 생성 (RAG)
+        embedding = await db.get_embedding(current_text[:2000]) # 앞부분 사용
+        
+        # 2. Vector Search (Character & Event)
+        rag_chars = []
+        similar_events = []
+        
+        if embedding:
+            # 2-1. Similar Characters
+            rag_chars_data = await db.search_similar_characters(
+                project_id, embedding, top_k=5
+            )
+            rag_chars = [c['name'] for c in rag_chars_data if c.get('name')]
+            
+            # 2-2. Similar Events
+            similar_events = await db.search_similar_events(
+                project_id, embedding, top_k=3
+            )
+            
+        # 3. Keyword Search (Character)
+        keyword_chars = await self._extract_mentioned_characters(
+            project_id, current_text
+        )
+        
+        # 4. Merge Characters (Deduplicate)
+        all_mentioned_chars = list(set(rag_chars + keyword_chars))
+        
+        # 5. Build Context (🆕 with parent_folder_id for intra-chapter context)
+        context = await self.build_hierarchical_context(
+            project_id=project_id,
+            current_document_id=current_document_id,
+            parent_folder_id=parent_folder_id,  # 🆕
+            mentioned_characters=all_mentioned_chars,
+            similar_events=similar_events
+        )
+        
+        return context
+    
     async def _extract_mentioned_characters(
         self,
         project_id: str,
@@ -252,8 +330,9 @@ class HierarchicalContextManager:
                 async with self._summary_service._db_service._neo4j_driver.session() as session:
                     result = await session.run(
                         """
-                        MATCH (c:Character {projectId: $pid})
-                        RETURN c.name as name, c.aliases as aliases
+                        MATCH (c:Character {project_id: $pid})
+                        RETURN c.name as name, 
+                               CASE WHEN c.aliases IS NOT NULL THEN c.aliases ELSE [] END as aliases
                         """,
                         pid=project_id
                     )

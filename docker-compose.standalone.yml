@@ -86,7 +86,6 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: stolink
       RABBITMQ_DEFAULT_PASS: stolink123
-      RABBITMQ_DEFAULT_VHOST: stolink
     ports:
       - "5672:5672" # AMQP
       - "15672:15672" # Management UI
@@ -138,7 +137,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: stolink
       RABBITMQ_PASSWORD: stolink123
-      RABBITMQ_VHOST: stolink
+      RABBITMQ_VHOST: /
       # Document Analysis Architecture
       DOCUMENT_ANALYSIS_QUEUE: document_analysis_queue
       GLOBAL_MERGE_QUEUE: global_merge_queue

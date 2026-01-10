@@ -62,9 +62,6 @@ class EventExtraction(BaseModel):
     # === Metadata ===
     timestamp: Optional[TimeStamp] = Field(default=None)
     importance: int = Field(default=5, ge=1, le=10, description="Importance level (1-10)")
-    
-    # === Re-extraction tracking ===
-    changes_made: Optional[str] = Field(None, description="Changes made during re-extraction")
 
 
 class EventExtractionResult(BaseModel):
