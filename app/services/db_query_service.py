@@ -64,12 +64,15 @@ class DatabaseQueryService:
                         id UUID PRIMARY KEY,
                         document_id UUID,
                         content TEXT,
+                        content_hash VARCHAR(64),
                         embedding vector(3072),
                         sequence_order INTEGER,
                         nav_title TEXT,
                         created_at TIMESTAMP DEFAULT NOW(),
                         updated_at TIMESTAMP DEFAULT NOW()
                     );
+                    /* Migration: Add content_hash if not exists */
+                    ALTER TABLE sections ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64);
                     CREATE TABLE IF NOT EXISTS settings (
                         id UUID PRIMARY KEY,
                         project_id UUID,
@@ -110,7 +113,7 @@ class DatabaseQueryService:
                     CREATE INDEX IF NOT EXISTS settings_project_id_idx ON settings(project_id);
                     CREATE INDEX IF NOT EXISTS events_project_id_idx ON events(project_id);
                     CREATE INDEX IF NOT EXISTS characters_project_id_idx ON characters(project_id);
-                    
+
                     /* Create UNIQUE indexes for upsert support */
                     CREATE UNIQUE INDEX IF NOT EXISTS characters_project_id_name_idx ON characters(project_id, name);
                     CREATE UNIQUE INDEX IF NOT EXISTS settings_project_id_name_idx ON settings(project_id, name);
@@ -131,23 +134,23 @@ class DatabaseQueryService:
                 max_connection_lifetime=300,
                 connection_timeout=30,
             )
-            
+
             # Initialize Schema (Constraints & Indexes)
             async with self._neo4j_driver.session() as session:
                 # 1. Character
                 await session.run("CREATE CONSTRAINT character_id_unique IF NOT EXISTS FOR (c:Character) REQUIRE c.id IS UNIQUE")
                 await session.run("CREATE INDEX character_project_id_idx IF NOT EXISTS FOR (c:Character) ON (c.project_id)")
                 await session.run("CREATE INDEX character_name_idx IF NOT EXISTS FOR (c:Character) ON (c.name)")
-                
+
                 # 2. Event
                 await session.run("CREATE CONSTRAINT event_id_unique IF NOT EXISTS FOR (e:Event) REQUIRE e.eventId IS UNIQUE")
                 await session.run("CREATE INDEX event_project_id_idx IF NOT EXISTS FOR (e:Event) ON (e.project_id)")
-                
+
                 # 3. Setting
                 await session.run("CREATE CONSTRAINT setting_id_unique IF NOT EXISTS FOR (s:Setting) REQUIRE s.settingId IS UNIQUE")
                 await session.run("CREATE INDEX setting_project_id_idx IF NOT EXISTS FOR (s:Setting) ON (s.project_id)")
                 await session.run("CREATE INDEX setting_name_idx IF NOT EXISTS FOR (s:Setting) ON (s.name)")
-            
+
             logger.info("Neo4j driver initialized and schema constraints applied")
         except Exception as e:
             logger.error("Failed to initialize Neo4j driver", error=str(e))
@@ -435,12 +438,12 @@ class DatabaseQueryService:
 
     async def get_project_stats(self, project_id: str) -> dict[str, int]:
         """프로젝트의 엔티티 통계 조회.
-        
+
         적응형 top_k 계산에 사용됩니다.
-        
+
         Args:
             project_id: Project UUID
-            
+
         Returns:
             Dict with character_count, event_count, setting_count
         """
@@ -449,10 +452,10 @@ class DatabaseQueryService:
             "event_count": 0,
             "setting_count": 0
         }
-        
+
         if not self._neo4j_driver:
             return stats
-        
+
         try:
             async with self._neo4j_driver.session() as session:
                 # 캐릭터 수
@@ -462,7 +465,7 @@ class DatabaseQueryService:
                 )
                 record = await result.single()
                 stats["character_count"] = record["cnt"] if record else 0
-                
+
                 # 이벤트 수
                 result = await session.run(
                     "MATCH (e:Event {projectId: $pid}) RETURN count(e) as cnt",
@@ -470,7 +473,7 @@ class DatabaseQueryService:
                 )
                 record = await result.single()
                 stats["event_count"] = record["cnt"] if record else 0
-                
+
                 # 장소 수
                 result = await session.run(
                     "MATCH (s:Setting {projectId: $pid}) RETURN count(s) as cnt",
@@ -478,41 +481,41 @@ class DatabaseQueryService:
                 )
                 record = await result.single()
                 stats["setting_count"] = record["cnt"] if record else 0
-                
+
         except Exception as e:
             logger.error("Failed to get project stats", error=str(e))
-        
+
         return stats
 
     async def get_adaptive_top_k(self, project_id: str) -> int:
         """프로젝트 분량에 따른 적응형 top_k 계산.
-        
+
         분량이 많은 프로젝트일수록 더 많은 컨텍스트를 검색합니다.
-        
+
         Args:
             project_id: Project UUID
-            
+
         Returns:
             적응형 top_k 값 (10-40 범위)
         """
         stats = await self.get_project_stats(project_id)
-        
+
         base_k = 10
         char_count = stats.get("character_count", 0)
         event_count = stats.get("event_count", 0)
-        
+
         # 캐릭터 50명 이상 → top_k 증가
         if char_count > 50:
             base_k = min(25, base_k + char_count // 10)
         elif char_count > 20:
             base_k = min(15, base_k + char_count // 20)
-        
+
         # 이벤트 100개 이상 → top_k 추가 증가
         if event_count > 100:
             base_k = min(40, base_k + event_count // 20)
         elif event_count > 50:
             base_k = min(25, base_k + event_count // 25)
-        
+
         logger.info(
             "Adaptive top_k calculated",
             project_id=project_id,
@@ -520,7 +523,7 @@ class DatabaseQueryService:
             event_count=event_count,
             top_k=base_k
         )
-        
+
         return base_k
 
     async def search_similar_characters(
@@ -773,70 +776,7 @@ class DatabaseQueryService:
             logger.error("Failed to query document content", error=str(e), document_id=document_id)
             return None
 
-    async def save_sections(self, document_id: str, sections: list[dict]) -> int:
-        """Save semantic sections and their embeddings to PostgreSQL.
 
-        Args:
-            document_id: The source document UUID
-            sections: List of section dicts (content, embedding, title)
-
-        Returns:
-            Number of sections saved
-        """
-        if not self._pg_pool:
-            logger.warning("PostgreSQL pool not initialized, skipping section save")
-            return 0
-
-        if not sections:
-            return 0
-
-        # First, delete existing sections for this document to avoid duplication
-        delete_query = "DELETE FROM sections WHERE document_id = $1"
-
-        # Insert query
-        insert_query = """
-            INSERT INTO sections
-            (id, document_id, content, embedding, sequence_order, nav_title, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-        """
-
-        import uuid
-
-        saved_count = 0
-        try:
-            async with self._pg_pool.acquire() as conn:
-                async with conn.transaction():
-                    # 1. Clean up old sections
-                    await conn.execute(delete_query, document_id)
-
-                    # 2. Batch insert new sections
-                    # Prepare list of params for executemany
-                    params = []
-                    for i, sec in enumerate(sections):
-                        sec_id = str(uuid.uuid4())
-                        embedding_vector = str(sec["embedding"]) if sec.get("embedding") else None
-
-                        params.append((
-                            sec_id,
-                            document_id,
-                            sec["content"],
-                            embedding_vector, # pgvector expects string representation like "[0.1, 0.2, ...]"
-                            i,
-                            sec.get("title", f"Section {i+1}")
-                        ))
-
-                    if params:
-                        await conn.executemany(insert_query, params)
-                        saved_count = len(params)
-                        logger.info(f"Saved {saved_count} semantic sections for doc {document_id}")
-
-        except Exception as e:
-            logger.error("Failed to save sections", error=str(e), document_id=document_id)
-            return 0
-
-        return saved_count
-
-        return saved_count
 
     async def search_similar_sections(
         self,
@@ -1134,7 +1074,7 @@ class DatabaseQueryService:
         relationships: list[dict] = None  # 🆕 Added relationships
     ) -> None:
         """Save extracted entities to Neo4j for graph queries.
-        
+
         🆕 Event Sourcing 아키텍처:
         - PostgreSQL 저장 제거 (Spring Boot가 Single Source of Truth)
         - Neo4j만 저장 (그래프 쿼리 최적화용)
@@ -1155,7 +1095,7 @@ class DatabaseQueryService:
 
             # Sync to Neo4j only (그래프 쿼리 최적화용)
             await self.ensure_neo4j_connected()
-            
+
             if self._neo4j_driver:
                 logger.info("[DEBUG] Starting Neo4j sync...")
                 await self._sync_to_neo4j(project_id, document_id, characters, events, settings_list, relationships or [])
@@ -1271,13 +1211,13 @@ class DatabaseQueryService:
 
     async def get_previous_section_hashes(self, document_id: str) -> list[dict]:
         """Get previously saved section hashes for incremental analysis.
-        
+
         Returns:
             List of dicts with sequence_order and content_hash
         """
         if not self._pg_pool:
             return []
-            
+
         try:
             async with self._pg_pool.acquire() as conn:
                 rows = await conn.fetch("""
@@ -1292,35 +1232,35 @@ class DatabaseQueryService:
             return []
 
     def detect_change_point(
-        self, 
-        previous_hashes: list[dict], 
+        self,
+        previous_hashes: list[dict],
         new_sections: list[dict]
     ) -> int:
         """Detect first section that changed.
-        
+
         Args:
             previous_hashes: List of {sequence_order, content_hash} from DB
             new_sections: List of section dicts with content
-            
+
         Returns:
             0-based index of first changed section, or -1 if no change
         """
         import hashlib
-        
+
         # 🆕 If no previous hashes exist, this is first analysis - analyze everything
         if not previous_hashes:
             logger.info("[INCREMENTAL] No previous hashes found, full analysis required")
             return 0
-        
+
         for i, section in enumerate(new_sections):
             content = section.get("content", "")
             new_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]
-            
+
             # If we've run out of previous sections, this is new content
             if i >= len(previous_hashes):
                 logger.info(f"[INCREMENTAL] New section detected at index {i}")
                 return i
-            
+
             # If hash doesn't match, this section changed
             old_h = previous_hashes[i].get("content_hash")
             if old_h != new_hash:
@@ -1328,12 +1268,12 @@ class DatabaseQueryService:
                 return i
             else:
                 logger.debug(f"[INCREMENTAL] Section {i+1} match", hash=new_hash)
-        
+
         # All sections match - check if there are fewer sections now
         if len(new_sections) < len(previous_hashes):
             logger.info("[INCREMENTAL] Sections were removed, full re-analysis needed")
             return 0
-        
+
         # No changes
         return -1
 
@@ -1341,7 +1281,7 @@ class DatabaseQueryService:
         """Get previous document summary for context in incremental analysis."""
         if not self._pg_pool:
             return None
-            
+
         try:
             async with self._pg_pool.acquire() as conn:
                 row = await conn.fetchrow("""
@@ -1363,22 +1303,22 @@ class DatabaseQueryService:
         limit: int = 5
     ) -> list[str]:
         """Get summaries of other documents in the same chapter (parent_folder).
-        
+
         This provides context for the current document by fetching summaries
         of preceding documents in the same chapter/folder.
-        
+
         Args:
             project_id: Project UUID
             parent_folder_id: Parent folder ID (represents chapter)
             current_document_id: Current document ID (to exclude)
             limit: Maximum number of summaries to retrieve
-            
+
         Returns:
             List of summary strings from earlier documents in same chapter
         """
         if not self._pg_pool or not parent_folder_id:
             return []
-            
+
         try:
             async with self._pg_pool.acquire() as conn:
                 # Join documents and document_summaries to get summaries
@@ -1394,11 +1334,11 @@ class DatabaseQueryService:
                     ORDER BY d.created_at ASC
                     LIMIT $4
                 """, parent_folder_id, project_id, current_document_id, limit)
-                
+
                 summaries = [row['summary'] for row in rows if row.get('summary')]
                 logger.info(f"[INTRA-CHAPTER] Retrieved {len(summaries)} summaries from same chapter")
                 return summaries
-                
+
         except Exception as e:
             # If documents table structure is different, log and return empty
             logger.warning(f"[INTRA-CHAPTER] Failed to get intra-chapter summaries: {e}")
@@ -1406,33 +1346,33 @@ class DatabaseQueryService:
 
     async def save_sections(self, document_id: str, sections: list[dict]) -> int:
         """Save semantic sections with embeddings to PostgreSQL.
-        
+
         Args:
             document_id: Document UUID
             sections: List of section dicts from ChunkingService
-            
+
         Returns:
             Number of saved sections
         """
         if not self._pg_pool:
             logger.warning("PostgreSQL pool not available, skipping section save")
             return 0
-            
+
         if not sections:
             return 0
 
         logger.info("Saving vector sections", document_id=document_id, count=len(sections))
-        
+
         saved_count = 0
         try:
             async with self._pg_pool.acquire() as conn:
                 # Prepare statement for bulk insert
                 # Note: We use execute_many for better performance
-                
+
                 # First delete existing sections for this document to avoid duplicates
                 # (Optional: depends on business logic, here we replace)
                 await conn.execute("DELETE FROM sections WHERE document_id = $1", document_id)
-                
+
                 # Insert new sections
                 data_list = []
                 for idx, section in enumerate(sections):
@@ -1440,11 +1380,11 @@ class DatabaseQueryService:
                     content = section.get("content", "")
                     embedding = section.get("embedding") # List[float]
                     nav_title = section.get("title", f"Section {idx+1}")
-                    
+
                     # 🆕 Generate content hash for incremental analysis
                     import hashlib
                     content_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]
-                    
+
                     # embedding must be passed as string format '[1.0, 2.0, ...]' for asyncpg if not using type codec
                     if embedding is not None:
                         if hasattr(embedding, "tolist"):
@@ -1455,17 +1395,17 @@ class DatabaseQueryService:
                             embedding_str = str(embedding)
                     else:
                         embedding_str = None
-                        
+
                     data_list.append((
-                        sec_id, 
-                        document_id, 
-                        content, 
+                        sec_id,
+                        document_id,
+                        content,
                         embedding_str,  # pgvector accepts JSON string
-                        idx + 1, 
+                        idx + 1,
                         nav_title,
                         content_hash  # 🆕
                     ))
-                
+
                 if data_list:
                     # executemany works with list of tuples
                     await conn.executemany("""
@@ -1473,17 +1413,17 @@ class DatabaseQueryService:
                         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
                     """, data_list)
                     saved_count = len(data_list)
-                    
+
         except Exception as e:
             logger.error("Failed to save sections to PG", error=str(e), document_id=document_id)
             # Don't raise, just log error so analysis can continue
             return 0
-            
+
         return saved_count
 
     async def _cleanup_document_data(self, session, document_id: str) -> None:
         """재분석 전 document의 기존 데이터 정리.
-        
+
         Character와 Setting의 source_documents에서 document_id를 제거하고,
         더 이상 참조되지 않는 엔티티는 삭제합니다.
         """
@@ -1492,30 +1432,30 @@ class DatabaseQueryService:
             MATCH (c:Character)
             WHERE $doc_id IN coalesce(c.source_documents, [])
             SET c.source_documents = [d IN c.source_documents WHERE d <> $doc_id]
-            
+
             WITH c
             WHERE size(coalesce(c.source_documents, [])) = 0
             DETACH DELETE c
         """, doc_id=document_id)
-        
+
         # Setting cleanup
         await session.run("""
             MATCH (s:Setting)
             WHERE $doc_id IN coalesce(s.source_documents, [])
             SET s.source_documents = [d IN s.source_documents WHERE d <> $doc_id]
-            
+
             WITH s
             WHERE size(coalesce(s.source_documents, [])) = 0
             DETACH DELETE s
         """, doc_id=document_id)
-        
+
         # Event cleanup (Events는 document-scoped로 ID에 doc_id 포함)
         await session.run("""
             MATCH (e:Event)
             WHERE e.eventId STARTS WITH $doc_id_prefix
             DETACH DELETE e
         """, doc_id_prefix=f"{document_id}_")
-        
+
         print(f"[NEO4J] Cleaned up existing data for document: {document_id}")
 
     async def _find_similar_character(
@@ -1524,13 +1464,13 @@ class DatabaseQueryService:
         """Find existing character with similar embedding using cosine similarity."""
         if not embedding:
             return None
-            
+
         try:
             result = await session.run("""
                 MATCH (c:Character {project_id: $pid})
                 WHERE c.embedding IS NOT NULL
-                WITH c, 
-                     reduce(dot = 0.0, i IN range(0, size(c.embedding)-1) | 
+                WITH c,
+                     reduce(dot = 0.0, i IN range(0, size(c.embedding)-1) |
                          dot + c.embedding[i] * $emb[i]) /
                      (sqrt(reduce(a = 0.0, i IN range(0, size(c.embedding)-1) | a + c.embedding[i]^2)) *
                       sqrt(reduce(b = 0.0, i IN range(0, size($emb)-1) | b + $emb[i]^2))) AS score
@@ -1539,7 +1479,7 @@ class DatabaseQueryService:
                 ORDER BY score DESC
                 LIMIT 1
             """, pid=project_id, emb=embedding, threshold=threshold)
-            
+
             record = await result.single()
             if record:
                 logger.info(f"[DEDUP] Found similar character: {record['name']} (score={record['score']:.3f})")
@@ -1555,13 +1495,13 @@ class DatabaseQueryService:
         """Find existing event with similar embedding using cosine similarity."""
         if not embedding:
             return None
-            
+
         try:
             result = await session.run("""
                 MATCH (e:Event {project_id: $pid})
                 WHERE e.embedding IS NOT NULL
                 WITH e,
-                     reduce(dot = 0.0, i IN range(0, size(e.embedding)-1) | 
+                     reduce(dot = 0.0, i IN range(0, size(e.embedding)-1) |
                          dot + e.embedding[i] * $emb[i]) /
                      (sqrt(reduce(a = 0.0, i IN range(0, size(e.embedding)-1) | a + e.embedding[i]^2)) *
                       sqrt(reduce(b = 0.0, i IN range(0, size($emb)-1) | b + $emb[i]^2))) AS score
@@ -1570,7 +1510,7 @@ class DatabaseQueryService:
                 ORDER BY score DESC
                 LIMIT 1
             """, pid=project_id, emb=embedding, threshold=threshold)
-            
+
             record = await result.single()
             if record:
                 logger.info(f"[DEDUP] Found similar event (score={record['score']:.3f})")
@@ -1586,13 +1526,13 @@ class DatabaseQueryService:
         """Find existing setting with similar embedding using cosine similarity."""
         if not embedding:
             return None
-            
+
         try:
             result = await session.run("""
                 MATCH (s:Setting {project_id: $pid})
                 WHERE s.embedding IS NOT NULL
                 WITH s,
-                     reduce(dot = 0.0, i IN range(0, size(s.embedding)-1) | 
+                     reduce(dot = 0.0, i IN range(0, size(s.embedding)-1) |
                          dot + s.embedding[i] * $emb[i]) /
                      (sqrt(reduce(a = 0.0, i IN range(0, size(s.embedding)-1) | a + s.embedding[i]^2)) *
                       sqrt(reduce(b = 0.0, i IN range(0, size($emb)-1) | b + $emb[i]^2))) AS score
@@ -1601,7 +1541,7 @@ class DatabaseQueryService:
                 ORDER BY score DESC
                 LIMIT 1
             """, pid=project_id, emb=embedding, threshold=threshold)
-            
+
             record = await result.single()
             if record:
                 logger.info(f"[DEDUP] Found similar setting: {record['name']} (score={record['score']:.3f})")
@@ -1613,7 +1553,7 @@ class DatabaseQueryService:
 
     async def _sync_to_neo4j(self, project_id, document_id, characters, events, settings_list, relationships):
         """Neo4j에 분석 결과 동기화.
-        
+
         Spring에서 삭제된 로직을 포함하여 전체 데이터를 저장합니다.
         """
         import json
@@ -1625,32 +1565,32 @@ class DatabaseQueryService:
             # Cleanup하면 기존 데이터 삭제 후 재생성 → 불필요한 DB 부하
             # 작가가 글을 추가할 때마다 기존 정보가 사라지는 문제 방지
             # await self._cleanup_document_data(session, document_id)
-            
+
             # ===== 1. Characters =====
             # Spring의 saveCharacters() + updateCharacterJsonFields() 로직 통합
             for char in characters:
                 # Extract name from top-level or nested profile
                 char_name = char.get("name") or (char.get("profile", {}) or {}).get("name")
-                
+
                 if not char_name:
                     continue
-                
+
                 char_name = char_name.strip()
-                
+
                 # Extract profile data
                 profile = char.get("profile", {}) or {}
-                
+
                 # Build profile JSON for storage
                 profile_json = json.dumps(profile, ensure_ascii=False) if profile else None
-                
+
                 # Extract current mood
                 current_mood = char.get("current_mood", {}) or {}
                 current_mood_json = json.dumps(current_mood, ensure_ascii=False) if current_mood else None
-                
+
                 # Extract appearance
                 appearance = char.get("appearance", {}) or {}
                 appearance_json = json.dumps(appearance, ensure_ascii=False) if appearance else None
-                
+
                 # Extract relations
                 relations = char.get("relations", {}) or {}
                 # Extract relations
@@ -1659,7 +1599,7 @@ class DatabaseQueryService:
 
                 # Extract embedding
                 embedding = char.get("embedding") # List[float]
-                
+
                 # 🆕 Embedding-based deduplication: Find similar existing character
                 existing_name = await self._find_similar_character(session, project_id, embedding)
                 if existing_name and existing_name.lower() != char_name.lower():
@@ -1674,13 +1614,13 @@ class DatabaseQueryService:
                         END
                     """, pid=project_id, existing_name=existing_name, new_alias=char_name)
                     char_name = existing_name  # Use existing name for MERGE
-                
+
                 await session.run(
                     """
                     MERGE (c:Character {project_id: $pid, name: $name})
-                    SET 
+                    SET
                         // Merge-with-History: Keep first non-null value
-                        c.role = CASE 
+                        c.role = CASE
                             WHEN c.role IS NULL OR c.role = 'Unknown' THEN $role
                             WHEN $role IS NULL OR $role = 'Unknown' THEN c.role
                             WHEN size($role) > size(coalesce(c.role, '')) THEN $role
@@ -1689,7 +1629,7 @@ class DatabaseQueryService:
                         c.status = coalesce(c.status, $status),
                         c.age = coalesce(c.age, $age),
                         c.gender = coalesce(c.gender, $gender),
-                        
+
                         // Keep longer/more detailed version
                         c.profileJson = CASE
                             WHEN $profile_json IS NULL THEN c.profileJson
@@ -1703,20 +1643,20 @@ class DatabaseQueryService:
                             WHEN size($backstory) > size(c.backstory) THEN $backstory
                             ELSE c.backstory
                         END,
-                        
+
                         c.currentMoodJson = $mood_json,  // Always update mood (temporal)
                         c.appearanceJson = coalesce(c.appearanceJson, $appearance_json),
                         c.relationsJson = coalesce(c.relationsJson, $relations_json),
-                        
+
                         // Merge aliases (always set property, even if empty)
                         c.aliases = CASE
                             WHEN $aliases IS NULL OR size($aliases) = 0 THEN coalesce(c.aliases, [])
                             WHEN c.aliases IS NULL THEN $aliases
                             ELSE c.aliases + [a IN $aliases WHERE NOT a IN c.aliases]
                         END,
-                        
+
                         // Source documents tracking
-                        c.source_documents = CASE 
+                        c.source_documents = CASE
                             WHEN c.source_documents IS NULL THEN [$doc_id]
                             WHEN NOT $doc_id IN c.source_documents THEN c.source_documents + $doc_id
                             ELSE c.source_documents
@@ -1740,19 +1680,19 @@ class DatabaseQueryService:
                     aliases=char.get("aliases") or [],
                     embedding=embedding
                 )
-            
+
             # ===== 2. Settings (Locations) =====
             # Spring의 saveSettings() 로직 통합
             for setting in settings_list:
                 setting_name = setting.get("name")
-                
+
                 if not setting_name:
                     continue
-                
+
                 # 🆕 Generate DETERMINISTIC setting_id from project_id + name
                 # This ensures same setting always gets same ID, avoiding UNIQUE constraint violations
                 setting_id = str(uuid_mod.uuid5(uuid_mod.UUID(project_id), f"setting_{setting_name}"))
-                
+
                 # 🆕 Generate embedding for setting if not present
                 setting_embedding = setting.get("embedding")
                 if not setting_embedding:
@@ -1762,7 +1702,7 @@ class DatabaseQueryService:
                         setting_embedding = await self.get_embedding(setting_text)
                     except Exception:
                         setting_embedding = None
-                
+
                 # 🆕 Embedding-based deduplication: Find similar existing setting
                 existing_name = await self._find_similar_setting(session, project_id, setting_embedding)
                 if existing_name and existing_name.lower() != setting_name.lower():
@@ -1781,12 +1721,12 @@ class DatabaseQueryService:
                 await session.run(
                     """
                     MERGE (s:Setting {project_id: $pid, name: $name})
-                    SET 
+                    SET
                         s.settingId = coalesce(s.settingId, $setting_id),
-                        
+
                         // Merge-with-History: Keep first non-null value
                         s.locationType = coalesce(s.locationType, $loc_type),
-                        
+
                         // Keep longer description
                         s.description = CASE
                             WHEN $desc IS NULL THEN s.description
@@ -1800,31 +1740,31 @@ class DatabaseQueryService:
                             WHEN size($visual_bg) > size(s.visualBackground) THEN $visual_bg
                             ELSE s.visualBackground
                         END,
-                        
+
                         s.atmosphere = coalesce(s.atmosphere, $atmosphere),
                         s.timeOfDay = coalesce(s.timeOfDay, $time_of_day),
                         s.lighting = coalesce(s.lighting, $lighting),
                         s.weather = coalesce(s.weather, $weather),
-                        
+
                         // Merge notable features (accumulate)
                         s.notableFeatures = CASE
                             WHEN s.notableFeatures IS NULL THEN $notable_features
                             WHEN $notable_features IS NULL THEN s.notableFeatures
                             ELSE [f IN (s.notableFeatures + $notable_features) WHERE f IS NOT NULL]
                         END,
-                        
+
                         s.significance = coalesce(s.significance, $significance),
                         s.isPrimary = coalesce(s.isPrimary, $is_primary),
                         s.parentLocation = $parent_location,
                         s.artStyle = $art_style,
-                        
+
                         // Source documents tracking
-                        s.source_documents = CASE 
+                        s.source_documents = CASE
                             WHEN s.source_documents IS NULL THEN [$doc_id]
                             WHEN NOT $doc_id IN s.source_documents THEN s.source_documents + $doc_id
                             ELSE s.source_documents
                         END,
-                        
+
                         // Save Embedding (Vector)
                         s.embedding = $embedding
                     """,
@@ -1846,7 +1786,7 @@ class DatabaseQueryService:
                     art_style=setting.get("art_style"),
                     embedding=setting_embedding
                 )
-            
+
             # ===== 3. Events =====
             # Spring의 saveEvents() 로직 통합
             # 🆕 Event ID는 document-scoped: {document_id}_{event_id}
@@ -1854,7 +1794,7 @@ class DatabaseQueryService:
                 raw_evt_id = evt.get("event_id") or evt.get("id")
                 # Document-scoped event ID
                 evt_id_with_doc = f"{document_id}_{raw_evt_id}" if raw_evt_id else f"{document_id}_{uuid_mod.uuid4()}"
-                
+
                 try:
                     evt_uuid = str(uuid_mod.UUID(raw_evt_id)) if raw_evt_id else str(uuid_mod.uuid4())
                 except (ValueError, AttributeError):
@@ -1863,7 +1803,7 @@ class DatabaseQueryService:
                 # 🆕 Embedding-based deduplication: Find similar existing event
                 evt_embedding = evt.get("embedding")
                 narrative_summary = evt.get("narrative_summary", "")
-                
+
                 existing_summary = await self._find_similar_event(session, project_id, evt_embedding)
                 if existing_summary and existing_summary != narrative_summary:
                     logger.info(f"[DEDUP] Found similar event, using existing summary")
@@ -1871,8 +1811,9 @@ class DatabaseQueryService:
 
                 await session.run(
                     """
-                    MERGE (e:Event {project_id: $pid, narrativeSummary: $narrative_summary})
-                    SET e.eventId = coalesce(e.eventId, $id_with_doc),
+                    MERGE (e:Event {eventId: $id_with_doc})
+                    SET e.project_id = $pid,
+                        e.narrativeSummary = $narrative_summary,
                         e.eventType = $event_type,
                         e.description = $desc,
                         e.chapter = $chapter,
@@ -1881,17 +1822,17 @@ class DatabaseQueryService:
                         e.timestamp = $timestamp,
                         e.locationRef = $location_ref,
                         e.prevEventId = $prev_event_id,
-                        e.documentId = CASE 
+                        e.documentId = CASE
                             WHEN e.documentId IS NULL THEN $doc_id
                             WHEN NOT $doc_id IN coalesce(e.source_documents, []) THEN e.documentId
                             ELSE e.documentId
                         END,
-                        e.source_documents = CASE 
+                        e.source_documents = CASE
                             WHEN e.source_documents IS NULL THEN [$doc_id]
                             WHEN NOT $doc_id IN e.source_documents THEN e.source_documents + $doc_id
                             ELSE e.source_documents
                         END,
-                        
+
                         // Save Embedding (Vector)
                         e.embedding = $embedding
                     """,
@@ -1916,9 +1857,9 @@ class DatabaseQueryService:
                 for participant_name in participants:
                     if not participant_name:
                         continue
-                    
+
                     participant_name = participant_name.strip()
-                    
+
                     await session.run(
                         """
                         MATCH (c:Character {project_id: $pid, name: $char_name})
@@ -1965,7 +1906,7 @@ class DatabaseQueryService:
                     MATCH (a:Character {{projectId: $pid, name: $source}})
                     MATCH (b:Character {{projectId: $pid, name: $target}})
                     MERGE (a)-[r:{safe_rel_type}]->(b)
-                    SET r.description = $desc, 
+                    SET r.description = $desc,
                         r.strength = $strength,
                         r.bidirectional = $bidirectional,
                         r.emotionalBond = $emotional_bond,
@@ -1996,7 +1937,7 @@ class DatabaseQueryService:
                         MATCH (a:Character {{projectId: $pid, name: $source}})
                         MATCH (b:Character {{projectId: $pid, name: $target}})
                         MERGE (b)-[r:{safe_rel_type}]->(a)
-                        SET r.description = $desc, 
+                        SET r.description = $desc,
                             r.strength = $strength,
                             r.bidirectional = $bidirectional,
                             r.emotionalBond = $emotional_bond,

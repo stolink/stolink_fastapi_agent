@@ -189,7 +189,7 @@ class DocumentAnalysisConsumer:
             if not content:
                 fetched_content = await db_service.get_document_content(document_id)
                 if fetched_content:
-                    content = fetched_content
+                    content = fetched_content.get("content")  # 🟢 Extract 'content' field from dict
 
             # Fallbacks
             if not content:
@@ -201,7 +201,8 @@ class DocumentAnalysisConsumer:
                     raise ValueError(f"Document content not found: {document_id}")
 
             # 4. 분석 수행 (Vector Generation & Storage)
-            # Before running agents, we generate semantic sections and save to PGVector
+            # 🆕 We no longer save sections HERE because it overwrites the hashes
+            # before incremental analysis can compare them.
             sections = []
             try:
                 from app.services.chunking_service import ChunkingService
@@ -214,10 +215,9 @@ class DocumentAnalysisConsumer:
                 logger.info("Generating semantic sections for vector search", document_id=document_id)
                 sections = await chunker.create_semantic_sections(content)
 
-                # Save to DB (pgvector)
-                # Note: We save sections first so we can reference them if needed
-                saved_count = await db_service.save_sections(document_id, sections)
-                logger.info("Saved vector sections to DB", count=saved_count, document_id=document_id)
+                # 🛑 [REMOVED] Premature save_sections call here
+                # saved_count = await db_service.save_sections(document_id, sections)
+                # logger.info("Saved vector sections to DB", count=saved_count, document_id=document_id)
 
             except Exception as e:
                 logger.error("Vector generation failed", error=str(e), document_id=document_id)
@@ -225,41 +225,41 @@ class DocumentAnalysisConsumer:
 
 
             # STREAMING: Pass sections and db_service to run_analysis
-            
+
             # 🆕 3.5. 맥락 유지 (Hierarchical Context) 주입
             # -> 이전 챕터들의 요약과 관련 캐릭터 정보를 가져와서 파이프라인에 주입
             try:
                 from app.services.hierarchical_context import get_hierarchical_context_manager
                 ctx_manager = await get_hierarchical_context_manager()
-                
+
                 # Context Build Call (캐릭터 이름 감지는 내부에서 텍스트 기반으로 수행될 수 있으나,
                 # 최적화를 위해 여기서는 텍스트 전체를 넘기지 않고 document_id만 넘김.
                 # 필요 시 ctx_manager.get_context_for_analysis(text=content)를 쓸 수도 있음)
-                
+
                 # 1. 텍스트에서 캐릭터 추출 (임시: content 사용)
                 mentioned_chars = await ctx_manager._extract_mentioned_characters(msg.project_id, content)
-                
+
                 logger.info("Context: Extracted mentioned characters", count=len(mentioned_chars), chars=mentioned_chars[:5])
-                
+
                 context_result = await ctx_manager.build_hierarchical_context(
                     project_id=msg.project_id,
                     current_document_id=msg.document_id,
                     mentioned_characters=mentioned_chars,
                     max_recent_chapters=5
                 )
-                
+
                 # 시스템이 생성한 Context text
                 system_context_text = context_result.get("context_text", "")
-                
+
                 if system_context_text:
                     if msg.context:
                          # 기존 컨텍스트가 있다면 뒤에 추가
                          msg.context = f"{msg.context}\n\n{system_context_text}"
                     else:
                          msg.context = system_context_text
-                    
+
                     logger.info("Hierarchical context injected", length=len(system_context_text))
-                    
+
             except Exception as e:
                 logger.error("Failed to inject hierarchical context", error=str(e))
                 # 실패해도 계속 진행 (맥락 없이)
@@ -296,6 +296,16 @@ class DocumentAnalysisConsumer:
                 processing_time_ms=processing_time_ms,
                 trace_id=trace_id
             )
+
+            # 🆕 5.5. Save Sections only after SUCCESSFUL analysis
+            # This updates the cache for the next incremental run.
+            if result.success and result.sections:
+                try:
+                    # result.sections contains the linked sections (with character/event links)
+                    saved_count = await db_service.save_sections(document_id, result.sections)
+                    logger.info("Updated vector sections cache in DB after successful analysis", count=saved_count, document_id=document_id)
+                except Exception as save_err:
+                    logger.error("Failed to update sections cache", error=str(save_err), document_id=document_id)
 
 
             # 🆕 콜백 데이터 출력 (디버깅 용도)
@@ -337,39 +347,39 @@ class DocumentAnalysisConsumer:
             try:
                 from app.services.summary_service import get_summary_service, SummaryLevel
                 import asyncio
-                
+
                 summary_svc = await get_summary_service()
-                
+
                 # 현재까지의 챕터 요약 개수 확인
-                # (성능 최적화를 위해 count만 하는 쿼리가 있으면 좋겠지만, 
+                # (성능 최적화를 위해 count만 하는 쿼리가 있으면 좋겠지만,
                 # 현재는 get_summaries_for_project로 리스트를 가져와서 길이 체크)
                 summaries = await summary_svc.get_summaries_for_project(msg.project_id, level=SummaryLevel.CHAPTER)
                 count = len(summaries)
-                
-                
+
+
                 if count > 0 and count % 5 == 0:
                     logger.info("Triggering global summary update (5-chapter interval)", project_id=msg.project_id, current_chapter_count=count)
                     asyncio.create_task(summary_svc.update_global_summary(msg.project_id))
-                
+
                 # 🆕 Level 2 Trigger (Every 25 chapters)
                 if count > 0 and count % 25 == 0:
                     logger.info("Triggering volume summary update (25-chapter interval)", project_id=msg.project_id, current_chapter_count=count)
-                    
+
                     # 최근 25개 챕터 ID 추출 (get_summaries는 최신순 반환)
                     recent_summaries = summaries[:25]
                     chapter_ids = [s['document_id'] for s in recent_summaries]
-                    
+
                     # 권 ID 생성 (결정론적 UUID: ProjectID + Volume 번호)
                     import uuid
                     vol_num = count // 25
                     vol_doc_id = str(uuid.uuid5(uuid.UUID(msg.project_id), f"Volume_{vol_num}"))
-                    
+
                     asyncio.create_task(summary_svc.update_volume_summary(
                         msg.project_id,
                         vol_doc_id,
                         chapter_ids
                     ))
-                    
+
             except Exception as trig_err:
                 logger.error("Failed to trigger summary updates", error=str(trig_err))
 
@@ -497,7 +507,7 @@ class DocumentAnalysisConsumer:
             # Vector Search + Keyword Matching을 통해 관련 캐릭터/사건 조회
             try:
                 context_manager = await get_hierarchical_context_manager()
-                
+
                 # Retrieve structured context data (dict)
                 context_data = await context_manager.retrieve_analysis_context_data(
                     project_id=project_id,
@@ -505,18 +515,18 @@ class DocumentAnalysisConsumer:
                     current_document_id=document_id,
                     parent_folder_id=parent_folder_id  # 🆕 인트라-챕터 컨텍스트용
                 )
-                
+
                 # 1. Update current_context with retrieved Characters
                 # EntityCentricContextBuilder returns detailed histories, we need to adapt to existing_characters format
                 # Format: {"name": str, "role": str}
                 entity_context = context_data.get("entity_context") or {}
                 char_histories = entity_context.get("character_histories", [])
-                
+
                 retrieved_chars_count = 0
                 for ch in char_histories:
                     c_name = ch.get("name")
                     if not c_name: continue
-                    
+
                     # Deduplicate against existing list
                     exists = any(ex.get("name") == c_name for ex in current_context["existing_characters"])
                     if not exists:
@@ -527,7 +537,7 @@ class DocumentAnalysisConsumer:
                             # Can add more fields if run_analysis_pipeline supports them
                         })
                         retrieved_chars_count += 1
-                
+
                 # 2. Update current_context with retrieved Events (RAG)
                 # Format: {"id": str, "summary": str}
                 similar_events = context_data.get("similar_events", [])
@@ -535,7 +545,7 @@ class DocumentAnalysisConsumer:
                 for evt in similar_events:
                     evt_id = evt.get("event_id")
                     if not evt_id: continue
-                    
+
                     exists = any(ex.get("id") == evt_id for ex in current_context["existing_events"])
                     if not exists:
                         current_context["existing_events"].append({
@@ -553,11 +563,11 @@ class DocumentAnalysisConsumer:
                     total_chars=len(current_context["existing_characters"]),
                     total_events=len(current_context["existing_events"])
                 )
-                
+
             except Exception as ctx_err:
                 logger.warning("Failed to retrieve/merge RAG context", error=str(ctx_err))
             # =================================================
-            
+
             # 1. Prepare Batches (Streaming Units)
             # If sections exist, use them. If not (short text failed chunking), treat as one batch.
             batches = []
@@ -573,20 +583,20 @@ class DocumentAnalysisConsumer:
             # 🆕 ===== INCREMENTAL ANALYSIS: Detect change point =====
             start_batch_index = 0
             previous_summary_context = ""
-            
+
             try:
                 # Get previous section hashes for this document
                 previous_hashes = await db_service.get_previous_section_hashes(document_id)
-                
+
                 if previous_hashes and sections:
                     # Detect first changed section
                     change_point = db_service.detect_change_point(previous_hashes, sections)
-                    
+
                     if change_point == -1:
                         # No content changes detected
                         # Check if previous summary exists (confirmation of successful previous analysis)
                         previous_summary_context = await db_service.get_previous_summary(document_id)
-                        
+
                         if previous_summary_context:
                             logger.info("[INCREMENTAL] No changes detected and previous summary exists. Using cached results.")
                             return ProcessingResult(
@@ -601,12 +611,12 @@ class DocumentAnalysisConsumer:
                             # Content matches but no summary -> Previous analysis likely failed
                             logger.info("[INCREMENTAL] No changes detected BUT sections have no summary. Forcing re-analysis.")
                             start_batch_index = 0
-                            
+
                     elif change_point > 0:
                         # Skip unchanged sections
                         start_batch_index = change_point
                         logger.info(f"[INCREMENTAL] Skipping {change_point} unchanged sections, starting from section {change_point + 1}")
-                        
+
                         # Get previous summary for context
                         previous_summary_context = await db_service.get_previous_summary(document_id) or ""
                         if previous_summary_context:
@@ -615,7 +625,7 @@ class DocumentAnalysisConsumer:
                         logger.info("[INCREMENTAL] First section changed, full re-analysis required")
                 else:
                     logger.info("[INCREMENTAL] No previous analysis found, performing full analysis")
-                    
+
             except Exception as incr_err:
                 logger.warning(f"[INCREMENTAL] Change detection failed, falling back to full analysis: {incr_err}")
             # ============================================================
@@ -636,14 +646,14 @@ class DocumentAnalysisConsumer:
                 if i < start_batch_index:
                     logger.info(f"[INCREMENTAL] Skipping unchanged batch {i+1}/{len(batches)}")
                     continue
-                    
+
                 batch_content = batch["content"]
-                
+
                 # 🆕 Prepend previous summary as context for first analyzed batch
                 if i == start_batch_index and previous_summary_context:
                     batch_content = f"[이전 내용 요약]\n{previous_summary_context}\n\n[새로 추가된 내용]\n{batch_content}"
                     logger.info(f"[INCREMENTAL] Added previous summary context to batch {i+1}")
-                
+
                 logger.info(f"Processing Batch {i+1}/{len(batches)}", size=len(batch_content))
 
                 # 2. Run Pipeline for Batch
@@ -725,11 +735,11 @@ class DocumentAnalysisConsumer:
                 # 🆕 관계 데이터 추출 (relationship_graph에서)
                 rel_graph = pipeline_result.get("relationship_graph", {})
                 batch_relationships = []
-                
+
                 # 🆕 Debug: Log relationship extraction
                 logger.info(f"[RELATIONSHIPS] 🔍 Batch {i+1}: Checking pipeline_result for relationship_graph")
                 logger.info(f"[RELATIONSHIPS] 🔍 relationship_graph exists: {bool(rel_graph)}")
-                
+
                 if rel_graph and isinstance(rel_graph, dict):
                     batch_relationships = rel_graph.get("relationships", [])
                     logger.info(f"[RELATIONSHIPS] 🔍 Batch {i+1}: Extracted {len(batch_relationships)} relationships from rel_graph")
@@ -800,7 +810,7 @@ class DocumentAnalysisConsumer:
                     c_name = c.get("name") or c.get("profile", {}).get("name")
                     if c_name:
                         final_characters_map[c_name] = c
-                
+
                 # 🆕 Events: dedupe by event_id
                 for e in evts:
                     evt_id = e.get("event_id") or e.get("id")
@@ -809,7 +819,7 @@ class DocumentAnalysisConsumer:
                     else:
                         # No ID, skip (shouldn't happen)
                         logger.warning("Event without ID, skipping", event=e)
-                
+
                 # 🆕 Settings: dedupe by setting_id
                 for s in stgs:
                     setting_id = s.get("setting_id") or s.get("id")
@@ -843,7 +853,7 @@ class DocumentAnalysisConsumer:
                     # Handle list format (direct list of relations)
                     elif isinstance(relations_data, list):
                         char_relations = relations_data
-                    
+
                     if char_relations:
                         logger.info(f"[RELATIONSHIPS] 🔍 Character '{char_name}' has {len(char_relations)} relations in embedded data")
 
@@ -896,14 +906,14 @@ class DocumentAnalysisConsumer:
             # 🆕 [FIX] Inject extracted relationships back into Character objects
             if final_relationships:
                 logger.info(f"[RELATIONSHIPS] 🔄 Injecting {len(final_relationships)} relationships back into characters for result.json")
-                
+
                 # Initialize relations for all characters
                 for c_name, c_data in final_characters_map.items():
                     if "relations" not in c_data or not isinstance(c_data["relations"], dict):
                         c_data["relations"] = {"graph": [], "event_refs": []}
                     else:
                         c_data["relations"]["graph"] = [] # Reset for fresh injection
-                
+
                 # Distribute relationships
                 for rel in final_relationships:
                     src = rel.get("source")
@@ -915,7 +925,7 @@ class DocumentAnalysisConsumer:
             # 🆕 Convert dict back to list for final output
             final_events = list(final_events_map.values())
             final_settings = list(final_settings_map.values())
-            
+
             logger.info(
                 "Final aggregation complete",
                 characters=len(final_characters_map),
@@ -944,7 +954,7 @@ class DocumentAnalysisConsumer:
                 logger.info("[DEBUG] Saved result.json successfully")
             except Exception as e:
                 logger.error(f"[DEBUG] Failed to save result.json: {e}")
-            
+
             # 🆕 Link characters and events to sections
             linked_sections = []
             for i, sec in enumerate(sections):
@@ -975,7 +985,7 @@ class DocumentAnalysisConsumer:
             document_summary: Optional[DocumentSummaryOutput] = None
             try:
                 summary_service = await get_summary_service()
-                
+
                 # 요약 생성 (Returns dict)
                 summary_data = await summary_service.generate_chapter_summary(
                     content,
@@ -985,10 +995,10 @@ class DocumentAnalysisConsumer:
                         "settings": final_settings
                     }
                 )
-                
+
                 if summary_data:
                     document_summary = DocumentSummaryOutput(**summary_data)
-                
+
                 logger.info(
                     "Chapter summary generated (will be sent to Spring via callback)",
                     document_id=document_id,
@@ -1110,13 +1120,13 @@ class DocumentAnalysisConsumer:
         processing_time_ms: int,
     ) -> None:
         """분석 결과를 Event로 발행 (Event Sourcing).
-        
+
         Spring Boot의 Event Consumer가 이 이벤트를 수신하여
         RDB에 저장합니다 (Single Source of Truth).
         """
         try:
             publisher = await get_event_publisher()
-            
+
             if result.success:
                 # 분석 완료 이벤트
                 event = AnalysisCompletedEvent(
@@ -1144,7 +1154,7 @@ class DocumentAnalysisConsumer:
                     character_timelines=[t.model_dump() for t in result.character_timelines] if result.character_timelines else [],
                     processing_time_ms=processing_time_ms,
                 )
-                
+
                 await publisher.publish_completed(event)
                 logger.info(
                     "Analysis event published",
@@ -1165,7 +1175,7 @@ class DocumentAnalysisConsumer:
                     error_details=error_info,
                     processing_time_ms=processing_time_ms,
                 )
-                
+
                 await publisher.publish_failed(event)
                 logger.info(
                     "Analysis event published",
@@ -1173,7 +1183,7 @@ class DocumentAnalysisConsumer:
                     event_id=event.event_id,
                     document_id=document_id,
                 )
-                
+
         except Exception as e:
             logger.error(
                 "Failed to publish analysis event",

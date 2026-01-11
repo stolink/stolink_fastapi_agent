@@ -47,8 +47,16 @@ class CallbackClient:
             logger.info("Modified request URL for Docker", new_url=url)
             print(f"[CALLBACK] Modified URL for Docker: {url}", flush=True)
 
+
         for attempt in range(max_retries):
             try:
+                # Add Origin header for Spring Security CORS/CSRF if not present
+                headers = kwargs.get("headers", {})
+                if "Origin" not in headers:
+                    # Use trusted Frontend Origin to bypass CORS/CSRF restrictions
+                    headers["Origin"] = settings.frontend_url
+                    kwargs["headers"] = headers
+
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     if method.upper() == "POST":
                         response = await client.post(url, **kwargs)
