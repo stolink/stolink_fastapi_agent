@@ -376,6 +376,15 @@ async def relations_extraction_node(state: dict) -> dict:
         
         print(f"[RELATIONS] Total: {len(relations_data)} characters extracted (after bidirectional sync)")
         
+        # 🔍 DEBUG: Log complete relations_data structure
+        print(f"[RELATIONS] 🔍 DEBUG: Complete relations_data structure:")
+        for char_name, char_data in relations_data.items():
+            rels_list = char_data.get("relations", [])
+            print(f"[RELATIONS] 🔍   '{char_name}' -> keys={list(char_data.keys())}, relations_count={len(rels_list)}")
+            if rels_list:
+                for idx, rel in enumerate(rels_list[:2]):  # Show first 2 relations
+                    print(f"[RELATIONS] 🔍     [{idx}] target={rel.get('target')}, type={rel.get('type')}, strength={rel.get('strength')}")
+        
         return {
             "char_relations": relations_data,
             "completed_agents": (state.get("completed_agents") or []) + ["relations"],

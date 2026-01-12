@@ -56,7 +56,6 @@ class ProcessingResult:
     settings: list[dict]
     relationships: list[dict] = None  # 🆕 캐릭터 간 관계
     # 🆕 Level 2 Analysis Results (Spring 요청)
-    plot: Optional[dict] = None
     consistency_report: Optional[dict] = None
     validation: Optional[dict] = None  # 검증 결과 추가
     document_summary: Optional[DocumentSummaryOutput] = None  # 🆕 문서 요약 (구조화됨)
@@ -199,6 +198,12 @@ class DocumentAnalysisConsumer:
                 else:
                     logger.error("Content NOT FOUND in Message or DB", keys=list(body.keys()))
                     raise ValueError(f"Document content not found: {document_id}")
+
+            # 🔍 Log the content being analyzed
+            # Using print() to force output to Docker logs if logger is filtered
+            print(f"📄 Content fetched for analysis (length: {len(content)} chars)", flush=True)
+            print(f"📄 First 500 characters of content:\n{content[:500]}...", flush=True)
+
 
             # 4. 분석 수행 (Vector Generation & Storage)
             # 🆕 We no longer save sections HERE because it overwrites the hashes
@@ -637,7 +642,6 @@ class DocumentAnalysisConsumer:
             final_events_map = {}      # 🆕 dedupe by event_id
             final_settings_map = {}    # 🆕 dedupe by setting_id
             final_relationships = []   # 🆕 관계 데이터 축적
-            final_plot = {}
             final_consistency = {}
             final_validation = {}  # 🆕 검증 결과
 
@@ -654,7 +658,8 @@ class DocumentAnalysisConsumer:
                     batch_content = f"[이전 내용 요약]\n{previous_summary_context}\n\n[새로 추가된 내용]\n{batch_content}"
                     logger.info(f"[INCREMENTAL] Added previous summary context to batch {i+1}")
 
-                logger.info(f"Processing Batch {i+1}/{len(batches)}", size=len(batch_content))
+                print(f"Processing Batch {i+1}/{len(batches)} (size={len(batch_content)})", flush=True)
+                print(f"📄 Analyzing text content (first 500 chars):\n{batch_content[:500]}...", flush=True)
 
                 # 2. Run Pipeline for Batch
                 # 🆕 analysis_type 기반 분석 모드 결정
@@ -831,7 +836,6 @@ class DocumentAnalysisConsumer:
                         if s_name:
                             final_settings_map[s_name] = s
 
-                if pipeline_result.get("plot"): final_plot = pipeline_result.get("plot")
                 if pipeline_result.get("consistency_report"): final_consistency = pipeline_result.get("consistency_report")
                 if pipeline_result.get("validation_result"): final_validation = pipeline_result.get("validation_result")
 
@@ -945,7 +949,6 @@ class DocumentAnalysisConsumer:
                     "events": final_events,
                     "settings": final_settings,
                     "relationships": final_relationships,
-                    "plot": final_plot,
                     "consistency_report": final_consistency,
                     "validation_result": final_validation
                 }
@@ -1019,7 +1022,6 @@ class DocumentAnalysisConsumer:
                 events=final_events,
                 settings=final_settings,
                 relationships=final_relationships,  # 🆕
-                plot=final_plot,
                 consistency_report=final_consistency,
                 validation=final_validation if final_validation else None,
                 document_summary=document_summary,  # 🆕 Structured Output

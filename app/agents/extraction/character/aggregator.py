@@ -687,28 +687,36 @@ async def merge_character_data(
         
         # === MERGE DATA FROM ALL VARIANTS ===
         # Collect data from all name variants (e.g., "Vera" and "베라")
-        def get_merged_data(agent_dict: dict) -> dict:
+        def get_merged_data(agent_dict: dict, agent_name: str = "unknown") -> dict:
             """Merge data from all variant names for this character."""
             merged = {}
+            print(f"[AGGREGATOR] 🔍 get_merged_data({agent_name}) for '{canonical_name}' with variants: {variant_names}")
             for variant in variant_names:
                 variant_data = agent_dict.get(variant, {})
                 if variant_data:
+                    print(f"[AGGREGATOR] 🔍   Found data for variant '{variant}': keys={list(variant_data.keys())}")
                     # Merge: non-empty values from variants override empty ones
                     for k, v in variant_data.items():
                         if v and (k not in merged or not merged[k]):
                             merged[k] = v
+                else:
+                    print(f"[AGGREGATOR] 🔍   No data for variant '{variant}' in {agent_name}")
+            print(f"[AGGREGATOR] 🔍   Merged result for {agent_name}: keys={list(merged.keys())}")
             return merged
         
         # Merge source data using variants
-        identity_data = get_merged_data(identity)
-        appearance_data = get_merged_data(appearance)
-        personality_data = get_merged_data(personality)
-        relations_data = get_merged_data(relations)
+        identity_data = get_merged_data(identity, "identity")
+        appearance_data = get_merged_data(appearance, "appearance")
+        personality_data = get_merged_data(personality, "personality")
+        relations_data = get_merged_data(relations, "relations")
         # Removed: dialogue_mood data merge
         
         # Debug: Log relations data for each character
         rel_graph = relations_data.get("relations", [])
         print(f"[AGGREGATOR] {canonical_name}: rel_data keys={list(relations_data.keys())}, relations count={len(rel_graph)}")
+        if rel_graph:
+            print(f"[AGGREGATOR] 🔍 Sample relation: {rel_graph[0]}")
+        
         
         # Use canonical name for the character
         name = canonical_name
@@ -729,8 +737,9 @@ async def merge_character_data(
         else:
             final_role = extracted_role if extracted_role != "other" else (char_role or "other")
         
-        # Relations
-        final_relations = apply_safe_defaults(relations_data, {})
+        # Relations - use data directly (no defaults needed)
+        # 🐛 FIX: apply_safe_defaults({}, data) returns {} because it only iterates defaults.items()
+        final_relations = relations_data
         
         # Removed: Dialogue & Mood
         # dialogue_config = apply_safe_defaults(dm_data.get("dialogue", {}), {})
@@ -790,6 +799,9 @@ async def merge_character_data(
                 "graph": final_relations.get("relations", []),
                 "event_refs": char_to_events.get(name, []),  # Populated from events
             },
+            # 🔍 DEBUG: Log what's being assigned to relations.graph
+            # Note: This is after the object is created, so we log it separately
+
             # === Embedding for Neo4j Vector Search ===
             "embedding": await generate_character_embedding(
                 name=name,
@@ -797,6 +809,13 @@ async def merge_character_data(
                 role=final_role
             ),
         }
+        
+        # 🔍 DEBUG: Log final relations.graph content
+        final_graph = full_char.get("relations", {}).get("graph", [])
+        final_event_refs = full_char.get("relations", {}).get("event_refs", [])
+        print(f"[AGGREGATOR] 🔍 FINAL '{name}': relations.graph={len(final_graph)} items, event_refs={len(final_event_refs)} items")
+        if final_graph:
+            print(f"[AGGREGATOR] 🔍   Sample graph item: {final_graph[0]}")
         
         characters.append(full_char)
     

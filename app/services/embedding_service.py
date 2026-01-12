@@ -19,12 +19,18 @@ from tenacity import (
     retry_if_exception_type,
     before_sleep_log
 )
-from google import genai
-from google.genai import types
+logger = structlog.get_logger()
+
+try:
+    from google import genai
+    from google.genai import types
+except ImportError:
+    genai = None
+    types = None
+    logger.warning("google-genai package not found. Embedding service will be limited.")
 
 from app.config import settings
 
-logger = structlog.get_logger()
 
 # 재시도 가능한 네트워크 에러 타입
 RETRYABLE_ERRORS = (
@@ -91,6 +97,37 @@ class EmbeddingService:
         self._initialized = False
         logger.warning("Gemini embedding client reset for reconnection")
 
+    def _normalize_text(self, text: str) -> str:
+        """Normalize text for consistent caching.
+        
+        Handles:
+        - Leading/trailing whitespace
+        - Multiple consecutive spaces
+        - Case sensitivity (optional, currently disabled for Korean)
+        
+        Args:
+            text: Raw text
+            
+        Returns:
+            Normalized text for cache key
+        """
+        import re
+        
+        if not text:
+            return ""
+        
+        # Strip whitespace
+        normalized = text.strip()
+        
+        # Collapse multiple spaces to single space
+        normalized = re.sub(r'\s+', ' ', normalized)
+        
+        # Note: Not lowercasing to preserve Korean/mixed-language text
+        # Uncomment below for case-insensitive English-only:
+        # normalized = normalized.lower()
+        
+        return normalized
+
     @retry(
         stop=stop_after_attempt(5),
         wait=wait_exponential(multiplier=1, min=2, max=60),
@@ -120,14 +157,16 @@ class EmbeddingService:
             text = text[:max_chars]
             logger.warning("Text truncated for embedding", original_length=len(text))
 
-        # Cache Check
-        cache_key = f"emb:{hash(text)}"
+        # 🆕 Normalize text before hashing for better cache hit rate
+        normalized_text = self._normalize_text(text)
+        cache_key = f"emb:{hash(normalized_text)}"
+        
         if self._redis:
             try:
                 cached = self._redis.get(cache_key)
                 if cached:
                     import json
-                    logger.debug("Embedding cache hit")
+                    logger.debug("Embedding cache hit", normalized=len(normalized_text) != len(text))
                     return json.loads(cached)
             except Exception as e:
                 logger.warning(f"Redis get failed: {e}")
@@ -136,7 +175,7 @@ class EmbeddingService:
             client = self._get_client()
             response = client.models.embed_content(
                 model=self.MODEL_ID,
-                contents=text,
+                contents=text,  # Use original text for actual embedding
             )
 
             embedding = response.embeddings[0].values
