@@ -5,22 +5,22 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
-    
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",  # Allow legacy env vars like RABBITMQ_ANALYSIS_QUEUE
     )
-    
+
     # AWS Bedrock (deprecated - kept for backward compatibility)
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
     aws_region: str = "us-east-1"
-    
+
     # Google Gemini (primary LLM)
     gemini_api_key: str = ""
-    
+
     # RabbitMQ
     rabbitmq_host: str = "localhost"
     rabbitmq_port: int = 5672
@@ -28,55 +28,58 @@ class Settings(BaseSettings):
     rabbitmq_password: str = "guest"
     rabbitmq_vhost: str = "stolink"
     # Note: rabbitmq_analysis_queue removed (legacy). Use document_analysis_queue instead.
-    
+
     # Redis (Caching)
     redis_host: str = "localhost"
     redis_port: int = 6379
     redis_db: int = 0
-    
+
     # Document Analysis Architecture (대용량 분석)
     document_analysis_queue: str = "document_analysis_queue"
     global_merge_queue: str = "global_merge_queue"
     consumer_prefetch_count: int = 10
-    
+
     # Event Sourcing Architecture (신규)
     analysis_events_exchange: str = "stolink.analysis.events"
     analysis_completed_queue: str = "analysis.completed"
     analysis_dlq: str = "analysis.dlq"
     # 기존 Callback과 병행 운영 여부 (마이그레이션용)
     enable_legacy_callback: bool = True
-    
+
     # Spring Backend
     spring_backend_url: str = "http://localhost:8080"
     spring_callback_url: str = "http://localhost:8080"
-    
+
     # PostgreSQL
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     postgres_db: str = "stolink"
     postgres_user: str = "stolink"
     postgres_password: str = "stolink123"
-    
+
     # Neo4j
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = "stolink123"
-    
+
     # FastAPI
     fastapi_host: str = "0.0.0.0"
     fastapi_port: int = 8000
     debug: bool = False
-    
+
+    # Frontend (CORS/Origin)
+    frontend_url: str = "http://localhost:5173"  # Default to Vite local dev port
+
     @property
     def rabbitmq_url(self) -> str:
         """RabbitMQ connection URL."""
         return f"amqp://{self.rabbitmq_user}:{self.rabbitmq_password}@{self.rabbitmq_host}:{self.rabbitmq_port}/{self.rabbitmq_vhost}"
-    
+
     @property
     def postgres_url(self) -> str:
         """PostgreSQL connection URL."""
         return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-    
+
     @property
     def redis_url(self) -> str:
         """Redis connection URL."""
