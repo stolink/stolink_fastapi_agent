@@ -71,6 +71,42 @@ For each character pair with a relationship:
    - bidirectional: Follow DIRECTIONAL SEMANTICS above!
    - evolved_from: Previous relationship type (if changed)
 
+=== CRITICAL: JSON FORMATTING RULES ===
+
+**Property names MUST be in English with double quotes:**
+
+❌ BAD - Korean property names or missing quotes:
+{{
+  relationships: [  // Missing quotes on property name!
+    {{
+      "출처": "클레어",  // Korean property name!
+      "대상": "잭슨",
+      관계타입: "RIVAL"  // Korean + no quotes!
+    }}
+  ]
+}}
+
+✅ GOOD - English property names with proper quotes:
+{{
+  "relationships": [
+    {{
+      "source": "클레어",
+      "target": "잭슨",
+      "relation_type": "RIVAL",
+      "strength": 7,
+      "description": "강한 의견 대립",
+      "bidirectional": true
+    }}
+  ]
+}}
+
+**VALIDATION CHECKLIST before returning:**
+- [ ] All property names are in English?
+- [ ] All property names have double quotes?
+- [ ] All string values have double quotes?
+- [ ] Commas between properties?
+- [ ] Valid JSON structure (use json.loads to verify mentally)?
+
 === OUTPUT STRUCTURE ===
 {{
   "relationships": [
@@ -147,6 +183,34 @@ RELATIONSHIP_RE_ANALYSIS_PROMPT = ChatPromptTemplate.from_messages([
 2. source = A (배신자)
 3. target = B (피해자)
 4. bidirectional = false
+
+=== CRITICAL: JSON FORMATTING RULES ===
+
+**Property names MUST be in English with double quotes:**
+
+❌ BAD:
+{{
+  relationships: [  // Missing quotes!
+    {{"출처": "이민호"}}  // Korean property name!
+  ]
+}}
+
+✅ GOOD:
+{{
+  "relationships": [
+    {{
+      "source": "이민호",
+      "target": "서진",
+      "relation_type": "BETRAYED",
+      "strength": 9,
+      "description": "이민호가 서진을 배신함",
+      "bidirectional": false,
+      "conflict_resolution": "배신자=이민호, 피해자=서진으로 방향 수정"
+    }}
+  ]
+}}
+
+**VALIDATION:** All property names in English? All quotes present?
 
 === OUTPUT STRUCTURE ===
 {{

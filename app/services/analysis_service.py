@@ -122,7 +122,20 @@ async def run_analysis(
     
     # Bind tracing context to logger
     bound_logger = logger.bind(job_id=task.job_id, trace_id=trace_id)
-    bound_logger.info("Starting analysis (Parallel Batch Processing)...")
+    
+    # 🆕 Log content preview (first 200 chars, HTML stripped)
+    import re
+    content_preview = task.content[:500] if task.content else ""
+    # Remove HTML tags for cleaner preview
+    content_preview_clean = re.sub(r'<[^>]+>', ' ', content_preview).strip()
+    # Remove extra whitespace
+    content_preview_clean = re.sub(r'\s+', ' ', content_preview_clean)
+    
+    bound_logger.info(
+        "Starting analysis (Parallel Batch Processing)...",
+        content_length=len(task.content) if task.content else 0,
+        content_preview=content_preview_clean[:200] + "..." if len(content_preview_clean) > 200 else content_preview_clean
+    )
     
     # 0. Content Fetching (Claim Check Pattern)
     if not task.content and task.document_id:
@@ -245,7 +258,6 @@ async def run_analysis(
         final_events = []
         final_settings = []
         final_relationships = []
-        final_plot = {}
         final_consistency = {}
         final_validation = {} 
         
@@ -279,8 +291,7 @@ async def run_analysis(
             if rel_graph and isinstance(rel_graph, dict):
                  final_relationships.extend(rel_graph.get("relationships", []))
             
-            # Last valid batch results for Plot/Consistency (simplified merge strategy)
-            if res.get("plot"): final_plot = res.get("plot")
+            # Last valid batch results for Consistency (simplified merge strategy)
             if res.get("consistency_report"): final_consistency = res.get("consistency_report")
             if res.get("validation_result"): final_validation = res.get("validation_result")
 
@@ -351,7 +362,6 @@ async def run_analysis(
             "events": final_events,
             "settings": final_settings,
             "relationships": final_relationships,
-            "plot": final_plot,
             "consistency_report": final_consistency,
             "validation": final_validation,
             "metadata": {

@@ -3100,3 +3100,4 @@ The current "Load All -> Chunk -> Parallel Process" approach is efficient for sh
 
 ### 🏁 Conclusion
 You don't need to change everything immediately, but I recommend refactoring little by little with the philosophy of **"Split Data, Process, and Merge (Map-Reduce)"**. In particular, **Entity Resolution** logic will determine the quality of the long-novel service.
+

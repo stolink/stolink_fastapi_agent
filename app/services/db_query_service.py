@@ -1780,10 +1780,25 @@ class DatabaseQueryService:
 
                 await session.run(
                     """
-                    MERGE (s:Setting {project_id: $pid, name: $name})
-                    SET 
-                        s.settingId = coalesce(s.settingId, $setting_id),
-                        
+                    MERGE (s:Setting {settingId: $setting_id})
+                    ON CREATE SET 
+                        s.project_id = $pid,
+                        s.name = $name,
+                        s.locationType = $loc_type,
+                        s.description = $desc,
+                        s.visualBackground = $visual_bg,
+                        s.atmosphere = $atmosphere,
+                        s.timeOfDay = $time_of_day,
+                        s.lighting = $lighting,
+                        s.weather = $weather,
+                        s.notableFeatures = $notable_features,
+                        s.significance = $significance,
+                        s.isPrimary = $is_primary,
+                        s.parentLocation = $parent_location,
+                        s.artStyle = $art_style,
+                        s.source_documents = [$doc_id],
+                        s.embedding = $embedding
+                    ON MATCH SET
                         // Merge-with-History: Keep first non-null value
                         s.locationType = coalesce(s.locationType, $loc_type),
                         
@@ -1962,8 +1977,8 @@ class DatabaseQueryService:
 
                 # Create relationship with properties
                 query = f"""
-                    MATCH (a:Character {{projectId: $pid, name: $source}})
-                    MATCH (b:Character {{projectId: $pid, name: $target}})
+                    MATCH (a:Character {{project_id: $pid, name: $source}})
+                    MATCH (b:Character {{project_id: $pid, name: $target}})
                     MERGE (a)-[r:{safe_rel_type}]->(b)
                     SET r.description = $desc, 
                         r.strength = $strength,
@@ -1993,8 +2008,8 @@ class DatabaseQueryService:
                 # If bidirectional, create reverse relationship
                 if rel.get("bidirectional", False):
                     reverse_query = f"""
-                        MATCH (a:Character {{projectId: $pid, name: $source}})
-                        MATCH (b:Character {{projectId: $pid, name: $target}})
+                        MATCH (a:Character {{project_id: $pid, name: $source}})
+                        MATCH (b:Character {{project_id: $pid, name: $target}})
                         MERGE (b)-[r:{safe_rel_type}]->(a)
                         SET r.description = $desc, 
                             r.strength = $strength,
