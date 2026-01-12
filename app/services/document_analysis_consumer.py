@@ -200,8 +200,9 @@ class DocumentAnalysisConsumer:
                     raise ValueError(f"Document content not found: {document_id}")
 
             # 🔍 Log the content being analyzed
-            logger.info(f"📄 Content fetched for analysis (length: {len(content)} chars)")
-            logger.info(f"📄 First 500 characters of content:\n{content[:500]}...")
+            # Using print() to force output to Docker logs if logger is filtered
+            print(f"📄 Content fetched for analysis (length: {len(content)} chars)", flush=True)
+            print(f"📄 First 500 characters of content:\n{content[:500]}...", flush=True)
 
 
             # 4. 분석 수행 (Vector Generation & Storage)
@@ -647,8 +648,8 @@ class DocumentAnalysisConsumer:
                     batch_content = f"[이전 내용 요약]\n{previous_summary_context}\n\n[새로 추가된 내용]\n{batch_content}"
                     logger.info(f"[INCREMENTAL] Added previous summary context to batch {i+1}")
                 
-                logger.info(f"Processing Batch {i+1}/{len(batches)}", size=len(batch_content))
-                logger.info(f"📄 Analyzing text content (first 500 chars):\n{batch_content[:500]}...")
+                print(f"Processing Batch {i+1}/{len(batches)} (size={len(batch_content)})", flush=True)
+                print(f"📄 Analyzing text content (first 500 chars):\n{batch_content[:500]}...", flush=True)
 
                 # 2. Run Pipeline for Batch
                 # 🆕 analysis_type 기반 분석 모드 결정

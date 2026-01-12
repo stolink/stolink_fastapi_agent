@@ -1426,53 +1426,55 @@ class DatabaseQueryService:
         saved_count = 0
         try:
             async with self._pg_pool.acquire() as conn:
-                # Prepare statement for bulk insert
-                # Note: We use execute_many for better performance
-                
-                # First delete existing sections for this document to avoid duplicates
-                # (Optional: depends on business logic, here we replace)
-                await conn.execute("DELETE FROM sections WHERE document_id = $1", document_id)
-                
-                # Insert new sections
-                data_list = []
-                for idx, section in enumerate(sections):
-                    sec_id = str(uuid.uuid4())
-                    content = section.get("content", "")
-                    embedding = section.get("embedding") # List[float]
-                    nav_title = section.get("title", f"Section {idx+1}")
+                # 🆕 Use transaction to ensure DELETE+INSERT atomicity
+                async with conn.transaction():
+                    # Prepare statement for bulk insert
+                    # Note: We use execute_many for better performance
                     
-                    # 🆕 Generate content hash for incremental analysis
-                    import hashlib
-                    content_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]
+                    # First delete existing sections for this document to avoid duplicates
+                    # (Optional: depends on business logic, here we replace)
+                    await conn.execute("DELETE FROM sections WHERE document_id = $1", document_id)
                     
-                    # embedding must be passed as string format '[1.0, 2.0, ...]' for asyncpg if not using type codec
-                    if embedding is not None:
-                        if hasattr(embedding, "tolist"):
-                            embedding_str = str(embedding.tolist())
-                        elif isinstance(embedding, list):
-                            embedding_str = str(embedding)
-                        else:
-                            embedding_str = str(embedding)
-                    else:
-                        embedding_str = None
+                    # Insert new sections
+                    data_list = []
+                    for idx, section in enumerate(sections):
+                        sec_id = str(uuid.uuid4())
+                        content = section.get("content", "")
+                        embedding = section.get("embedding") # List[float]
+                        nav_title = section.get("title", f"Section {idx+1}")
                         
-                    data_list.append((
-                        sec_id, 
-                        document_id, 
-                        content, 
-                        embedding_str,  # pgvector accepts JSON string
-                        idx + 1, 
-                        nav_title,
-                        content_hash  # 🆕
-                    ))
-                
-                if data_list:
-                    # executemany works with list of tuples
-                    await conn.executemany("""
-                        INSERT INTO sections (id, document_id, content, embedding, sequence_order, nav_title, content_hash, created_at, updated_at)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-                    """, data_list)
-                    saved_count = len(data_list)
+                        # 🆕 Generate content hash for incremental analysis
+                        import hashlib
+                        content_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]
+                        
+                        # embedding must be passed as string format '[1.0, 2.0, ...]' for asyncpg if not using type codec
+                        if embedding is not None:
+                            if hasattr(embedding, "tolist"):
+                                embedding_str = str(embedding.tolist())
+                            elif isinstance(embedding, list):
+                                embedding_str = str(embedding)
+                            else:
+                                embedding_str = str(embedding)
+                        else:
+                            embedding_str = None
+                            
+                        data_list.append((
+                            sec_id, 
+                            document_id, 
+                            content, 
+                            embedding_str,  # pgvector accepts JSON string
+                            idx + 1, 
+                            nav_title,
+                            content_hash  # 🆕
+                        ))
+                    
+                    if data_list:
+                        # executemany works with list of tuples
+                        await conn.executemany("""
+                            INSERT INTO sections (id, document_id, content, embedding, sequence_order, nav_title, content_hash, created_at, updated_at)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+                        """, data_list)
+                        saved_count = len(data_list)
                     
         except Exception as e:
             logger.error("Failed to save sections to PG", error=str(e), document_id=document_id)
@@ -1619,6 +1621,7 @@ class DatabaseQueryService:
         import json
         import re
         import uuid as uuid_mod
+        import unicodedata # 🆕 Added for name normalization
 
         async with self._neo4j_driver.session() as session:
             # 🆕 Cleanup 제거: Merge-with-History가 자동으로 처리
@@ -1635,7 +1638,8 @@ class DatabaseQueryService:
                 if not char_name:
                     continue
                 
-                char_name = char_name.strip()
+                # 🆕 Normalize name to prevent invisible chars causing ID mismatch
+                char_name = unicodedata.normalize('NFKC', char_name).strip()
                 
                 # Extract profile data
                 profile = char.get("profile", {}) or {}
@@ -1660,10 +1664,15 @@ class DatabaseQueryService:
                 # Extract embedding
                 embedding = char.get("embedding") # List[float]
                 
+                # 🆕 Generate DETERMINISTIC character_id from project_id + name
+                # This ensures same character always gets same ID, avoiding duplicates
+                char_id = str(uuid_mod.uuid5(uuid_mod.UUID(project_id), f"character_{char_name}"))
+                
                 # 🆕 Embedding-based deduplication: Find similar existing character
                 existing_name = await self._find_similar_character(session, project_id, embedding)
                 if existing_name and existing_name.lower() != char_name.lower():
                     logger.info(f"[DEDUP] Merging '{char_name}' with existing '{existing_name}'")
+                    # If duplicate found by similarity, we should ideally use that ID.
                     # Add current name as alias to existing character
                     await session.run("""
                         MATCH (c:Character {project_id: $pid, name: $existing_name})
@@ -1673,12 +1682,36 @@ class DatabaseQueryService:
                             ELSE c.aliases
                         END
                     """, pid=project_id, existing_name=existing_name, new_alias=char_name)
-                    char_name = existing_name  # Use existing name for MERGE
-                
+                    
+                    # Update info to target existing character
+                    char_name = existing_name 
+                    char_id = str(uuid_mod.uuid5(uuid_mod.UUID(project_id), f"character_{existing_name}"))
+
+                print(f"[DEBUG] Validated character: {char_name} (ID: {char_id})", flush=True)
+
                 await session.run(
                     """
-                    MERGE (c:Character {project_id: $pid, name: $name})
-                    SET 
+                    MERGE (c:Character {characterId: $char_id})
+                    ON CREATE SET 
+                        c.project_id = $pid,
+                        c.name = $name,
+                        c.role = $role,
+                        c.status = $status,
+                        c.age = $age,
+                        c.gender = $gender,
+                        c.profileJson = $profile_json,
+                        c.backstory = $backstory,
+                        c.currentMoodJson = $mood_json,
+                        c.appearanceJson = $appearance_json,
+                        c.relationsJson = $relations_json,
+                        c.aliases = $aliases,
+                        c.source_documents = [$doc_id],
+                        c.embedding = $embedding
+                    ON MATCH SET
+                        // Update basic info if missing
+                        c.project_id = coalesce(c.project_id, $pid),
+                        c.name = coalesce(c.name, $name),
+                        
                         // Merge-with-History: Keep first non-null value
                         c.role = CASE 
                             WHEN c.role IS NULL OR c.role = 'Unknown' THEN $role
@@ -1686,6 +1719,7 @@ class DatabaseQueryService:
                             WHEN size($role) > size(coalesce(c.role, '')) THEN $role
                             ELSE c.role
                         END,
+                        
                         c.status = coalesce(c.status, $status),
                         c.age = coalesce(c.age, $age),
                         c.gender = coalesce(c.gender, $gender),
@@ -1726,6 +1760,7 @@ class DatabaseQueryService:
                         c.embedding = $embedding
                     """,
                     pid=project_id,
+                    char_id=char_id,
                     name=char_name,
                     doc_id=document_id,
                     role=char.get("role", "Unknown"),
@@ -1886,8 +1921,10 @@ class DatabaseQueryService:
 
                 await session.run(
                     """
-                    MERGE (e:Event {project_id: $pid, narrativeSummary: $narrative_summary})
-                    SET e.eventId = coalesce(e.eventId, $id_with_doc),
+                    MERGE (e:Event {eventId: $id_with_doc})
+                    ON CREATE SET
+                        e.project_id = $pid,
+                        e.narrativeSummary = $narrative_summary,
                         e.eventType = $event_type,
                         e.description = $desc,
                         e.chapter = $chapter,
@@ -1896,19 +1933,22 @@ class DatabaseQueryService:
                         e.timestamp = $timestamp,
                         e.locationRef = $location_ref,
                         e.prevEventId = $prev_event_id,
-                        e.documentId = CASE 
-                            WHEN e.documentId IS NULL THEN $doc_id
-                            WHEN NOT $doc_id IN coalesce(e.source_documents, []) THEN e.documentId
-                            ELSE e.documentId
+                        e.documentId = $doc_id,
+                        e.source_documents = [$doc_id],
+                        e.embedding = $embedding
+                    ON MATCH SET
+                        e.narrativeSummary = coalesce(e.narrativeSummary, $narrative_summary),
+                        e.description = CASE
+                            WHEN $desc IS NULL THEN e.description
+                            WHEN e.description IS NULL THEN $desc
+                            WHEN size($desc) > size(e.description) THEN $desc
+                            ELSE e.description
                         END,
                         e.source_documents = CASE 
                             WHEN e.source_documents IS NULL THEN [$doc_id]
                             WHEN NOT $doc_id IN e.source_documents THEN e.source_documents + $doc_id
                             ELSE e.source_documents
-                        END,
-                        
-                        // Save Embedding (Vector)
-                        e.embedding = $embedding
+                        END
                     """,
                     id_with_doc=evt_id_with_doc,
                     id=evt_uuid,

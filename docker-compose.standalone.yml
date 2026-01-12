@@ -29,8 +29,6 @@
 #   docker-compose -f docker-compose.standalone.yml up -d postgres neo4j rabbitmq
 # =============================================================================
 
-version: "3.8"
-
 services:
   # ============================================
   # PostgreSQL - Primary Data Store
