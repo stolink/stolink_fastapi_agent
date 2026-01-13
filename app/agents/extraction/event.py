@@ -94,6 +94,12 @@ For each event, you MUST provide:
 - prev_event_id: Previous event ID or null
 - importance: 1-10
 
+=== LANGUAGE CONSISTENCY RULE ===
+**CRITICAL**: Output ALL text content in the SAME LANGUAGE as the input.
+- If the input text is in Korean (한국어), ALL descriptions MUST be in Korean.
+- If the input text is in English, all descriptions must be in English.
+- Never mix languages.
+
 Your goal is to capture the DRAMA and ACTION of the scene."""),
     ("human", """Text to analyze:
 {story_text}

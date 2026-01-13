@@ -3,9 +3,7 @@ services:
   # AI Backend - FastAPI + LangGraph
   # ============================================
   ai-backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${IMAGE_NAME}
     container_name: stolink-fastapi-agent
     environment:
       # AWS Bedrock
@@ -14,7 +12,6 @@ services:
       AWS_REGION: us-east-1
       # Gemini / Google AI
       GEMINI_API_KEY: ${GEMINI_API_KEY}
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
       # RabbitMQ (Agent)
       RABBITMQ_HOST: ${RABBITMQ_AGENT_HOST}
       RABBITMQ_PORT: ${RABBITMQ_AGENT_PORT:-5672}
@@ -41,7 +38,13 @@ services:
     ports:
       - "8000:8000"
     healthcheck:
-      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3

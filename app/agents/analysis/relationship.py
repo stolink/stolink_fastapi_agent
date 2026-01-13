@@ -71,6 +71,42 @@ For each character pair with a relationship:
    - bidirectional: Follow DIRECTIONAL SEMANTICS above!
    - evolved_from: Previous relationship type (if changed)
 
+=== CRITICAL: JSON FORMATTING RULES ===
+
+**Property names MUST be in English with double quotes:**
+
+❌ BAD - Korean property names or missing quotes:
+{{
+  relationships: [  // Missing quotes on property name!
+    {{
+      "출처": "클레어",  // Korean property name!
+      "대상": "잭슨",
+      관계타입: "RIVAL"  // Korean + no quotes!
+    }}
+  ]
+}}
+
+✅ GOOD - English property names with proper quotes:
+{{
+  "relationships": [
+    {{
+      "source": "클레어",
+      "target": "잭슨",
+      "relation_type": "RIVAL",
+      "strength": 7,
+      "description": "강한 의견 대립",
+      "bidirectional": true
+    }}
+  ]
+}}
+
+**VALIDATION CHECKLIST before returning:**
+- [ ] All property names are in English?
+- [ ] All property names have double quotes?
+- [ ] All string values have double quotes?
+- [ ] Commas between properties?
+- [ ] Valid JSON structure (use json.loads to verify mentally)?
+
 === OUTPUT STRUCTURE ===
 {{
   "relationships": [
@@ -93,6 +129,12 @@ For each character pair with a relationship:
     }}
   ]
 }}
+
+=== LANGUAGE INSTRUCTION ===
+**CRITICAL**: Respond in the SAME language as the input text.
+- If the input is in Korean (한글), ALL relationship descriptions MUST be in Korean.
+- If the input is in English, ALL descriptions MUST be in English.
+- Keep technical field names (like "source", "relation_type") in English, but "description" content should match the input language.
 
 === PENALTY WARNING ===
 If you use a character name NOT in the Available Characters list,
@@ -141,6 +183,34 @@ RELATIONSHIP_RE_ANALYSIS_PROMPT = ChatPromptTemplate.from_messages([
 2. source = A (배신자)
 3. target = B (피해자)
 4. bidirectional = false
+
+=== CRITICAL: JSON FORMATTING RULES ===
+
+**Property names MUST be in English with double quotes:**
+
+❌ BAD:
+{{
+  relationships: [  // Missing quotes!
+    {{"출처": "이민호"}}  // Korean property name!
+  ]
+}}
+
+✅ GOOD:
+{{
+  "relationships": [
+    {{
+      "source": "이민호",
+      "target": "서진",
+      "relation_type": "BETRAYED",
+      "strength": 9,
+      "description": "이민호가 서진을 배신함",
+      "bidirectional": false,
+      "conflict_resolution": "배신자=이민호, 피해자=서진으로 방향 수정"
+    }}
+  ]
+}}
+
+**VALIDATION:** All property names in English? All quotes present?
 
 === OUTPUT STRUCTURE ===
 {{
@@ -207,18 +277,19 @@ async def relationship_analysis_node(state: dict) -> dict:
     
     pers_str = "\n".join(available_personalities) if available_personalities else "None"
     
-    print(f"[RELATIONSHIP] Available characters: {available_characters}")
+    print(f"[RELATIONSHIP] Available characters ({len(available_characters)}): {available_characters}")
+    print(f"[RELATIONSHIP] Personalities count: {len(available_personalities)}")
     
     # If no characters available, return empty result
     if not available_characters or len(available_characters) < 2:
-        print("[RELATIONSHIP] Not enough characters for relationship analysis")
+        print(f"[RELATIONSHIP] ⚠️ Not enough characters for relationship analysis (found: {len(available_characters)}, need: 2+)")
         return {
             "relationship_graph": {
                 "relationships": [],
                 "neo4j_edges": []
             },
             "messages": [
-                {"role": "relationship_agent", "content": "Not enough characters for relationship analysis"}
+                {"role": "relationship_agent", "content": f"Not enough characters ({len(available_characters)}) for relationship analysis"}
             ]
         }
     
@@ -249,9 +320,13 @@ async def relationship_analysis_node(state: dict) -> dict:
         
         content = response.content.strip()
         
+        # 🆕 Debug: Log raw LLM response
+        print(f"[RELATIONSHIP] 🔍 LLM Raw Response (first 500 chars): {content[:500]}")
+        print(f"[RELATIONSHIP] 🔍 Response length: {len(content)} chars")
+        
         # Handle empty response
         if not content:
-            print("[RELATIONSHIP] Empty response from LLM")
+            print("[RELATIONSHIP] ❌ Empty response from LLM")
             return {
                 "relationship_graph": {
                     "relationships": [],
@@ -268,8 +343,17 @@ async def relationship_analysis_node(state: dict) -> dict:
                 content = content[4:]
             content = content.strip()
         
+        # 🆕 Debug: Log cleaned JSON before parsing
+        print(f"[RELATIONSHIP] 🔍 Cleaned JSON (first 300 chars): {content[:300]}")
+        
         result = json.loads(content)
         relationships = result.get("relationships", [])
+        
+        # 🆕 Debug: Log parsing success
+        print(f"[RELATIONSHIP] ✅ JSON parsed successfully")
+        print(f"[RELATIONSHIP] 🔍 Relationships extracted: {len(relationships)}")
+        if relationships:
+            print(f"[RELATIONSHIP] 🔍 First relationship: {relationships[0]}")
         
         # === Neo4j-Ready JSON 변환 ===
         neo4j_edges = []
@@ -290,6 +374,9 @@ async def relationship_analysis_node(state: dict) -> dict:
         
         result["neo4j_edges"] = neo4j_edges
         
+        # 🆕 Debug: Log final result
+        print(f"[RELATIONSHIP] ✅ Returning {len(relationships)} relationships, {len(neo4j_edges)} neo4j edges")
+        
         return {
             "relationship_graph": result,
             "messages": [
@@ -298,19 +385,22 @@ async def relationship_analysis_node(state: dict) -> dict:
             ]
         }
     except json.JSONDecodeError as e:
-        print(f"[RELATIONSHIP] JSON parse error: {e}")
+        print(f"[RELATIONSHIP] ❌ JSON parse error at position {e.pos}: {e.msg}")
+        print(f"[RELATIONSHIP] ❌ Failed content (first 500 chars): {content[:500] if 'content' in locals() else 'N/A'}")
         return {
             "relationship_graph": {
                 "relationships": [],
                 "neo4j_edges": []
             },
             "messages": [
-                {"role": "relationship_agent", "content": "Failed to parse response, returning empty result"}
+                {"role": "relationship_agent", "content": f"Failed to parse response: {e.msg}"}
             ]
         }
     except Exception as e:
         error_str = str(e)
-        print(f"[RELATIONSHIP] Analysis failed: {error_str}")
+        print(f"[RELATIONSHIP] ❌ Analysis failed with exception: {error_str}")
+        import traceback
+        print(f"[RELATIONSHIP] ❌ Traceback: {traceback.format_exc()}")
         
         if "ThrottlingException" in error_str:
             return {
@@ -325,6 +415,6 @@ async def relationship_analysis_node(state: dict) -> dict:
                 "neo4j_edges": []
             },
             "messages": [
-                {"role": "relationship_agent", "content": f"Analysis failed: {error_str[:50]}"}
+                {"role": "relationship_agent", "content": f"Analysis failed: {error_str[:100]}"}
             ]
         }

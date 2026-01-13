@@ -29,8 +29,6 @@
 #   docker-compose -f docker-compose.standalone.yml up -d postgres neo4j rabbitmq
 # =============================================================================
 
-version: "3.8"
-
 services:
   # ============================================
   # PostgreSQL - Primary Data Store
@@ -54,7 +52,7 @@ services:
     networks:
       - stolink-network
 
-  # ============================================
+# ============================================
   # Neo4j - Graph Database for Character Relations
   # ============================================
   neo4j:
@@ -86,7 +84,6 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: stolink
       RABBITMQ_DEFAULT_PASS: stolink123
-      RABBITMQ_DEFAULT_VHOST: stolink
     ports:
       - "5672:5672" # AMQP
       - "15672:15672" # Management UI
@@ -138,7 +135,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: stolink
       RABBITMQ_PASSWORD: stolink123
-      RABBITMQ_VHOST: stolink
+      RABBITMQ_VHOST: /
       # Document Analysis Architecture
       DOCUMENT_ANALYSIS_QUEUE: document_analysis_queue
       GLOBAL_MERGE_QUEUE: global_merge_queue
@@ -153,7 +150,7 @@ services:
       POSTGRES_USER: stolink
       POSTGRES_PASSWORD: stolink123
       # Neo4j
-      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_URI: bolt://stolink-neo4j:7687
       NEO4J_USER: neo4j
       NEO4J_PASSWORD: stolink123
       # Redis (Embedding Cache)
@@ -169,6 +166,10 @@ services:
       - "8000:8000"
     depends_on:
       rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      neo4j:
         condition: service_healthy
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
@@ -189,3 +190,4 @@ volumes:
   neo4j_logs:
   rabbitmq_data:
   redis_data:
+  mysql_data:

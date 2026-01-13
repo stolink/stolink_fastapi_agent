@@ -64,7 +64,7 @@ class GlobalResolutionAgent:
         for char in characters:
             # 🆕 Combine name + description + role for richer semantic embedding
             # This enables matching "젊은 여자" with "쉘터 생존자" if descriptions overlap
-            name = char.get("name", "Unknown")
+            name = char.get("name") or char.get("profile", {}).get("name") or "Unknown"
             description = char.get("description", "") or char.get("profile", {}).get("description", "") or ""
             role = char.get("role", "") or char.get("profile", {}).get("role", "") or ""
             aliases = ", ".join(char.get("aliases", []))
@@ -109,52 +109,21 @@ class GlobalResolutionAgent:
             
         print(f"[GLOBAL_RES] Found {len(clusters)} potential clusters from {len(characters)} characters.")
         
-        # 2.5 Context-Based Merge Candidates (NEW)
-        # Find singleton clusters that share location/faction and could be the same person
-        singletons = [group[0] for label, group in clusters.items() if len(group) == 1]
-        context_merge_candidates = []
-        
-        for i, char1 in enumerate(singletons):
-            for j, char2 in enumerate(singletons):
-                if i >= j:
-                    continue
-                # Check if same location_context or faction
-                loc1 = char1.get("relations", {}).get("location_context", "")
-                loc2 = char2.get("relations", {}).get("location_context", "")
-                fac1 = char1.get("profile", {}).get("faction", {}).get("name", "")
-                fac2 = char2.get("profile", {}).get("faction", {}).get("name", "")
-                
-                same_location = loc1 and loc2 and loc1 == loc2
-                same_faction = fac1 and fac2 and fac1 == fac2
-                
-                if same_location or same_faction:
-                    print(f"[GLOBAL_RES] Context match: {char1.get('name')} + {char2.get('name')} (loc={same_location}, fac={same_faction})")
-                    context_merge_candidates.append([char1, char2])
+        # 2.5 Context-Based Merge Candidates REMOVED
+        # Context matching (same faction/location) is too aggressive and merges distinct characters.
+        # We rely solely on semantic embedding clustering.
         
         # 3. LLM Verification & Merge
-        # For trivial clusters (size 1), skip LLM unless context-matched
+        # For trivial clusters (size 1), skip LLM
         final_characters = []
         commits_to_llm = []
         
         # Add multi-member clusters
         for label, group in clusters.items():
             if len(group) == 1:
-                # Will be added later if not context-merged
-                pass
+                final_characters.append(group[0])
             else:
                 commits_to_llm.append(group)
-        
-        # Add context-based merge candidates
-        context_merged_names = set()
-        for pair in context_merge_candidates:
-            commits_to_llm.append(pair)
-            for c in pair:
-                context_merged_names.add(c.get("name"))
-        
-        # Add remaining singletons (not context-merged)
-        for label, group in clusters.items():
-            if len(group) == 1 and group[0].get("name") not in context_merged_names:
-                final_characters.append(group[0])
         
         if commits_to_llm:
             print(f"[GLOBAL_RES] Verifying {len(commits_to_llm)} multimember clusters with LLM...")

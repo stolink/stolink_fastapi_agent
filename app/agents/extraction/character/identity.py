@@ -135,68 +135,70 @@ class CharacterIdentityResult(BaseModel):
 IDENTITY_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """You are an expert story analyst. Extract BASIC IDENTITY information for ALL characters.
 
-### CRITICAL: WHAT IS A CHARACTER? ###
-⚠️ A CHARACTER is a SPECIFIC PERSON or BEING with a PROPER NAME who acts, speaks, or thinks.
-⚠️ A CHARACTER is NOT an object, item, weapon, clothing, or body part.
-⚠️ A CHARACTER is NOT a PLACE, LOCATION, PLANET, BUILDING, or GEOGRAPHIC ENTITY.
-⚠️ A CHARACTER is NOT an ORGANIZATION, GROUP, FACTION, or ABSTRACT CONCEPT.
-⚠️ A CHARACTER is NOT a GENERIC DESCRIPTOR or ANONYMOUS REFERENCE.
+### ⚠️ CRITICAL: EXTRACT EACH CHARACTER SEPARATELY ⚠️ ###
+❗ If there are 3 characters (e.g., 클레어, 잭슨, 헤이즈 교수), you MUST return 3 SEPARATE character entries.
+❗ NEVER combine multiple characters into a single entry.
+❗ Each character object in the output list represents ONE person.
 
-✅ CHARACTERS (with proper names): 강민우, 진하, 세라, ARIA, 유민재, 리사
-❌ NOT CHARACTERS (Items): 트렌치코트, 홀로그램 방패, 뇌 임플란트
-❌ NOT CHARACTERS (Places): 지구, 서울, 우주 정거장, 이카루스, 쉘터, 노아
-❌ NOT CHARACTERS (Organizations): 정부, 군대, 회사, 협회
-❌ NOT CHARACTERS (Generic Background): 생존자들, 군중, 사람들, 행인
+### CORRECT OUTPUT EXAMPLE (3 characters) ###
+{{
+  "characters": [
+    {{"name": "클레어", "role": "protagonist", "gender": "female", "aliases": [], ...}},
+    {{"name": "잭슨", "role": "supporting", "gender": "male", "aliases": [], ...}},
+    {{"name": "헤이즈 교수", "role": "supporting", "gender": "male", "aliases": ["박사"], ...}}
+  ]
+}}
 
-### CRITICAL: GENERIC DESCRIPTOR HANDLING ###
-✅ EXTRACT unnamed characters IF AND ONLY IF they play a SIGNIFICANT ROLE (e.g., specific dialogue, interaction with protagonist).
-- "Young Woman" (who speaks to protagonist) → ✅ EXTRACT as "Young Woman" (or "젊은 여성")
-- "Old Man" (who gives a quest) → ✅ EXTRACT as "Old Man" (or "노인")
-- "Survivor" (who is just part of a crowd) → ❌ DO NOT EXTRACT
-- "Voice" (entity communicating) → ✅ EXTRACT as "Voice" or their likely identity
+### ❌ WRONG: DO NOT DO THIS ###
+{{
+  "characters": [
+    {{"name": "헤이즈 교수", "aliases": ["클레어", "잭슨", "박사"], ...}}  ← WRONG! Other characters listed as aliases!
+  ]
+}}
 
-❌ NOT CHARACTERS (Generic/Background): 생존자들(crowd), 사람들(people), 군인들(soldiers)
-- "젊은 여성의 목소리가 들렸다" AND she interacts → ✅ EXTRACT "젊은 여성"
-- "저 멀리 젊은 여성이 지나갔다" (background) → ❌ DO NOT EXTRACT
+### CRITICAL: aliases RULES ###
+⚠️ aliases MUST ONLY contain nicknames, titles, or alternate names for THE SAME character.
+⚠️ aliases must NOT contain OTHER CHARACTERS' names.
+✅ CORRECT: 헤이즈 교수의 aliases = ["박사", "교수님"] (titles for the same person)
+❌ WRONG: 헤이즈 교수의 aliases = ["클레어", "잭슨"] (these are different people!)
 
-### LANGUAGE CONSISTENCY RULE ###
+### WHAT IS A CHARACTER? ###
+✅ A CHARACTER is a SPECIFIC PERSON or BEING with a PROPER NAME who acts, speaks, or thinks.
+❌ NOT a character: objects, items, places, organizations, groups, generic crowds
+
+### LANGUAGE CONSISTENCY ###
 Output ALL text in the SAME language as the input.
 If the story is in Korean, all values must be in Korean.
 
-### CRITICAL: NAME EXTRACTION RULE ###
-When a character is introduced as "베라(Vera)" or "리안(Lian)", extract ONLY the Korean name.
+### KOREAN NAME RULE ###
+When a character is introduced as "베라(Vera)", extract ONLY the Korean name "베라".
+
+=== LANGUAGE INSTRUCTION ===
+**CRITICAL**: Respond in the SAME language as the input text.
+- If the input is in Korean (한글), ALL text fields (name, backstory, occupation, faction, aliases, etc.) MUST be in Korean.
+- If the input is in English, ALL text fields MUST be in English.
+- Keep technical field names (like "name", "age", "role") in English, but content values should match the input language.
 
 ### EXTRACTION FOCUS ###
-For each character with a PROPER NAME, extract:
-- name: Character's PROPER NAME (REQUIRED - do NOT use generic descriptors)
+For EACH character, extract:
+- name: Character's PROPER NAME (REQUIRED)
 - age: Exact age or estimate if mentioned
 - gender: male/female/unknown
-- race: Race/species if mentioned (e.g., human, android, AI)
+- race: Race/species if mentioned
 - occupation: Job, class, or profession
 - faction: Organization, group, or affiliation
-- role: Main story role (protagonist/antagonist/supporting/mentor/sidekick/other)
-- aliases: Any nicknames, titles (NOT generic descriptors)
+- role: protagonist/antagonist/supporting/mentor/sidekick/other
+- aliases: Nicknames/titles FOR THIS CHARACTER ONLY (not other characters)
 - status: alive/deceased/unknown
 - backstory: Background information
 
-### RULES ###
-1. Extract characters with PROPER NAMES.
-2. ALSO extract unnamed characters (e.g. "Young Woman", "Old Man", "Voice") IF they have DIALOGUE or INTERACT with main characters.
-3. Do NOT extract insignificant background crowds (e.g. "Survivors", "People").
-4. If unsure, err on the side of extracting characters who speak.
-
-### ROLE GUIDANCE ###
-- named characters who interact with the protagonist should generally be 'supporting' or 'sidekick', NOT 'other'.
-- 'other' is for minor characters who appear briefly or have little impact.
-
-### NAMING CONSISTENCY ###
-- If a character is referred to by multiple names (e.g. "The man" becomes "The guest"), use the most frequent PROPER NAME or the first introduced name as the primary 'name'.
-- List variations (like "The guest") in 'aliases'."""),
+REMEMBER: If you see 3 different character names in the text, output 3 SEPARATE character objects!"""),
     ("human", """Story text:
 {story_text}
 
-Extract all significant characters, including those without proper names (like "Young Woman") IF they speak.""")
+Extract ALL characters mentioned. Output each character as a SEPARATE entry in the characters list.""")
 ])
+
 
 
 # === Helper: Detect AI/Non-physical characters ===
@@ -344,10 +346,10 @@ async def identity_extraction_node(state: dict) -> dict:
         
         for char in result.characters:
             # Filter out items that LLM incorrectly identified as characters
-            if is_likely_item(char.name):
-                print(f"[IDENTITY] Filtered out item: '{char.name}' (not a character)")
-                filtered_count += 1
-                continue
+            # if is_likely_item(char.name):
+            #     print(f"[IDENTITY] Filtered out item: '{char.name}' (not a character)")
+            #     filtered_count += 1
+            #     continue
             identity_data[char.name] = char.model_dump()
         
         if filtered_count > 0:

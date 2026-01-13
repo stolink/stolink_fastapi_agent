@@ -19,9 +19,6 @@ class CharacterTeamState(TypedDict, total=False):
     char_appearance: Optional[dict]      # {name: {physique, hair, ...}}
     char_personality: Optional[dict]     # {name: {core_traits, flaws, ...}}
     char_relations: Optional[dict]       # {name: {relations, ...}}
-    char_dialogue_mood: Optional[dict]   # {name: {tone, emotion, ...}}
-    # Removed: char_stats
-    char_inventory: Optional[dict]       # {name: {equipped_items, bag_items, ...}}
     
     # Final output
     extracted_characters: list

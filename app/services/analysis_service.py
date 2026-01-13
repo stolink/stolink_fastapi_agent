@@ -122,7 +122,20 @@ async def run_analysis(
     
     # Bind tracing context to logger
     bound_logger = logger.bind(job_id=task.job_id, trace_id=trace_id)
-    bound_logger.info("Starting analysis (Parallel Batch Processing)...")
+    
+    # 🆕 Log content preview (first 200 chars, HTML stripped)
+    import re
+    content_preview = task.content[:500] if task.content else ""
+    # Remove HTML tags for cleaner preview
+    content_preview_clean = re.sub(r'<[^>]+>', ' ', content_preview).strip()
+    # Remove extra whitespace
+    content_preview_clean = re.sub(r'\s+', ' ', content_preview_clean)
+    
+    bound_logger.info(
+        "Starting analysis (Parallel Batch Processing)...",
+        content_length=len(task.content) if task.content else 0,
+        content_preview=content_preview_clean[:200] + "..." if len(content_preview_clean) > 200 else content_preview_clean
+    )
     
     # 0. Content Fetching (Claim Check Pattern)
     if not task.content and task.document_id:
@@ -245,7 +258,6 @@ async def run_analysis(
         final_events = []
         final_settings = []
         final_relationships = []
-        final_plot = {}
         final_consistency = {}
         final_validation = {} 
         
@@ -279,10 +291,64 @@ async def run_analysis(
             if rel_graph and isinstance(rel_graph, dict):
                  final_relationships.extend(rel_graph.get("relationships", []))
             
-            # Last valid batch results for Plot/Consistency (simplified merge strategy)
-            if res.get("plot"): final_plot = res.get("plot")
+            # Last valid batch results for Consistency (simplified merge strategy)
             if res.get("consistency_report"): final_consistency = res.get("consistency_report")
             if res.get("validation_result"): final_validation = res.get("validation_result")
+
+        # 🆕 Fallback: Extract relationships from character.relations.graph if top-level is empty
+        if not final_relationships and final_characters_map:
+            bound_logger.info("Extracting relationships from character.relations.graph (fallback)")
+            extracted_rels = []
+            seen_pairs = set()  # Avoid duplicates
+            
+            for char_name, char_data in final_characters_map.items():
+                # Get relations from either nested format or direct format
+                relations_data = char_data.get("relations", {})
+                char_relations = []
+                
+                # Handle dict format: {"graph": [...], "event_refs": [...]}
+                if isinstance(relations_data, dict):
+                    char_relations = relations_data.get("graph", [])
+                # Handle list format (direct list of relations)
+                elif isinstance(relations_data, list):
+                    char_relations = relations_data
+                
+                for rel in char_relations:
+                    target = rel.get("target", "")
+                    if not target:
+                        continue
+                    
+                    # Create pair key for deduplication (sorted for bidirectional)
+                    pair_key_fwd = (char_name, target)
+                    pair_key_rev = (target, char_name)
+                    
+                    # Skip if we've already seen this pair (either direction)
+                    if pair_key_fwd in seen_pairs:
+                        continue
+                    
+                    # Determine bidirectionality  
+                    rel_type = rel.get("type", "NEUTRAL")
+                    bidirectional = rel_type not in ("BETRAYED", "MENTOR")  # Unidirectional types
+                    
+                    # Map embedded format to expected top-level format
+                    extracted_rel = {
+                        "source": char_name,
+                        "target": target,
+                        "type": rel_type,
+                        "strength": rel.get("strength", 5),
+                        "description": rel.get("description", ""),
+                        "bidirectional": bidirectional
+                    }
+                    extracted_rels.append(extracted_rel)
+                    seen_pairs.add(pair_key_fwd)
+                    
+                    # Mark reverse direction as seen if bidirectional
+                    if bidirectional:
+                        seen_pairs.add(pair_key_rev)
+            
+            if extracted_rels:
+                final_relationships = extracted_rels
+                bound_logger.info(f"Extracted {len(final_relationships)} relationships from characters (fallback)")
 
         # 4. Construct Final Result
         processing_time_ms = int((time.time() - start_time) * 1000)
@@ -296,7 +362,6 @@ async def run_analysis(
             "events": final_events,
             "settings": final_settings,
             "relationships": final_relationships,
-            "plot": final_plot,
             "consistency_report": final_consistency,
             "validation": final_validation,
             "metadata": {

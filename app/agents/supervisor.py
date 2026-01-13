@@ -78,8 +78,8 @@ def get_phase_status(state: dict) -> dict:
         "analysis": {
             "done": state.get("analysis_done", False),
             "relationships": len((state.get("relationship_graph") or {}).get("relationships", [])),
-            "consistency_score": (state.get("consistency_report") or {}).get("overall_score", 0),
-            "plot_beats": len((state.get("plot") or {}).get("narrative_beats", []))
+            "consistency_score": (state.get("consistency_report") or {}).get("overall_score", 0)
+            # Removed: "plot_beats"
         },
         "validation": {
             "done": state.get("validation_done", False),

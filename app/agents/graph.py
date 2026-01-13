@@ -13,6 +13,9 @@ import time
 
 from langgraph.graph import StateGraph, START, END
 
+# Language detection
+from app.utils.language_detector import detect_language
+
 # Character Team (Hierarchical Multi-Agent System) - Direct graph access
 from app.agents.extraction.character.supervisor import character_team_graph
 from app.agents.extraction.character.state import CharacterTeamState
@@ -21,7 +24,7 @@ from app.agents.extraction.setting import setting_extraction_node
 # Removed: dialogue_analysis_node, emotion_tracking_node
 from app.agents.analysis.relationship import relationship_analysis_node
 from app.agents.analysis.consistency import consistency_check_node
-from app.agents.analysis.plot import plot_node
+# Removed: plot_node
 from app.agents.analysis.global_resolution import GlobalResolutionAgent, GlobalResolutionResult
 from app.agents.validation.validator import validator_node
 
@@ -36,6 +39,7 @@ class AnalysisState(TypedDict, total=False):
     callback_url: str
     requires_deep_analysis: bool
     is_short_text: bool  # 🆕 Fast Track flag
+    response_language: str  # "ko" or "en" - detected from input text
     
     # Tracing
     trace_id: str
@@ -55,7 +59,7 @@ class AnalysisState(TypedDict, total=False):
     # Analysis results
     relationship_graph: dict
     consistency_report: dict
-    plot: dict
+    # Removed: plot
     
     # Validation
     validation_result: dict
@@ -202,7 +206,7 @@ async def extraction_node(state: dict) -> dict:
             if char_name and char_to_events.get(char_name):
                 # Ensure relations dict exists
                 if "relations" not in char:
-                    char["relations"] = {"graph": [], "event_refs": [], "location_context": None}
+                    char["relations"] = {"graph": [], "event_refs": []}
                 
                 char["relations"]["event_refs"] = char_to_events[char_name]
                 print(f"[EXTRACTION] Linked {len(char_to_events[char_name])} events to {char_name}", flush=True)
@@ -217,19 +221,16 @@ async def analysis_node(state: dict) -> dict:
     """Execute all analysis agents in parallel."""
     requires_deep = state.get("requires_deep_analysis", False)
     is_short_text = state.get("is_short_text", False)
-    print(f"[ANALYSIS] Starting - requires_deep_analysis={requires_deep}, is_short_text={is_short_text}", flush=True)
+    extracted_chars = state.get("extracted_characters", [])
+    print(f"[ANALYSIS] Starting - requires_deep_analysis={requires_deep}, is_short_text={is_short_text}, extracted_characters count={len(extracted_chars)}", flush=True)
     
+    # Always run relationship analysis + consistency check (fast)
     tasks = [
         asyncio.create_task(relationship_analysis_node(state)),
+        asyncio.create_task(consistency_check_node(state)),  # Always run for consistency_report
     ]
     
-    # Conditional Deep Analysis
-    if requires_deep:
-        print("[ANALYSIS] Deep Analysis triggering: Plot + Consistency", flush=True)
-        tasks.append(asyncio.create_task(consistency_check_node(state)))
-        tasks.append(asyncio.create_task(plot_node(state)))
-    else:
-        print("[ANALYSIS] Skipping Deep Analysis (Plot/Consistency)", flush=True)
+    # Removed: plot_node (no longer needed)
     
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
@@ -376,6 +377,10 @@ async def run_analysis_pipeline(
 ) -> dict[str, Any]:
     """Run the complete analysis pipeline with Supervisor."""
     
+    # 🆕 Detect language from input content
+    response_language = detect_language(content)
+    print(f"[PIPELINE] Detected language: {response_language}", flush=True)
+    
     # 🆕 디버그 로그
     print(f"[PIPELINE] run_analysis_pipeline called with requires_deep_analysis={requires_deep_analysis}, is_short_text={is_short_text}", flush=True)
     
@@ -388,6 +393,7 @@ async def run_analysis_pipeline(
         "trace_id": trace_id,
         "requires_deep_analysis": requires_deep_analysis,
         "is_short_text": is_short_text, # 🆕 Add to state
+        "response_language": response_language,  # 🆕 Add detected language
         "existing_characters": existing_characters or [],
         "existing_events": existing_events or [],
         "existing_relationships": existing_relationships or [],
@@ -397,7 +403,6 @@ async def run_analysis_pipeline(
         "extracted_settings": [],
         "relationship_graph": {},
         "consistency_report": {},
-        "plot": {},
         "validation_result": {},
         "extraction_done": False,
         "analysis_done": False,

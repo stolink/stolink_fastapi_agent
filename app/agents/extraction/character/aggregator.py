@@ -445,10 +445,35 @@ def build_name_merge_map(all_raw_names: set, dynamic_mapping: dict = None) -> di
     
     final_canonical_map = {}  # {current_name: merged_targer}
     
+    # Korean honorific suffixes to remove for matching (씨, 님, 군, 양, 선생, 교수, 주교 등)
+    KOREAN_HONORIFICS = ['씨', '님', '군', '양', '선생', '교수', '주교', '신부', '대인', '공']
+    
+    def strip_honorifics(name: str) -> str:
+        """Remove Korean honorifics for comparison."""
+        result = name.strip()
+        for suffix in KOREAN_HONORIFICS:
+            if result.endswith(' ' + suffix):
+                result = result[:-len(suffix)-1].strip()
+            elif result.endswith(suffix) and len(result) > len(suffix):
+                result = result[:-len(suffix)].strip()
+        return result
+    
     # Simple implementation of Jaro-Winkler-like similarity
     def get_similarity(s1, s2):
         s1, s2 = s1.lower(), s2.lower()
         if s1 == s2: return 1.0
+        
+        # Strip honorifics for Korean names and compare
+        s1_stripped = strip_honorifics(s1)
+        s2_stripped = strip_honorifics(s2)
+        if s1_stripped and s2_stripped and s1_stripped == s2_stripped:
+            return 1.0  # Same name after removing honorifics
+        
+        # Check if one is contained in the other (with honorifics stripped)
+        if s1_stripped and s2_stripped:
+            if s1_stripped in s2_stripped or s2_stripped in s1_stripped:
+                return 0.95  # High similarity for substring match
+        
         if s1 in s2 or s2 in s1: return 0.9  # Substring match
         
         # Count matching characters
@@ -512,6 +537,47 @@ def build_name_merge_map(all_raw_names: set, dynamic_mapping: dict = None) -> di
 
 
 
+def clean_character_aliases(aliases: list, char_name: str, all_character_names: set) -> list:
+    """Remove other character names that were incorrectly added as aliases.
+    
+    This fixes LLM errors where it puts other characters' names in the aliases list.
+    
+    Args:
+        aliases: The aliases list to clean
+        char_name: The name of this character
+        all_character_names: Set of all known character names in the story
+        
+    Returns:
+        Cleaned aliases list with only valid nicknames/titles for this character
+    """
+    if not aliases:
+        return []
+    
+    cleaned = []
+    char_name_lower = char_name.lower()
+    
+    for alias in aliases:
+        if not alias or not isinstance(alias, str):
+            continue
+            
+        alias_lower = alias.lower().strip()
+        
+        # Skip if the alias is another character's name
+        is_other_character = False
+        for other_name in all_character_names:
+            other_name_lower = other_name.lower()
+            # Allow aliases that contain this character's name (e.g., "Professor Hayes" for "Hayes")
+            if other_name_lower == alias_lower and other_name_lower != char_name_lower:
+                is_other_character = True
+                print(f"[AGGREGATOR] Removed invalid alias '{alias}' from '{char_name}' (it's another character)")
+                break
+                
+        if not is_other_character:
+            cleaned.append(alias)
+    
+    return cleaned
+
+
 def apply_safe_defaults(data: dict, defaults: dict) -> dict:
     """Apply safe defaults for null values."""
     result = {}
@@ -524,40 +590,12 @@ def apply_safe_defaults(data: dict, defaults: dict) -> dict:
     return result
 
 
-def _simplify_inventory(inv_data: dict) -> list[dict]:
-    """Simplify inventory to a single array with only item_id, name, description.
-    
-    Merges equipped_items, bag_items, quest_items into one list.
-    """
-    if not inv_data:
-        return []
-    
-    simplified = []
-    item_counter = 1
-    
-    # Merge all inventory categories
-    all_items = []
-    all_items.extend(inv_data.get("equipped_items", []))
-    all_items.extend(inv_data.get("bag_items", []))
-    all_items.extend(inv_data.get("quest_items", []))
-    
-    for item in all_items:
-        if isinstance(item, dict):
-            simplified.append({
-                "item_id": item.get("item_id") or f"item-{item_counter:03d}",
-                "name": item.get("name", "Unknown Item"),
-                "description": item.get("description", "")
-            })
-            item_counter += 1
-    
-    return simplified
-
 async def merge_character_data(
     identity: dict,
     appearance: dict,
     personality: dict,
     relations: dict,
-    dialogue_mood: dict,
+    # Removed: dialogue_mood
     existing_characters: list = None,
     story_text: str = None,
     extracted_events: list = None
@@ -611,8 +649,9 @@ async def merge_character_data(
     all_raw_names.update(appearance.keys())
     all_raw_names.update(personality.keys())
     all_raw_names.update(relations.keys())
-    all_raw_names.update(dialogue_mood.keys())
-    all_raw_names.update(dialogue_mood.keys())
+    all_raw_names.update(personality.keys())
+    all_raw_names.update(relations.keys())
+    # Removed: dialogue_mood keys update
     
     # === DEDUPLICATION: Build canonical name mapping ===
     # This merges "Vera" and "베라" into a single character
@@ -624,6 +663,13 @@ async def merge_character_data(
     
     characters = []
     
+    print(f"[AGGREGATOR] Raw keys - Identity: {list(identity.keys())}")
+    print(f"[AGGREGATOR] Raw keys - Appearance: {list(appearance.keys())}")
+    print(f"[AGGREGATOR] Raw keys - Personality: {list(personality.keys())}")
+    print(f"[AGGREGATOR] Raw keys - Relations: {list(relations.keys())}")
+    # Removed: Dialogue keys print
+
+    # === Pre-process Identity: Check for existing characters in DB ===
     for canonical_name in canonical_names:
         # Find all variant names that map to this canonical name
         variant_names = [raw for raw, canon in name_merge_map.items() if canon == canonical_name]
@@ -641,37 +687,46 @@ async def merge_character_data(
         
         # === MERGE DATA FROM ALL VARIANTS ===
         # Collect data from all name variants (e.g., "Vera" and "베라")
-        def get_merged_data(agent_dict: dict) -> dict:
+        def get_merged_data(agent_dict: dict, agent_name: str = "unknown") -> dict:
             """Merge data from all variant names for this character."""
             merged = {}
+            print(f"[AGGREGATOR] 🔍 get_merged_data({agent_name}) for '{canonical_name}' with variants: {variant_names}")
             for variant in variant_names:
                 variant_data = agent_dict.get(variant, {})
                 if variant_data:
+                    print(f"[AGGREGATOR] 🔍   Found data for variant '{variant}': keys={list(variant_data.keys())}")
                     # Merge: non-empty values from variants override empty ones
                     for k, v in variant_data.items():
                         if v and (k not in merged or not merged[k]):
                             merged[k] = v
+                else:
+                    print(f"[AGGREGATOR] 🔍   No data for variant '{variant}' in {agent_name}")
+            print(f"[AGGREGATOR] 🔍   Merged result for {agent_name}: keys={list(merged.keys())}")
             return merged
         
-        id_data = get_merged_data(identity)
-        app_data = get_merged_data(appearance)
-        per_data = get_merged_data(personality)
-        rel_data = get_merged_data(relations)
-        dm_data = get_merged_data(dialogue_mood)
+        # Merge source data using variants
+        identity_data = get_merged_data(identity, "identity")
+        appearance_data = get_merged_data(appearance, "appearance")
+        personality_data = get_merged_data(personality, "personality")
+        relations_data = get_merged_data(relations, "relations")
+        # Removed: dialogue_mood data merge
         
         # Debug: Log relations data for each character
-        rel_graph = rel_data.get("relations", [])
-        print(f"[AGGREGATOR] {canonical_name}: rel_data keys={list(rel_data.keys())}, relations count={len(rel_graph)}")
+        rel_graph = relations_data.get("relations", [])
+        print(f"[AGGREGATOR] {canonical_name}: rel_data keys={list(relations_data.keys())}, relations count={len(rel_graph)}")
+        if rel_graph:
+            print(f"[AGGREGATOR] 🔍 Sample relation: {rel_graph[0]}")
+        
         
         # Use canonical name for the character
         name = canonical_name
         
         # Build FullCharacter structure with improvements
         # Role inference: ALWAYS run and override if strong evidence exists
-        extracted_role = id_data.get("role") or "other"
+        extracted_role = identity_data.get("role") or "other"
         
         # Always run context-based inference
-        inferred_role = infer_role_from_context(name, rel_data, story_text or "")
+        inferred_role = infer_role_from_context(name, relations_data, story_text or "")
         
         # Decide final role:
         # - If inference returns a result, use it (strong signal from relations)
@@ -682,28 +737,36 @@ async def merge_character_data(
         else:
             final_role = extracted_role if extracted_role != "other" else (char_role or "other")
         
+        # Relations - use data directly (no defaults needed)
+        # 🐛 FIX: apply_safe_defaults({}, data) returns {} because it only iterates defaults.items()
+        final_relations = relations_data
+        
+        # Removed: Dialogue & Mood
+        # dialogue_config = apply_safe_defaults(dm_data.get("dialogue", {}), {})
+        # current_mood = apply_safe_defaults(dm_data.get("current_mood", {}), {})
+        
         full_char = {
             # === SEARCH INDEXING: Root-level fields ===
-            "_id": char_id,
+            "id": char_id,  # serialization_alias="_id" in schema
             "role": final_role,
             
             "profile": {
                 "character_id": char_id,
                 "name": name,
-                "age": id_data.get("age"),
-                "gender": id_data.get("gender"),
-                "race": id_data.get("race"),
+                "age": identity_data.get("age"),
+                "gender": identity_data.get("gender"),
+                "race": identity_data.get("race"),
                 "mbti": None,
                 # personality as object with core_traits, flaws, values
                 "personality": {
-                    "core_traits": per_data.get("core_traits", []),
-                    "flaws": per_data.get("flaws", []),
-                    "values": per_data.get("values", []),
+                    "core_traits": personality_data.get("core_traits", []),
+                    "flaws": personality_data.get("flaws", []),
+                    "values": personality_data.get("values", []),
                 },
-                "backstory": id_data.get("backstory"),
+                "backstory": identity_data.get("backstory"),
                 # === FACTION: Use defaults (stats agent removed) ===
                 "faction": {
-                    "name": id_data.get("faction") or None,  # Faction name from identity agent
+                    "name": identity_data.get("faction") or None,  # Faction name from identity agent
                     "social": {
                         "rank": SAFE_DEFAULTS["faction"]["social"]["rank"],
                         "influence": SAFE_DEFAULTS["faction"]["social"]["influence"],
@@ -711,55 +774,52 @@ async def merge_character_data(
                     }
                 },
             },
-            "aliases": id_data.get("aliases", []),
-            "status": id_data.get("status", "alive"),
+            # Clean aliases: remove other character names that LLM incorrectly added
+            "aliases": clean_character_aliases(identity_data.get("aliases", []), name, canonical_names),
+            "status": identity_data.get("status", "alive"),
             "appearance": {
-                "physique": app_data.get("physique", "unspecified"),
-                "skin_tone": app_data.get("skin_tone", "unspecified"),
-                "eyes": app_data.get("eyes", "unspecified"),
-                "nose": app_data.get("nose", "unspecified"),
-                "mouth": app_data.get("mouth", "unspecified"),
-                "hair_style": app_data.get("hair_style", "unspecified"),
-                "hair_color": app_data.get("hair_color", "unspecified"),
-                "attire": app_data.get("attire", []),
-                "expression": app_data.get("expression", "neutral"),
-                "scars_tattoos": app_data.get("scars_tattoos", []),
+                "physique": appearance_data.get("physique", "unspecified"),
+                "skin_tone": appearance_data.get("skin_tone", "unspecified"),
+                "eyes": appearance_data.get("eyes", "unspecified"),
+                "nose": appearance_data.get("nose", "unspecified"),
+                "mouth": appearance_data.get("mouth", "unspecified"),
+                "hair_style": appearance_data.get("hair_style", "unspecified"),
+                "hair_color": appearance_data.get("hair_color", "unspecified"),
+                "attire": appearance_data.get("attire", []),
+                "expression": appearance_data.get("expression", "neutral"),
+                "scars_tattoos": appearance_data.get("scars_tattoos", []),
                 # Removed: cyberware, full_visual_prompt, hair_color_normalized, eye_color_normalized
                 "style_context": {
-                    "art_style": app_data.get("style_context", {}).get("art_style", "fantasy illustration"),
+                    "art_style": appearance_data.get("style_context", {}).get("art_style", "fantasy illustration"),
                     # Removed: rendering_engine
                 },
             },
             # Removed: duplicate personality field (now in profile.personality)
             "relations": {
-                "graph": rel_data.get("relations", []),
+                "graph": final_relations.get("relations", []),
                 "event_refs": char_to_events.get(name, []),  # Populated from events
-                "location_context": rel_data.get("location_context") or "Unknown",
             },
-            "current_mood": dm_data.get("current_mood", {
-                "emotion": None,
-                "intensity": 5,
-                "trigger": None,
-            }),
-            # Removed: dialogue
-            # Removed: stats, state, combat, social, economy, final_stats
+            # 🔍 DEBUG: Log what's being assigned to relations.graph
+            # Note: This is after the object is created, so we log it separately
 
-            "meta": {
-                "created_at": None,
-                "updated_at": None,
-                "data_version": "2.0.0",
-                "lock_version": 0,
-            },
             # === Embedding for Neo4j Vector Search ===
             "embedding": await generate_character_embedding(
                 name=name,
-                traits=per_data.get("core_traits", []),
+                traits=personality_data.get("core_traits", []),
                 role=final_role
             ),
         }
         
+        # 🔍 DEBUG: Log final relations.graph content
+        final_graph = full_char.get("relations", {}).get("graph", [])
+        final_event_refs = full_char.get("relations", {}).get("event_refs", [])
+        print(f"[AGGREGATOR] 🔍 FINAL '{name}': relations.graph={len(final_graph)} items, event_refs={len(final_event_refs)} items")
+        if final_graph:
+            print(f"[AGGREGATOR] 🔍   Sample graph item: {final_graph[0]}")
+        
         characters.append(full_char)
     
+    print(f"[AGGREGATOR] merge_character_data created {len(characters)} characters: {[c.get('profile',{}).get('name','?') for c in characters]}")
     return characters
 
 
@@ -769,11 +829,10 @@ async def character_aggregator_node(state: dict) -> dict:
     appearance = state.get("char_appearance") or {}
     personality = state.get("char_personality") or {}
     relations = state.get("char_relations") or {}
-    dialogue_mood = state.get("char_dialogue_mood") or {}
+    # Removed: dialogue_mood = state.get("char_dialogue_mood") or {}
     # Removed: stats = state.get("char_stats") or {}
-    # Removed: inventory = state.get("char_inventory") or {}
     
-    # Extract existing_characters from context if available (from message context)
+    # Run aggregationg_characters from context if available (from message context)
     # OR directly from state (from graph initial state)
     existing_characters = state.get("existing_characters") or []
     if not existing_characters:
@@ -786,9 +845,10 @@ async def character_aggregator_node(state: dict) -> dict:
     # Extract events for event_refs population
     extracted_events = state.get("extracted_events") or []
     
+    # Run aggregation
     characters = await merge_character_data(
         identity, appearance, personality, relations,
-        dialogue_mood=dialogue_mood,
+        # Removed: dialogue_mood=dialogue_mood,
         existing_characters=existing_characters,
         story_text=story_text,
         extracted_events=extracted_events
@@ -837,19 +897,11 @@ async def character_aggregator_node(state: dict) -> dict:
                 "source": "event_location_ref"
             }
             
-    # 2. From Character Contexts
-    for char in filtered_characters:
-        loc = char.get("relations", {}).get("location_context")
-        if loc and loc not in extracted_settings and loc != "Unknown":
-             extracted_settings[loc] = {
-                "name": loc,
-                "type": "location",
-                "description": f"Associated with character {char.get('profile', {}).get('name')}",
-                "source": "character_location_context"
-            }
+    # No longer extract from character location_context (removed attribute)
 
     settings_list = list(extracted_settings.values())
     print(f"[AGGREGATOR] Aggregated {len(settings_list)} settings.")
+    print(f"[AGGREGATOR] FINAL: returning {len(filtered_characters)} characters to state")
 
     return {
         "extracted_characters": filtered_characters,

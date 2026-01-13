@@ -5,6 +5,8 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    curl \
+    iputils-ping \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast dependency installation

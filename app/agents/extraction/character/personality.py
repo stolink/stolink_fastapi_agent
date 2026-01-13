@@ -154,9 +154,32 @@ class CharacterPersonalityResult(BaseModel):
 PERSONALITY_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """You are an expert story analyst, AI behavior designer, and literary critic. Extract PERSONALITY TRAITS, BEHAVIORAL PARAMETERS, and NARRATIVE ELEMENTS for ALL characters.
 
+### ⚠️ CRITICAL: EXTRACT EACH CHARACTER SEPARATELY ⚠️ ###
+❗ If there are 3 characters in the story (e.g., 클레어, 잭슨, 헤이즈 교수), you MUST return 3 SEPARATE character entries.
+❗ NEVER return only one character when multiple characters exist.
+❗ Even if a character has minimal personality clues, include them with inferred traits based on context.
+
+### CORRECT OUTPUT EXAMPLE (3 characters) ###
+{{
+  "characters": [
+    {{"name": "클레어", "core_traits": ["신중함", "단호함"], "flaws": ["다혈질"], ...}},
+    {{"name": "잭슨", "core_traits": ["대담함", "충동적"], "flaws": ["무모함"], ...}},
+    {{"name": "헤이즈 교수", "core_traits": ["학구적", "신중함"], "flaws": [], ...}}
+  ]
+}}
+
+### ❌ WRONG: DO NOT DO THIS ###
+{{
+  "characters": [
+    {{"name": "클레어", "core_traits": ["신중함"], ...}}  ← WRONG! Other characters are missing!
+  ]
+}}
+
 ### LANGUAGE CONSISTENCY RULE ###
-Output ALL text in the SAME language as the input.
-If the story is in Korean, all values must be in Korean.
+**CRITICAL**: Respond in the SAME language as the input text.
+- If the input is in Korean (한글), ALL text fields (core_traits, flaws, values, biases, descriptions, etc.) MUST be in Korean.
+- If the input is in English, ALL text fields MUST be in English.
+- Keep technical field names (like "name", "rationality") in English, but content values should match the input language.
 
 ### CRITICAL: NAME EXTRACTION RULE ###
 When a character is introduced as "베라(Vera)" or "리안(Lian)", use ONLY the Korean name.
