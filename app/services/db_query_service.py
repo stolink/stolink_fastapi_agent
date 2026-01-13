@@ -1578,6 +1578,28 @@ class DatabaseQueryService:
                 if not char_name:
                     continue
                 
+                # 🆕 Meta-character filter keywords (expanded v2)
+                META_KEYWORDS = [
+                    # 서술자/저자
+                    "서술자", "narrator", "author", "저자", "빅토르 위고", "화자",
+                    # 추상적 개념
+                    "사회", "society", "상징적", "symbolic", 
+                    # 상징적 인물
+                    "빈곤한 남성", "기아에 허덕이는", "어둠 속의 아동",
+                    # 집단명 (개별 인물이 아님) - EXPANDED
+                    "고아들", "부자들", "선생님들", "시민들", "사람들", "군중",
+                    "가난한 이들", "빈곤층", "부유층", "귀족들", "평민들",
+                    # 대명사/무의미
+                    "우리", "원본", "그들", "그녀들", "그", "그녀",
+                    # 직함만 있는 경우 (이름 없음) - NEW
+                    "황제", "교황", "왕", "여왕",
+                ]
+                
+                # 🆕 Filter out meta-characters
+                if any(kw in char_name for kw in META_KEYWORDS):
+                    print(f"[FILTER] Skipping meta-character: {char_name}")
+                    continue
+                
                 # 🆕 Normalize name to prevent invisible chars causing ID mismatch
                 char_name = unicodedata.normalize('NFKC', char_name).strip()
                 
@@ -1900,7 +1922,7 @@ class DatabaseQueryService:
                     chapter=evt.get("chapter", 0),
                     seq_order=evt.get("sequence_order", 0),
                     importance=evt.get("importance", 5),
-                    timestamp=evt.get("timestamp"),
+                    timestamp=json.dumps(evt.get("timestamp", {}), ensure_ascii=False) if evt.get("timestamp") else None,
                     location_ref=evt.get("location_ref", ""),
                     prev_event_id=evt.get("prev_event_id"),
                     embedding=evt.get("embedding")
