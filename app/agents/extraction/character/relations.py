@@ -18,8 +18,8 @@ from app.agents.extraction.character.identity import is_likely_item as is_non_ch
 # === Simplified Schema ===
 class Relationship(BaseModel):
     """Single relationship entry - matches result.json schema."""
-    target: str = Field(..., description="Target character name")
-    type: str = Field(..., description="ALLY/ENEMY/RIVAL/NEUTRAL/FAMILY/BETRAYED")
+    target: str = Field(default="", description="Target character name")  # 🆕 Default to empty to handle incomplete responses
+    type: str = Field(default="NEUTRAL", description="ALLY/ENEMY/RIVAL/NEUTRAL/FAMILY/BETRAYED")  # 🆕 Default to NEUTRAL
     strength: int = Field(5, ge=1, le=10, description="Overall Significance (1-10)")
     
     # 5D Relationship Metrics (Orthogonal)
@@ -348,10 +348,14 @@ async def relations_extraction_node(state: dict) -> dict:
             
             char_dump = char.model_dump()
             
-            # Also filter out non-character targets from relationships
+            # Also filter out non-character targets from relationships and empty targets
             filtered_relations = []
             for rel in char_dump.get("relations", []):
                 target = rel.get("target", "")
+                # 🆕 Skip empty targets (Gemini 3 incomplete responses)
+                if not target or not target.strip():
+                    print(f"[RELATIONS] Skipping empty target from '{char.name}'")
+                    continue
                 # if is_non_character(target):
                 #     print(f"[RELATIONS] Filtered non-character target: '{target}' from '{char.name}'")
                 # else:

@@ -77,15 +77,18 @@ def get_gemini_llm(
     """
     model_configs = {
         "basic": {
-            "model_id": "gemini-2.0-flash-lite",
+            # "model_id": "gemini-2.0-flash-lite",
+            "model_id": "gemini-3-flash-preview",
             "default_max_tokens": 2048,  # Faster for simple tasks
         },
         "standard": {
-            "model_id": "gemini-2.5-flash-lite",
+            # "model_id": "gemini-2.5-flash-lite",
+            "model_id": "gemini-3-flash-preview",
             "default_max_tokens": 2048,  # Balanced
         },
         "advanced": {
-            "model_id": "gemini-2.5-flash",
+            # "model_id": "gemini-2.5-flash",
+            "model_id": "gemini-3-flash-preview",
             "default_max_tokens": 4096,  # Full capacity for complex tasks
         },
         "premium": {

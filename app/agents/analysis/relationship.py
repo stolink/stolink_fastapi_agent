@@ -318,7 +318,19 @@ async def relationship_analysis_node(state: dict) -> dict:
                 "content": state.get("content", "")[:1500]
             })
         
-        content = response.content.strip()
+        # 🆕 Handle both string and list response formats (Gemini 3 compatibility)
+        if isinstance(response.content, list):
+            # Gemini 3 returns list of content blocks like [{'type':'text','text':'...'}]
+            parts = []
+            for block in response.content:
+                if isinstance(block, dict) and 'text' in block:
+                    parts.append(block['text'])
+                else:
+                    parts.append(str(block))
+            content = " ".join(parts).strip()
+        else:
+            # Gemini 2.x returns string
+            content = response.content.strip()
         
         # 🆕 Debug: Log raw LLM response
         print(f"[RELATIONSHIP] 🔍 LLM Raw Response (first 500 chars): {content[:500]}")
