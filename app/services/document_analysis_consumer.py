@@ -144,11 +144,13 @@ class DocumentAnalysisConsumer:
         trace_id = ""
         document_id = ""
         callback_url = ""
+        job_id = ""
+        project_id = ""
 
         try:
-            # 1. 메시지 파싱
+            # 1. 메시지 파싱 (락 외부에서 수행 - 빠른 실패)
             body = json.loads(message.body.decode())
-            print(f"[CONSUMER] Raw RabbitMQ Body Keys: {list(body.keys())}", flush=True)  # Key 확인
+            print(f"[CONSUMER] Raw RabbitMQ Body Keys: {list(body.keys())}", flush=True)
             if "requiresDeepAnalysis" in body:
                 print(f"[CONSUMER] Raw requiresDeepAnalysis: {body['requiresDeepAnalysis']}", flush=True)
 
@@ -156,14 +158,15 @@ class DocumentAnalysisConsumer:
 
             trace_id = msg.trace_id or ""
             document_id = msg.document_id
-            job_id = msg.job_id or msg.document_id  # 🆕 Use job_id if present, else document_id
+            job_id = msg.job_id or msg.document_id
+            project_id = msg.project_id
             callback_url = msg.callback_url
 
             logger.info(
                 "Processing document analysis message",
                 job_id=job_id,
                 document_id=document_id,
-                project_id=msg.project_id,
+                project_id=project_id,
                 callback_url=callback_url,
                 requires_deep_analysis=msg.requires_deep_analysis,
                 trace_id=trace_id
@@ -174,36 +177,29 @@ class DocumentAnalysisConsumer:
             await self._update_status(job_id, "PROCESSING", trace_id)
 
             # 3. DB에서 content 조회 (Claim Check Pattern)
-            # 🆕 Priority: Message Content (for Testing/Dev Override) > DB Content > Raw Body
             db_service = await get_db_service()
 
             content = None
 
             # Check for override in message first
             if getattr(msg, 'content', None):
-                 logger.info("Using content from MESSAGE override", document_id=document_id)
-                 content = msg.content
+                logger.info("Using content from MESSAGE override", document_id=document_id)
+                content = msg.content
 
             # Use DB content if no override
             if not content:
                 fetched_content = await db_service.get_document_content(document_id)
                 if fetched_content:
-                    content = fetched_content.get("content")  # 🟢 Extract 'content' field from dict
+                    content = fetched_content.get("content")
 
-            # Fallbacks
+            # Content must be available from message or DB
             if not content:
-                if "content" in body:
-                    logger.warning("Using content from raw body dict", document_id=document_id)
-                    content = body["content"]
-                else:
-                    logger.error("Content NOT FOUND in Message or DB", keys=list(body.keys()))
-                    raise ValueError(f"Document content not found: {document_id}")
+                logger.error("Content NOT FOUND in Message or DB", document_id=document_id)
+                raise ValueError(f"Document content not found: {document_id}")
 
             # 🔍 Log the content being analyzed
-            # Using print() to force output to Docker logs if logger is filtered
             print(f"📄 Content fetched for analysis (length: {len(content)} chars)", flush=True)
             print(f"📄 First 500 characters of content:\n{content[:500]}...", flush=True)
-
 
             # 4. 분석 수행 (Vector Generation & Storage)
             # 🆕 We no longer save sections HERE because it overwrites the hashes
@@ -264,6 +260,18 @@ class DocumentAnalysisConsumer:
                          msg.context = system_context_text
 
                     logger.info("Hierarchical context injected", length=len(system_context_text))
+                    
+                    # === DETAILED CONTEXT LOGGING FOR DOCKER ===
+                    print(f"\n{'='*60}", flush=True)
+                    print(f"[CONTEXT] 📖 Hierarchical Context Injected", flush=True)
+                    print(f"{'='*60}", flush=True)
+                    print(f"[CONTEXT] 🔍 Mentioned characters in text: {mentioned_chars[:10]}{'...' if len(mentioned_chars) > 10 else ''}", flush=True)
+                    print(f"[CONTEXT] 📝 Context length: {len(system_context_text)} chars", flush=True)
+                    print(f"[CONTEXT] 📜 Context preview (first 500 chars):", flush=True)
+                    print(f"{system_context_text[:500]}{'...' if len(system_context_text) > 500 else ''}", flush=True)
+                    print(f"{'='*60}\n", flush=True)
+                else:
+                    print("[CONTEXT] ⚠️ No hierarchical context generated (no previous chapters)", flush=True)
 
             except Exception as e:
                 logger.error("Failed to inject hierarchical context", error=str(e))
@@ -657,6 +665,15 @@ class DocumentAnalysisConsumer:
                 if i == start_batch_index and previous_summary_context:
                     batch_content = f"[이전 내용 요약]\n{previous_summary_context}\n\n[새로 추가된 내용]\n{batch_content}"
                     logger.info(f"[INCREMENTAL] Added previous summary context to batch {i+1}")
+                    
+                    # === DETAILED SUMMARY LOGGING FOR DOCKER ===
+                    print(f"\n{'='*60}", flush=True)
+                    print(f"[SUMMARY] 📋 Previous Summary Context (Incremental Mode)", flush=True)
+                    print(f"{'='*60}", flush=True)
+                    print(f"[SUMMARY] 📝 Summary length: {len(previous_summary_context)} chars", flush=True)
+                    print(f"[SUMMARY] 📜 Summary preview (first 500 chars):", flush=True)
+                    print(f"{previous_summary_context[:500]}{'...' if len(previous_summary_context) > 500 else ''}", flush=True)
+                    print(f"{'='*60}\n", flush=True)
 
                 print(f"Processing Batch {i+1}/{len(batches)} (size={len(batch_content)})", flush=True)
                 print(f"📄 Analyzing text content (first 500 chars):\n{batch_content[:500]}...", flush=True)

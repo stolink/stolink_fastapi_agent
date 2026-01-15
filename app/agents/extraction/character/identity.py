@@ -162,6 +162,40 @@ IDENTITY_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
 ✅ CORRECT: 헤이즈 교수의 aliases = ["박사", "교수님"] (titles for the same person)
 ❌ WRONG: 헤이즈 교수의 aliases = ["클레어", "잭슨"] (these are different people!)
 
+### CRITICAL: TITLE-BASED REFERENCES ###
+⚠️ If a character is referred to by BOTH a TITLE (주교, 신부, 장군, 박사, 교수, 의사, etc.) AND a PROPER NAME, you MUST:
+1. Use the PROPER NAME (not the title) as the "name" field.
+2. Add the TITLE to the "aliases" list.
+3. DO NOT create a separate character entry for the title.
+
+✅ CORRECT EXAMPLE:
+Text mentions: "미리엘 주교", "주교", "샤를 프랑수아 비앵브뉘 미리엘"
+→ Output ONE character:
+  {{"name": "샤를 프랑수아 비앵브뉘 미리엘", "aliases": ["미리엘", "주교", "미리엘 주교", "비앵브뉘 주교"], ...}}
+
+❌ WRONG: Creating 3 separate entries for "미리엘", "주교", "샤를 프랑수아 비앵브뉘 미리엘"
+
+### NAME PREFERENCE ORDER ###
+When choosing the "name" field, prefer in this order:
+1. Full formal name (e.g., "샤를 프랑수아 비앵브뉘 미리엘")
+2. Common name (e.g., "미리엘")
+3. Title + name (e.g., "미리엘 주교")
+4. Title only (e.g., "주교") - ONLY if no proper name is ever mentioned
+
+### 🚨 CRITICAL: SHORT/FULL NAME CONSOLIDATION 🚨 ###
+If the SAME character is referred to by both a SHORT NAME and a FULL FORMAL NAME:
+- "미리엘" (short) and "샤를 프랑수아 비앵브뉘 미리엘" (full) = SAME PERSON
+- "장발장" (short) and "장 발장" (full) = SAME PERSON
+
+⚠️ You MUST output ONLY ONE character entry, using the FULL NAME as "name" and the SHORT NAME as an alias.
+
+✅ CORRECT:
+{{"name": "샤를 프랑수아 비앵브뉘 미리엘", "aliases": ["미리엘", "미리엘 씨", "주교"], ...}}
+
+❌ WRONG - DO NOT output TWO entries like:
+{{"name": "샤를 프랑수아 비앵브뉘 미리엘", ...}}
+{{"name": "미리엘", ...}}  ← WRONG! This is the SAME person!
+
 ### WHAT IS A CHARACTER? ###
 ✅ A CHARACTER is a SPECIFIC PERSON or BEING with a PROPER NAME who acts, speaks, or thinks.
 ❌ NOT a character: objects, items, places, organizations, groups, generic crowds

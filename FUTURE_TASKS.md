@@ -205,3 +205,81 @@ Events have embeddings generated but are stored inline in the callback JSON. The
 
 - **Migration**: 1 hour
 - **Testing**: 1 hour
+
+
+순차 처리 구현 문서 (미래 구현용)
+상태: 구현 완료, 릴리즈에서 제외됨
+파일: 
+app/services/project_lock.py
+, 
+app/services/batch_manager.py
+
+1. 프로젝트별 순차 처리 (Redis Lock)
+목적
+같은 프로젝트 내 문서: 순차 처리
+다른 프로젝트 문서: 동시 처리
+파일
+project_lock.py
+
+핵심 로직
+# 락 획득
+await lock_manager.acquire_lock(project_id, job_id)
+# 락 해제
+await lock_manager.release_lock(project_id, job_id)
+적용 방법
+# document_analysis_consumer.py
+from app.services.project_lock import get_project_lock_manager
+# __init__
+self._lock_manager = None
+# start()
+self._lock_manager = await get_project_lock_manager()
+# _process_message()
+try:
+    await self._lock_manager.acquire_lock(project_id, job_id)
+    # ... 분석 로직
+finally:
+    await self._lock_manager.release_lock(project_id, job_id)
+2. 배치 기반 순서 보장
+목적
+네트워크 지연으로 순서가 뒤바뀌어도 발송 순서대로 처리
+일부 유실 시 재발송 요청
+파일
+batch_manager.py
+
+Spring 메시지 필드
+{
+  "batchId": "uuid",
+  "totalDocuments": 3,
+  "documentOrder": 1,
+  "batchTimeoutSeconds": 300,
+  "sentAt": 1705234800000
+}
+핵심 로직
+# 배치에 문서 추가
+is_ready = await batch_manager.add_document(msg)
+if is_ready:
+    # 모든 문서 도착 → 순서대로 처리
+else:
+    # 대기 (다음 문서 도착 시까지)
+타임아웃 처리
+지정 시간 내 모든 문서 미도착 → Spring에 재발송 요청
+재발송 API: POST /api/internal/ai/batch/retry
+3. 적용 체크리스트
+AI Backend
+ 
+project_lock.py
+ import 및 초기화
+ 
+batch_manager.py
+ import 및 초기화
+ 
+_process_message
+에 배치 모드 체크 추가
+ finally 블록에 락 해제 추가
+Spring Backend
+ 메시지에 배치 필드 추가
+ /api/internal/ai/batch/retry API 구현
+4. 테스트 파일
+BatchOrderingIntegrationTest.java
+
+⚠️ 테스트 시 documentId는 UUID 형식 필수

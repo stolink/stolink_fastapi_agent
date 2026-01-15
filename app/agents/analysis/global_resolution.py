@@ -47,9 +47,10 @@ class GlobalResolutionAgent:
     def __init__(self):
         self.llm = get_gemini_llm(tier="premium") # Use Premium for high reasoning
         self.embedding_service = get_embedding_service()
-        # Increased threshold to prevent incorrect merging of distinct characters
-        # 0.90 requires near-identical semantic content (same person, different mentions)
-        self.similarity_threshold = 0.90 # Increased to prevent incorrect merges (e.g. Heze vs Claire)
+        # Threshold for embedding similarity clustering
+        # 0.80 allows more aggressive clustering, LLM verification required before merging
+        # Lowered from 0.85 to catch title-based references like "비앵브뉘 주교"
+        self.similarity_threshold = 0.80
 
     async def resolve_entities(self, characters: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Resolve and merge duplicate characters using semantic similarity."""

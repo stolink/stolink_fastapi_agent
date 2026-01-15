@@ -67,7 +67,14 @@ For each character pair with a relationship:
    - strength: 1-10 (relationship intensity)
    - description: Brief description
 
-3. **Context**
+3. **Detailed Metrics (1-10 scale each)**
+   - emotional_bond: 정서적 유대감 (1=무관심, 10=깊은 유대)
+   - functional_trust: 기능적 신뢰 (1=불신, 10=완전 신뢰)
+   - value_alignment: 가치관 일치도 (1=완전 반대, 10=완전 일치)
+   - interdependence: 상호의존도 (1=독립적, 10=완전 의존)
+   - latent_tension: 잠재적 긴장감 (1=평화로움, 10=폭발 직전)
+
+4. **Context**
    - bidirectional: Follow DIRECTIONAL SEMANTICS above!
    - evolved_from: Previous relationship type (if changed)
 
@@ -95,6 +102,11 @@ For each character pair with a relationship:
       "relation_type": "RIVAL",
       "strength": 7,
       "description": "강한 의견 대립",
+      "emotional_bond": 3,
+      "functional_trust": 4,
+      "value_alignment": 2,
+      "interdependence": 5,
+      "latent_tension": 8,
       "bidirectional": true
     }}
   ]
@@ -104,6 +116,7 @@ For each character pair with a relationship:
 - [ ] All property names are in English?
 - [ ] All property names have double quotes?
 - [ ] All string values have double quotes?
+- [ ] All 5 detailed metrics (emotional_bond ~ latent_tension) included?
 - [ ] Commas between properties?
 - [ ] Valid JSON structure (use json.loads to verify mentally)?
 
@@ -116,6 +129,11 @@ For each character pair with a relationship:
       "relation_type": "BETRAYED",
       "strength": 9,
       "description": "이민호가 서진과의 우정을 배신함",
+      "emotional_bond": 2,
+      "functional_trust": 1,
+      "value_alignment": 3,
+      "interdependence": 4,
+      "latent_tension": 9,
       "bidirectional": false,
       "evolved_from": "FRIENDLY"
     }},
@@ -125,6 +143,11 @@ For each character pair with a relationship:
       "relation_type": "FRIENDLY",
       "strength": 8,
       "description": "오랜 동료이자 믿을 수 있는 친구",
+      "emotional_bond": 8,
+      "functional_trust": 9,
+      "value_alignment": 7,
+      "interdependence": 6,
+      "latent_tension": 2,
       "bidirectional": true
     }}
   ]
@@ -274,6 +297,15 @@ async def relationship_analysis_node(state: dict) -> dict:
             if traits:
                 clean_traits = [t if isinstance(t, str) else str(t) for t in traits]
                 available_personalities.append(f"{name}: [{', '.join(clean_traits[:5])}]") # Limit to top 5
+    
+    # 🆕 Also include existing_characters from previous chapters (e.g., 미리엘의 아내, 미리엘의 부친)
+    # These may not be in extracted_characters but are still valid relationship targets
+    existing_characters = state.get("existing_characters", [])
+    for ec in existing_characters:
+        ec_name = ec.get("name") if isinstance(ec, dict) else str(ec)
+        if ec_name and ec_name not in available_characters:
+            available_characters.append(ec_name)
+            print(f"[RELATIONSHIP] 🔗 Added existing character: {ec_name}")
     
     pers_str = "\n".join(available_personalities) if available_personalities else "None"
     
