@@ -56,6 +56,21 @@ SAFE_DEFAULTS = {
 # === Dynamic Korean ↔ English Name Detection ===
 # Instead of hardcoding, we detect Korean vs English and find matching pairs
 
+# === Korean Titles for Character Merging ===
+# Titles that might be used alone to refer to a character (e.g., "주교" instead of "미리엘")
+KOREAN_TITLES = [
+    # Religious
+    '주교', '대주교', '신부', '목사', '수녀', '수사', '승려', '스님', '교황',
+    # Academic/Professional
+    '교수', '박사', '의사', '선생', '변호사', '판사', '검사',
+    # Military/Government
+    '장군', '대장', '중령', '대위', '소위', '병사', '왕', '여왕', '황제', '공주', '왕자',
+    # Nobility
+    '공작', '후작', '백작', '자작', '남작', '경', '귀족',
+    # Common titles
+    '사장', '회장', '이사', '부장', '과장', '대리', '사원',
+]
+
 import re
 
 def is_korean(text: str) -> bool:
@@ -525,6 +540,33 @@ def build_name_merge_map(all_raw_names: set, dynamic_mapping: dict = None) -> di
                 final_canonical_map[name2] = name1
                 processed.add(name2)
     
+    # 2.5. Title-Based Merging
+    # If a name is a standalone title (e.g., "주교"), merge it with a named character
+    # that has this title in their aliases OR whose name contains the title.
+    title_only_names = [n for n in unique_canonicals if n in KOREAN_TITLES]
+    
+    for title_name in title_only_names:
+        if title_name in final_canonical_map and final_canonical_map[title_name] != title_name:
+            continue  # Already merged
+        
+        # Find a named character to merge with
+        # Strategy: Look for names that contain this title (e.g., "미리엘 주교" contains "주교")
+        for candidate in unique_canonicals:
+            if candidate == title_name:
+                continue
+            if candidate in KOREAN_TITLES:
+                continue  # Don't merge title with title
+            
+            # Check if candidate name contains the title
+            if title_name in candidate:
+                print(f"[AGGREGATOR] Title merge: '{title_name}' -> '{candidate}' (title in name)")
+                final_canonical_map[title_name] = candidate
+                break
+        
+        # If still not merged, check if any character has this title in their aliases
+        # (This would require access to identity_data, which we don't have here)
+        # This will be handled in merge_character_data later
+    
     # 3. Update original merge map
     for raw, canon in merge_map.items():
         if canon in final_canonical_map:
@@ -535,6 +577,128 @@ def build_name_merge_map(all_raw_names: set, dynamic_mapping: dict = None) -> di
     return merge_map
 
 
+def merge_short_full_name_variants(
+    name_merge_map: dict,
+    identity_data: dict
+) -> dict:
+    """Merge short name variants with full name variants.
+    
+    Handles cases where LLM extracts both:
+    - "미리엘" (short name)
+    - "샤를 프랑수아 비앵브뉘 미리엘" (full formal name)
+    
+    These should be merged into one character (the full name).
+    
+    Args:
+        name_merge_map: Current name merge map {raw_name: canonical_name}
+        identity_data: Character identity data {name: {...}}
+    
+    Returns:
+        Updated name_merge_map with short names merged into full names
+    """
+    canonical_names = list(set(name_merge_map.values()))
+    
+    # Sort by length (longest first)
+    canonical_names.sort(key=len, reverse=True)
+    
+    updated_map = dict(name_merge_map)
+    merged_count = 0
+    
+    # For each short name, check if it's a substring of a longer canonical name
+    for i, short_name in enumerate(canonical_names):
+        if len(short_name) < 2:  # Skip single-char names
+            continue
+            
+        for full_name in canonical_names[:i]:  # Only check longer names
+            if full_name == short_name:
+                continue
+            
+            # Check if short name is a meaningful part of full name
+            # e.g., "미리엘" in "샤를 프랑수아 비앵브뉘 미리엘"
+            if short_name in full_name and len(short_name) >= 2:
+                print(f"[AGGREGATOR] Short/Full name merge: '{short_name}' → '{full_name}' (substring match)")
+                
+                # Update all entries that map to short_name
+                for raw_name, canonical in updated_map.items():
+                    if canonical == short_name:
+                        updated_map[raw_name] = full_name
+                
+                # Also add short name as alias to full name in identity_data
+                if full_name in identity_data:
+                    aliases = identity_data[full_name].get("aliases", [])
+                    if short_name not in aliases:
+                        if isinstance(aliases, list):
+                            aliases.append(short_name)
+                            identity_data[full_name]["aliases"] = aliases
+                
+                merged_count += 1
+                break  # Short name merged, move to next
+    
+    if merged_count > 0:
+        new_canonical_count = len(set(updated_map.values()))
+        print(f"[AGGREGATOR] After short/full name merge: {new_canonical_count} canonical names ({merged_count} merged)")
+    
+    return updated_map
+
+
+def merge_title_characters_by_alias(
+    name_merge_map: dict,
+    identity_data: dict
+) -> dict:
+    """Merge title-only characters with named characters based on alias matching.
+    
+    This handles cases where a standalone title like "주교" should be merged with
+    a named character like "미리엘" who has "주교" in their aliases.
+    
+    Args:
+        name_merge_map: Current name merge map {raw_name: canonical_name}
+        identity_data: Character identity data {name: {aliases: [...], ...}}
+    
+    Returns:
+        Updated name_merge_map with title-only names merged to proper names
+    """
+    # Find all title-only canonical names
+    canonical_names = set(name_merge_map.values())
+    title_only_canonicals = [n for n in canonical_names if n in KOREAN_TITLES]
+    
+    if not title_only_canonicals:
+        return name_merge_map
+    
+    print(f"[AGGREGATOR] Found {len(title_only_canonicals)} title-only characters to merge: {title_only_canonicals}")
+    
+    updated_map = dict(name_merge_map)
+    
+    for title_name in title_only_canonicals:
+        # Find a named character that has this title in their aliases
+        for char_name, char_data in identity_data.items():
+            if char_name == title_name:
+                continue
+            if char_name in KOREAN_TITLES:
+                continue  # Skip other titles
+            
+            aliases = char_data.get("aliases", [])
+            
+            # Check if title is in aliases
+            if title_name in aliases:
+                print(f"[AGGREGATOR] Alias-based title merge: '{title_name}' -> '{char_name}' (title in aliases)")
+                # Update all entries that map to title_name to map to char_name instead
+                for raw_name, canonical in updated_map.items():
+                    if canonical == title_name:
+                        updated_map[raw_name] = char_name
+                break
+            
+            # Check if title appears in any alias
+            for alias in aliases:
+                if title_name in alias:
+                    print(f"[AGGREGATOR] Alias-based title merge: '{title_name}' -> '{char_name}' (title found in alias '{alias}')")
+                    for raw_name, canonical in updated_map.items():
+                        if canonical == title_name:
+                            updated_map[raw_name] = char_name
+                    break
+    
+    new_canonical_count = len(set(updated_map.values()))
+    print(f"[AGGREGATOR] After alias-based title merge: {new_canonical_count} canonical names")
+    return updated_map
 
 
 def clean_character_aliases(aliases: list, char_name: str, all_character_names: set) -> list:
@@ -656,6 +820,15 @@ async def merge_character_data(
     # === DEDUPLICATION: Build canonical name mapping ===
     # This merges "Vera" and "베라" into a single character
     name_merge_map = build_name_merge_map(all_raw_names, dynamic_mapping)
+    
+    # === TITLE DEDUPLICATION: Merge title-only names with named characters ===
+    # This merges "주교" with "미리엘" if "미리엘" has "주교" in aliases
+    name_merge_map = merge_title_characters_by_alias(name_merge_map, identity)
+    
+    # === SHORT/FULL NAME DEDUPLICATION: Merge substring name variants ===
+    # This merges "미리엘" with "샤를 프랑수아 비앵브뉘 미리엘" (short name in full name)
+    name_merge_map = merge_short_full_name_variants(name_merge_map, identity)
+    
     canonical_names = set(name_merge_map.values())
     
     print(f"[AGGREGATOR] Raw names: {all_raw_names}")

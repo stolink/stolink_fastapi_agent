@@ -137,8 +137,18 @@ class DatabaseQueryService:
 
             # Initialize Schema (Constraints & Indexes)
             async with self._neo4j_driver.session() as session:
-                # 1. Character
-                await session.run("CREATE CONSTRAINT character_id_unique IF NOT EXISTS FOR (c:Character) REQUIRE c.id IS UNIQUE")
+                # 1. Character - Use characterId (not id)
+                # Drop conflicting index if exists before creating constraint
+                try:
+                    await session.run("DROP INDEX character_id_unique IF EXISTS")
+                except:
+                    pass  # Index might not exist
+                try:
+                    # Drop old index on c.id if exists
+                    await session.run("DROP INDEX ON :Character(id)")
+                except:
+                    pass
+                await session.run("CREATE CONSTRAINT character_id_unique IF NOT EXISTS FOR (c:Character) REQUIRE c.characterId IS UNIQUE")
                 await session.run("CREATE INDEX character_project_id_idx IF NOT EXISTS FOR (c:Character) ON (c.project_id)")
                 await session.run("CREATE INDEX character_name_idx IF NOT EXISTS FOR (c:Character) ON (c.name)")
 
@@ -542,12 +552,27 @@ class DatabaseQueryService:
         Returns:
             List of similar character dicts with similarity scores
         """
-        if not self._neo4j_driver or not query_embedding:
+        # 🆕 Validate embedding before sending to Neo4j
+        if not self._neo4j_driver:
+            return []
+        
+        if not query_embedding or not isinstance(query_embedding, list):
+            logger.warning("Invalid query_embedding: not a list")
+            return []
+        
+        # Ensure all values are floats
+        try:
+            validated_embedding = [float(x) for x in query_embedding]
+            if len(validated_embedding) == 0:
+                logger.warning("Invalid query_embedding: empty list")
+                return []
+        except (TypeError, ValueError) as e:
+            logger.warning(f"Invalid query_embedding values: {e}")
             return []
 
         query = """
             MATCH (c:Character {project_id: $project_id})
-            WHERE c.embedding IS NOT NULL
+            WHERE c.embedding IS NOT NULL AND size(c.embedding) > 0
             WITH c, vector.similarity.cosine(c.embedding, $embedding) AS score
             WHERE score > 0.6
             RETURN c.name AS name, c.status AS status, c.role AS role,
@@ -586,16 +611,30 @@ class DatabaseQueryService:
         Returns:
             List of similar event dicts with similarity scores
         """
-        if not self._neo4j_driver or not query_embedding:
+        # Validate embedding before sending to Neo4j
+        if not self._neo4j_driver:
+            return []
+        
+        if not query_embedding or not isinstance(query_embedding, list):
+            logger.warning("Invalid event query_embedding: not a list")
+            return []
+        
+        try:
+            validated_embedding = [float(x) for x in query_embedding]
+            if len(validated_embedding) == 0:
+                logger.warning("Invalid event query_embedding: empty list")
+                return []
+        except (TypeError, ValueError) as e:
+            logger.warning(f"Invalid event query_embedding values: {e}")
             return []
 
         query = """
-            MATCH (e:Event {projectId: $project_id})
-            WHERE e.embedding IS NOT NULL
+            MATCH (e:Event {project_id: $project_id})
+            WHERE e.embedding IS NOT NULL AND size(e.embedding) > 0
             WITH e, vector.similarity.cosine(e.embedding, $embedding) AS score
             WHERE score > 0.6
             RETURN e.eventId AS event_id, e.description AS description,
-                   e.participantsJson AS participants, e.chapter AS chapter, score
+                   e.participants AS participants, e.chapter AS chapter, score
             ORDER BY score DESC
             LIMIT $top_k
         """
@@ -605,7 +644,7 @@ class DatabaseQueryService:
                 result = await session.run(
                     query,
                     project_id=project_id,
-                    embedding=query_embedding,
+                    embedding=validated_embedding,  # Use validated embedding
                     top_k=top_k
                 )
                 records = await result.data()
@@ -695,6 +734,35 @@ class DatabaseQueryService:
                 events_found=len(result["events"]),
                 top_k=top_k
             )
+            
+            # === DETAILED RAG LOGGING FOR DOCKER ===
+            print(f"\n{'='*60}", flush=True)
+            print(f"[RAG] 📚 Retrieved Historical Context (top_k={top_k})", flush=True)
+            print(f"{'='*60}", flush=True)
+            
+            if result["characters"]:
+                print(f"[RAG] 👥 Historical Characters ({len(result['characters'])}):", flush=True)
+                for i, char in enumerate(result["characters"][:10]):  # Limit to 10 for readability
+                    char_name = char.get("name", "Unknown")
+                    char_role = char.get("role", "N/A")
+                    char_status = char.get("status", "N/A")
+                    score = char.get("score", 0)
+                    print(f"  [{i+1}] {char_name} (role={char_role}, status={char_status}, similarity={score:.2f})", flush=True)
+            else:
+                print("[RAG] 👥 No historical characters found", flush=True)
+            
+            if result["events"]:
+                print(f"[RAG] 📅 Historical Events ({len(result['events'])}):", flush=True)
+                for i, evt in enumerate(result["events"][:10]):  # Limit to 10
+                    evt_id = evt.get("event_id", "N/A")
+                    evt_desc = (evt.get("description") or "")[:80]
+                    chapter = evt.get("chapter", "?")
+                    score = evt.get("score", 0)
+                    print(f"  [{i+1}] Ch.{chapter}: {evt_desc}... (similarity={score:.2f})", flush=True)
+            else:
+                print("[RAG] 📅 No historical events found", flush=True)
+            
+            print(f"{'='*60}\n", flush=True)
 
         except Exception as e:
             logger.error("Failed to retrieve history", error=str(e))
@@ -1569,6 +1637,13 @@ class DatabaseQueryService:
             # 작가가 글을 추가할 때마다 기존 정보가 사라지는 문제 방지
             # await self._cleanup_document_data(session, document_id)
 
+            # 🆕 Defer relationship creation until ALL characters are created
+            deferred_char_relations = []
+            
+            # 🆕 Track processed relationships to avoid duplicates (Global vs Local)
+            # Tuple of (source_name, target_name)
+            processed_pairs = set()
+
             # ===== 1. Characters =====
             # Spring의 saveCharacters() + updateCharacterJsonFields() 로직 통합
             for char in characters:
@@ -1576,6 +1651,28 @@ class DatabaseQueryService:
                 char_name = char.get("name") or (char.get("profile", {}) or {}).get("name")
 
                 if not char_name:
+                    continue
+                
+                # 🆕 Meta-character filter keywords (expanded v2)
+                META_KEYWORDS = [
+                    # 서술자/저자
+                    "서술자", "narrator", "author", "저자", "빅토르 위고", "화자",
+                    # 추상적 개념
+                    "사회", "society", "상징적", "symbolic", 
+                    # 상징적 인물
+                    "빈곤한 남성", "기아에 허덕이는", "어둠 속의 아동",
+                    # 집단명 (개별 인물이 아님) - EXPANDED
+                    "고아들", "부자들", "선생님들", "시민들", "사람들", "군중",
+                    "가난한 이들", "빈곤층", "부유층", "귀족들", "평민들",
+                    # 대명사/무의미
+                    "우리", "원본", "그들", "그녀들", "그", "그녀",
+                    # 직함만 있는 경우 (이름 없음) - NEW
+                    "황제", "교황", "왕", "여왕",
+                ]
+                
+                # 🆕 Filter out meta-characters
+                if any(kw in char_name for kw in META_KEYWORDS):
+                    print(f"[FILTER] Skipping meta-character: {char_name}")
                     continue
                 
                 # 🆕 Normalize name to prevent invisible chars causing ID mismatch
@@ -1607,6 +1704,55 @@ class DatabaseQueryService:
                 # 🆕 Generate DETERMINISTIC character_id from project_id + name
                 # This ensures same character always gets same ID, avoiding duplicates
                 char_id = str(uuid_mod.uuid5(uuid_mod.UUID(project_id), f"character_{char_name}"))
+                
+                # 🆕 Name-based deduplication: Check if this name is substring of existing character
+                # e.g., "미리엘" should merge with "샤를 프랑수아 비앵브뉘 미리엘"
+                existing_by_name = await session.run("""
+                    MATCH (c:Character {project_id: $pid})
+                    WHERE c.name CONTAINS $short_name AND c.name <> $short_name
+                    RETURN c.name AS existing_name
+                    LIMIT 1
+                """, pid=project_id, short_name=char_name)
+                existing_record = await existing_by_name.single()
+                
+                if existing_record:
+                    existing_name = existing_record["existing_name"]
+                    print(f"[DEDUP] Name match: '{char_name}' is substring of '{existing_name}' - merging", flush=True)
+                    # Add current name as alias to existing character
+                    await session.run("""
+                        MATCH (c:Character {project_id: $pid, name: $existing_name})
+                        SET c.aliases = CASE
+                            WHEN c.aliases IS NULL THEN [$new_alias]
+                            WHEN NOT $new_alias IN c.aliases THEN c.aliases + $new_alias
+                            ELSE c.aliases
+                        END
+                    """, pid=project_id, existing_name=existing_name, new_alias=char_name)
+                    # Skip creating this character - it's merged into existing
+                    continue
+                
+                # 🆕 Also check if an existing character's name is substring of THIS name
+                # e.g., existing "미리엘" should merge into new "샤를 프랑수아 비앵브뉘 미리엘"
+                existing_shorter = await session.run("""
+                    MATCH (c:Character {project_id: $pid})
+                    WHERE $long_name CONTAINS c.name AND c.name <> $long_name
+                    RETURN c.name AS short_name, c.characterId AS short_id
+                    LIMIT 1
+                """, pid=project_id, long_name=char_name)
+                shorter_record = await existing_shorter.single()
+                
+                if shorter_record:
+                    short_existing_name = shorter_record["short_name"]
+                    print(f"[DEDUP] Absorbing shorter name: '{short_existing_name}' into '{char_name}'", flush=True)
+                    # Add shorter name as alias to this character
+                    current_aliases = char.get("aliases", []) or []
+                    if short_existing_name not in current_aliases:
+                        current_aliases.append(short_existing_name)
+                        char["aliases"] = current_aliases
+                    # Delete the shorter-named character (will be recreated as alias)
+                    await session.run("""
+                        MATCH (c:Character {project_id: $pid, name: $short_name})
+                        DETACH DELETE c
+                    """, pid=project_id, short_name=short_existing_name)
                 
                 # 🆕 Embedding-based deduplication: Find similar existing character
                 existing_name = await self._find_similar_character(session, project_id, embedding)
@@ -1715,6 +1861,221 @@ class DatabaseQueryService:
                     aliases=char.get("aliases") or [],
                     embedding=embedding
                 )
+                
+                # 🆕 Defer relationship creation - Store for Pass 2
+                relations_graph = relations.get("graph", []) if isinstance(relations, dict) else []
+                if relations_graph:
+                    deferred_char_relations.append({
+                        "source": char_name,
+                        "relations": relations_graph
+                    })
+                    print(f"[NEO4J] Deferred {len(relations_graph)} relationships for '{char_name}'", flush=True)
+
+            # 🆕 ===== 1.5. Global Relationships (Priority 1) =====
+            # Process Global Analysis results FIRST as they are the source of truth
+            # Moved from Section 4 to here to establish precedence
+            for rel in relationships:
+                source_name = rel.get("source")
+                target_name = rel.get("target")
+                rel_type = (rel.get("type") or rel.get("relation_type") or "RELATED_TO").upper().replace(" ", "_")
+
+                if not source_name or not target_name:
+                    continue
+
+                # Add to processed set (both directions if bidirectional, but Neo4j is directed)
+                # We track (source, target) to skip exact duplicates from local analysis
+                processed_pairs.add((source_name, target_name))
+
+                # Sanitize relationship type (Neo4j naming requirement)
+                safe_rel_type = re.sub(r'[^A-Z0-9_]', '_', rel_type)
+                if not safe_rel_type:
+                    safe_rel_type = "RELATED_TO"
+
+                # Create relationship with properties
+                query = f"""
+                    MATCH (a:Character {{project_id: $pid, name: $source}})
+                    MATCH (b:Character {{project_id: $pid, name: $target}})
+                    MERGE (a)-[r:{safe_rel_type}]->(b)
+                    SET r.description = $desc,
+                        r.strength = $strength,
+                        r.bidirectional = $bidirectional,
+                        r.emotionalBond = $emotional_bond,
+                        r.functionalTrust = $functional_trust,
+                        r.valueAlignment = $value_alignment,
+                        r.interdependence = $interdependence,
+                        r.latentTension = $latent_tension,
+                        r.source_doc = $doc_id,
+                        r.created_at = datetime()
+                """
+
+                await session.run(
+                    query,
+                    pid=project_id,
+                    source=source_name.strip(),
+                    target=target_name.strip(),
+                    desc=rel.get("description", ""),
+                    strength=rel.get("strength", 5),
+                    bidirectional=rel.get("bidirectional", False),
+                    emotional_bond=rel.get("emotional_bond", 5),
+                    functional_trust=rel.get("functional_trust", 5),
+                    value_alignment=rel.get("value_alignment", 5),
+                    interdependence=rel.get("interdependence", 5),
+                    latent_tension=rel.get("latent_tension", 1),
+                    doc_id=document_id
+                )
+
+                # If bidirectional, create reverse relationship
+                # For global relationships, we use the explicit 'bidirectional' flag from the analysis.
+                # The 'is_bidirectional' variable is introduced later for local relationships.
+                if rel.get("bidirectional", False):
+                    processed_pairs.add((target_name, source_name))
+                    
+                    reverse_query = f"""
+                        MATCH (a:Character {{project_id: $pid, name: $source}})
+                        MATCH (b:Character {{project_id: $pid, name: $target}})
+                        MERGE (b)-[r:{safe_rel_type}]->(a)
+                        SET r.description = $desc,
+                            r.strength = $strength,
+                            r.bidirectional = $bidirectional,
+                            r.emotionalBond = $emotional_bond,
+                            r.functionalTrust = $functional_trust,
+                            r.valueAlignment = $value_alignment,
+                            r.interdependence = $interdependence,
+                            r.latentTension = $latent_tension,
+                            r.source_doc = $doc_id,
+                            r.created_at = datetime()
+                    """
+
+                    await session.run(
+                        reverse_query,
+                        pid=project_id,
+                        source=source_name.strip(),
+                        target=target_name.strip(),
+                        desc=rel.get("description", ""),
+                        strength=rel.get("strength", 5),
+                        bidirectional=rel.get("bidirectional", False),
+                        emotional_bond=rel.get("emotional_bond", 5),
+                        functional_trust=rel.get("functional_trust", 5),
+                        value_alignment=rel.get("value_alignment", 5),
+                        interdependence=rel.get("interdependence", 5),
+                        latent_tension=rel.get("latent_tension", 1),
+                        doc_id=document_id
+                    )
+
+            # 🆕 ===== 1.6. Character Relationships (Priority 2) =====
+            # Now process deferred local relationships, but SKIP if already created by Global Analysis
+            for item in deferred_char_relations:
+                source_name = item["source"]
+                
+                for rel_entry in item["relations"]:
+                    target_name = rel_entry.get("target")
+                    rel_type = (rel_entry.get("type") or "RELATED_TO").upper().replace(" ", "_")
+                    
+                    if not target_name:
+                        continue
+                    
+                    # 🆕 DEDUP CHECK: Skip if global analysis already defined this relationship
+                    if (source_name, target_name) in processed_pairs:
+                        print(f"[NEO4J] Skipping duplicate local relationship: {source_name} -> {target_name}", flush=True)
+                        continue
+
+                    # Sanitize relationship type
+                    safe_rel_type = re.sub(r'[^A-Z0-9_]', '_', rel_type)
+                    if not safe_rel_type:
+                        safe_rel_type = "RELATED_TO"
+                    
+                    # 🆕 Infer bidirectionality for symmetric types
+                    # Local analysis (relations.graph) often misses the bidirectional flag
+                    is_bidirectional = rel_entry.get("bidirectional", False)
+                    SYMMETRIC_TYPES = ["FAMILY", "ALLY", "ENEMY", "RIVAL", "FRIENDLY", "ROMANTIC", "MARRIED", "LOVERS"]
+                    if safe_rel_type in SYMMETRIC_TYPES:
+                        is_bidirectional = True
+                    
+                    # Create relationship edge
+                    # Note: Both Source and Target MUST exist now
+                    rel_query = f"""
+                        MATCH (a:Character {{project_id: $pid, name: $source}})
+                        MATCH (b:Character {{project_id: $pid, name: $target}})
+                        MERGE (a)-[r:{safe_rel_type}]->(b)
+                        ON CREATE SET 
+                            r.description = $desc,
+                            r.strength = $strength,
+                            r.emotionalBond = $emotional_bond,
+                            r.functionalTrust = $functional_trust,
+                            r.valueAlignment = $value_alignment,
+                            r.interdependence = $interdependence,
+                            r.latentTension = $latent_tension,
+                            r.source_doc = $doc_id,
+                            r.created_at = datetime()
+                        ON MATCH SET
+                            r.description = CASE WHEN r.description IS NULL OR r.description = '' THEN $desc ELSE r.description END,
+                            r.strength = coalesce(r.strength, $strength),
+                            r.emotionalBond = coalesce(r.emotionalBond, $emotional_bond),
+                            r.functionalTrust = coalesce(r.functionalTrust, $functional_trust),
+                            r.valueAlignment = coalesce(r.valueAlignment, $value_alignment),
+                            r.interdependence = coalesce(r.interdependence, $interdependence),
+                            r.latentTension = coalesce(r.latentTension, $latent_tension)
+                    """
+                    
+                    await session.run(
+                        rel_query,
+                        pid=project_id,
+                        source=source_name,
+                        target=target_name.strip(),
+                        desc=rel_entry.get("description", ""),
+                        strength=rel_entry.get("strength", 5),
+                        emotional_bond=rel_entry.get("emotional_bond", 5),
+                        functional_trust=rel_entry.get("functional_trust", 5),
+                        value_alignment=rel_entry.get("value_alignment", 5),
+                        interdependence=rel_entry.get("interdependence", 5),
+                        latent_tension=rel_entry.get("latent_tension", 5),
+                        doc_id=document_id
+                    )
+
+                    # If bidirectional, create reverse relationship
+                    # 🆕 INFERRED REVERSE EDGE LOGIC
+                    # 1. Only create if NOT already processed (by Global or Target's forward pass)
+                    # 2. Do NOT add to processed_pairs: We want to allow the Target's OWN analysis 
+                    #    to overwrite this inferred edge with real data later (asymmetric update).
+                    if is_bidirectional and (target_name, source_name) not in processed_pairs:
+                        # Note: We do NOT add to processed_pairs here.
+                        
+                        reverse_query = f"""
+                            MATCH (a:Character {{project_id: $pid, name: $source}})
+                            MATCH (b:Character {{project_id: $pid, name: $target}})
+                            MERGE (b)-[r:{safe_rel_type}]->(a)
+                            ON CREATE SET
+                                r.description = $desc,
+                                r.strength = $strength,
+                                r.bidirectional = $bidirectional,
+                                r.emotionalBond = $emotional_bond,
+                                r.functionalTrust = $functional_trust,
+                                r.valueAlignment = $value_alignment,
+                                r.interdependence = $interdependence,
+                                r.latentTension = $latent_tension,
+                                r.source_doc = $doc_id,
+                                r.created_at = datetime()
+                            ON MATCH SET
+                                // Only update basic info if missing or inferred
+                                // We prefer the Target's own analysis to update this later
+                                r.bidirectional = coalesce(r.bidirectional, $bidirectional)
+                        """
+
+                        await session.run(
+                            reverse_query,
+                            pid=project_id,
+                            source=source_name.strip(),
+                            target=target_name.strip(),
+                            desc=rel_entry.get("description", ""),
+                            strength=rel_entry.get("strength", 5),
+                            bidirectional=is_bidirectional,
+                            emotional_bond=rel_entry.get("emotional_bond", 5),
+                            functional_trust=rel_entry.get("functional_trust", 5),
+                            value_alignment=rel_entry.get("value_alignment", 5),
+                            interdependence=rel_entry.get("interdependence", 5),
+                            latent_tension=rel_entry.get("latent_tension", 5),
+                            doc_id=document_id
+                        )
 
             # ===== 2. Settings (Locations) =====
             # Spring의 saveSettings() 로직 통합
@@ -1900,7 +2261,7 @@ class DatabaseQueryService:
                     chapter=evt.get("chapter", 0),
                     seq_order=evt.get("sequence_order", 0),
                     importance=evt.get("importance", 5),
-                    timestamp=evt.get("timestamp"),
+                    timestamp=json.dumps(evt.get("timestamp", {}), ensure_ascii=False) if evt.get("timestamp") else None,
                     location_ref=evt.get("location_ref", ""),
                     prev_event_id=evt.get("prev_event_id"),
                     embedding=evt.get("embedding")
@@ -1914,106 +2275,39 @@ class DatabaseQueryService:
 
                     participant_name = participant_name.strip()
 
+                    # 🆕 Use eventId for reliable matching (not narrativeSummary which may vary)
                     await session.run(
                         """
                         MATCH (c:Character {project_id: $pid, name: $char_name})
-                        MATCH (e:Event {project_id: $pid, narrativeSummary: $narrative_summary})
+                        MATCH (e:Event {eventId: $evt_id})
                         MERGE (c)-[r:PARTICIPATES_IN]->(e)
+                        ON CREATE SET r.created_at = datetime()
                         """,
                         pid=project_id,
                         char_name=participant_name,
-                        narrative_summary=evt.get("narrative_summary", "")
+                        evt_id=evt_id_with_doc
                     )
 
                 # Create HAPPENED_AT relationship (Event -> Setting)
                 # Spring의 eventNeo4jRepository.createHappenedAtEdge() 로직
                 location_ref = evt.get("location_ref") or evt.get("location")
                 if location_ref:
+                    # 🆕 Use eventId for reliable matching
                     await session.run(
                         """
-                        MATCH (e:Event {project_id: $pid, narrativeSummary: $narrative_summary})
+                        MATCH (e:Event {eventId: $evt_id})
                         MATCH (s:Setting {project_id: $pid, name: $loc_name})
                         MERGE (e)-[r:HAPPENED_AT]->(s)
+                        ON CREATE SET r.created_at = datetime()
                         """,
                         pid=project_id,
-                        narrative_summary=evt.get("narrative_summary", ""),
+                        evt_id=evt_id_with_doc,
                         loc_name=location_ref
                     )
 
             # ===== 4. Relationships (Character <-> Character) =====
-            # Spring의 saveRelationships() + createRelationship() 로직
-            for rel in relationships:
-                source_name = rel.get("source")
-                target_name = rel.get("target")
-                rel_type = (rel.get("type") or rel.get("relation_type") or "RELATED_TO").upper().replace(" ", "_")
-
-                if not source_name or not target_name:
-                    continue
-
-                # Sanitize relationship type (Neo4j naming requirement)
-                safe_rel_type = re.sub(r'[^A-Z0-9_]', '_', rel_type)
-                if not safe_rel_type:
-                    safe_rel_type = "RELATED_TO"
-
-                # Create relationship with properties
-                query = f"""
-                    MATCH (a:Character {{project_id: $pid, name: $source}})
-                    MATCH (b:Character {{project_id: $pid, name: $target}})
-                    MERGE (a)-[r:{safe_rel_type}]->(b)
-                    SET r.description = $desc,
-                        r.strength = $strength,
-                        r.bidirectional = $bidirectional,
-                        r.emotionalBond = $emotional_bond,
-                        r.functionalTrust = $functional_trust,
-                        r.valueAlignment = $value_alignment,
-                        r.interdependence = $interdependence,
-                        r.latentTension = $latent_tension
-                """
-
-                await session.run(
-                    query,
-                    pid=project_id,
-                    source=source_name.strip(),
-                    target=target_name.strip(),
-                    desc=rel.get("description", ""),
-                    strength=rel.get("strength", 5),
-                    bidirectional=rel.get("bidirectional", False),
-                    emotional_bond=rel.get("emotional_bond", 5),
-                    functional_trust=rel.get("functional_trust", 5),
-                    value_alignment=rel.get("value_alignment", 5),
-                    interdependence=rel.get("interdependence", 5),
-                    latent_tension=rel.get("latent_tension", 1)
-                )
-
-                # If bidirectional, create reverse relationship
-                if rel.get("bidirectional", False):
-                    reverse_query = f"""
-                        MATCH (a:Character {{project_id: $pid, name: $source}})
-                        MATCH (b:Character {{project_id: $pid, name: $target}})
-                        MERGE (b)-[r:{safe_rel_type}]->(a)
-                        SET r.description = $desc,
-                            r.strength = $strength,
-                            r.bidirectional = $bidirectional,
-                            r.emotionalBond = $emotional_bond,
-                            r.functionalTrust = $functional_trust,
-                            r.valueAlignment = $value_alignment,
-                            r.interdependence = $interdependence,
-                            r.latentTension = $latent_tension
-                    """
-                    await session.run(
-                        reverse_query,
-                        pid=project_id,
-                        source=source_name.strip(),
-                        target=target_name.strip(),
-                        desc=rel.get("description", ""),
-                        strength=rel.get("strength", 5),
-                        bidirectional=True,
-                        emotional_bond=rel.get("emotional_bond", 5),
-                        functional_trust=rel.get("functional_trust", 5),
-                        value_alignment=rel.get("value_alignment", 5),
-                        interdependence=rel.get("interdependence", 5),
-                        latent_tension=rel.get("latent_tension", 1)
-                    )
+            # 🆕 MOVED to Section 1.5 to prioritize Global Analysis over Local Analysis
+            # See code above for implementation
 
         logger.info(
             "Neo4j sync completed",

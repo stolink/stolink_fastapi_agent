@@ -183,8 +183,8 @@ async def consistency_check_node(state: dict) -> dict:
     
     # === RAG: Retrieve historical context ===
     historical_context = {"characters": [], "events": [], "search_performed": False}
-    # Skip RAG for short texts to prevent Cross-Chapter false positives
-    if project_id and not is_short_text:
+    # 🆕 Always apply RAG regardless of is_short_text (user request: apply for all texts)
+    if project_id:
         try:
             db_service = await get_db_service()
             historical_context = await db_service.retrieve_relevant_history(
@@ -201,6 +201,16 @@ async def consistency_check_node(state: dict) -> dict:
         # Get structured LLM
         structured_llm = get_structured_llm(ConsistencyReport, tier="basic")
         chain = CONSISTENCY_CHECK_PROMPT | structured_llm
+        
+        # === LOG HISTORICAL CONTEXT BEING USED ===
+        if historical_context["search_performed"]:
+            print(f"\n{'='*60}", flush=True)
+            print(f"[CONSISTENCY] 🔍 Historical Context for LLM", flush=True)
+            print(f"{'='*60}", flush=True)
+            print(f"[CONSISTENCY] Using {len(historical_context['characters'])} historical chars, {len(historical_context['events'])} events for consistency check", flush=True)
+            hist_ctx_str = str(historical_context)[:800]
+            print(f"[CONSISTENCY] Historical data preview: {hist_ctx_str}...", flush=True)
+            print(f"{'='*60}\n", flush=True)
         
         result: ConsistencyReport = await chain.ainvoke({
             "characters": str(characters),
