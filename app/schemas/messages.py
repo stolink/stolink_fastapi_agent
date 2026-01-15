@@ -180,12 +180,6 @@ class DocumentAnalysisMessage(BaseModel):
     callback_url: str = Field(..., description="결과 콜백 URL")
     context: Optional[AnalysisContext] = Field(None, description="기존 데이터 컨텍스트")
     trace_id: Optional[str] = Field(None, description="추적 ID")
-    sent_at: Optional[int] = Field(None, alias="sentAt", description="발송 시점 Unix timestamp (밀리초)")
-    
-    # 🆕 배치 기반 순서 보장 필드
-    batch_id: Optional[str] = Field(None, alias="batchId", description="배치 식별자 (없으면 즉시 처리)")
-    total_documents: Optional[int] = Field(None, alias="totalDocuments", description="배치 내 총 문서 수")
-    batch_timeout_seconds: int = Field(default=300, alias="batchTimeoutSeconds", description="배치 타임아웃 (초)")
     
     model_config = {
         "populate_by_name": True,

@@ -1637,6 +1637,13 @@ class DatabaseQueryService:
             # 작가가 글을 추가할 때마다 기존 정보가 사라지는 문제 방지
             # await self._cleanup_document_data(session, document_id)
 
+            # 🆕 Defer relationship creation until ALL characters are created
+            deferred_char_relations = []
+            
+            # 🆕 Track processed relationships to avoid duplicates (Global vs Local)
+            # Tuple of (source_name, target_name)
+            processed_pairs = set()
+
             # ===== 1. Characters =====
             # Spring의 saveCharacters() + updateCharacterJsonFields() 로직 통합
             for char in characters:
@@ -1855,26 +1862,137 @@ class DatabaseQueryService:
                     embedding=embedding
                 )
                 
-                # 🆕 ===== Create Neo4j edges from character's relations.graph =====
-                # This converts the embedded relations JSON into actual Neo4j relationships
+                # 🆕 Defer relationship creation - Store for Pass 2
                 relations_graph = relations.get("graph", []) if isinstance(relations, dict) else []
-                
                 if relations_graph:
-                    print(f"[NEO4J] Creating {len(relations_graph)} relationship edges from '{char_name}' relations.graph", flush=True)
+                    deferred_char_relations.append({
+                        "source": char_name,
+                        "relations": relations_graph
+                    })
+                    print(f"[NEO4J] Deferred {len(relations_graph)} relationships for '{char_name}'", flush=True)
+
+            # 🆕 ===== 1.5. Global Relationships (Priority 1) =====
+            # Process Global Analysis results FIRST as they are the source of truth
+            # Moved from Section 4 to here to establish precedence
+            for rel in relationships:
+                source_name = rel.get("source")
+                target_name = rel.get("target")
+                rel_type = (rel.get("type") or rel.get("relation_type") or "RELATED_TO").upper().replace(" ", "_")
+
+                if not source_name or not target_name:
+                    continue
+
+                # Add to processed set (both directions if bidirectional, but Neo4j is directed)
+                # We track (source, target) to skip exact duplicates from local analysis
+                processed_pairs.add((source_name, target_name))
+
+                # Sanitize relationship type (Neo4j naming requirement)
+                safe_rel_type = re.sub(r'[^A-Z0-9_]', '_', rel_type)
+                if not safe_rel_type:
+                    safe_rel_type = "RELATED_TO"
+
+                # Create relationship with properties
+                query = f"""
+                    MATCH (a:Character {{project_id: $pid, name: $source}})
+                    MATCH (b:Character {{project_id: $pid, name: $target}})
+                    MERGE (a)-[r:{safe_rel_type}]->(b)
+                    SET r.description = $desc,
+                        r.strength = $strength,
+                        r.bidirectional = $bidirectional,
+                        r.emotionalBond = $emotional_bond,
+                        r.functionalTrust = $functional_trust,
+                        r.valueAlignment = $value_alignment,
+                        r.interdependence = $interdependence,
+                        r.latentTension = $latent_tension,
+                        r.source_doc = $doc_id,
+                        r.created_at = datetime()
+                """
+
+                await session.run(
+                    query,
+                    pid=project_id,
+                    source=source_name.strip(),
+                    target=target_name.strip(),
+                    desc=rel.get("description", ""),
+                    strength=rel.get("strength", 5),
+                    bidirectional=rel.get("bidirectional", False),
+                    emotional_bond=rel.get("emotional_bond", 5),
+                    functional_trust=rel.get("functional_trust", 5),
+                    value_alignment=rel.get("value_alignment", 5),
+                    interdependence=rel.get("interdependence", 5),
+                    latent_tension=rel.get("latent_tension", 1),
+                    doc_id=document_id
+                )
+
+                # If bidirectional, create reverse relationship
+                # For global relationships, we use the explicit 'bidirectional' flag from the analysis.
+                # The 'is_bidirectional' variable is introduced later for local relationships.
+                if rel.get("bidirectional", False):
+                    processed_pairs.add((target_name, source_name))
                     
-                for rel_entry in relations_graph:
+                    reverse_query = f"""
+                        MATCH (a:Character {{project_id: $pid, name: $source}})
+                        MATCH (b:Character {{project_id: $pid, name: $target}})
+                        MERGE (b)-[r:{safe_rel_type}]->(a)
+                        SET r.description = $desc,
+                            r.strength = $strength,
+                            r.bidirectional = $bidirectional,
+                            r.emotionalBond = $emotional_bond,
+                            r.functionalTrust = $functional_trust,
+                            r.valueAlignment = $value_alignment,
+                            r.interdependence = $interdependence,
+                            r.latentTension = $latent_tension,
+                            r.source_doc = $doc_id,
+                            r.created_at = datetime()
+                    """
+
+                    await session.run(
+                        reverse_query,
+                        pid=project_id,
+                        source=source_name.strip(),
+                        target=target_name.strip(),
+                        desc=rel.get("description", ""),
+                        strength=rel.get("strength", 5),
+                        bidirectional=rel.get("bidirectional", False),
+                        emotional_bond=rel.get("emotional_bond", 5),
+                        functional_trust=rel.get("functional_trust", 5),
+                        value_alignment=rel.get("value_alignment", 5),
+                        interdependence=rel.get("interdependence", 5),
+                        latent_tension=rel.get("latent_tension", 1),
+                        doc_id=document_id
+                    )
+
+            # 🆕 ===== 1.6. Character Relationships (Priority 2) =====
+            # Now process deferred local relationships, but SKIP if already created by Global Analysis
+            for item in deferred_char_relations:
+                source_name = item["source"]
+                
+                for rel_entry in item["relations"]:
                     target_name = rel_entry.get("target")
                     rel_type = (rel_entry.get("type") or "RELATED_TO").upper().replace(" ", "_")
                     
                     if not target_name:
                         continue
                     
+                    # 🆕 DEDUP CHECK: Skip if global analysis already defined this relationship
+                    if (source_name, target_name) in processed_pairs:
+                        print(f"[NEO4J] Skipping duplicate local relationship: {source_name} -> {target_name}", flush=True)
+                        continue
+
                     # Sanitize relationship type
                     safe_rel_type = re.sub(r'[^A-Z0-9_]', '_', rel_type)
                     if not safe_rel_type:
                         safe_rel_type = "RELATED_TO"
                     
+                    # 🆕 Infer bidirectionality for symmetric types
+                    # Local analysis (relations.graph) often misses the bidirectional flag
+                    is_bidirectional = rel_entry.get("bidirectional", False)
+                    SYMMETRIC_TYPES = ["FAMILY", "ALLY", "ENEMY", "RIVAL", "FRIENDLY", "ROMANTIC", "MARRIED", "LOVERS"]
+                    if safe_rel_type in SYMMETRIC_TYPES:
+                        is_bidirectional = True
+                    
                     # Create relationship edge
+                    # Note: Both Source and Target MUST exist now
                     rel_query = f"""
                         MATCH (a:Character {{project_id: $pid, name: $source}})
                         MATCH (b:Character {{project_id: $pid, name: $target}})
@@ -1882,22 +2000,82 @@ class DatabaseQueryService:
                         ON CREATE SET 
                             r.description = $desc,
                             r.strength = $strength,
+                            r.emotionalBond = $emotional_bond,
+                            r.functionalTrust = $functional_trust,
+                            r.valueAlignment = $value_alignment,
+                            r.interdependence = $interdependence,
+                            r.latentTension = $latent_tension,
                             r.source_doc = $doc_id,
                             r.created_at = datetime()
                         ON MATCH SET
                             r.description = CASE WHEN r.description IS NULL OR r.description = '' THEN $desc ELSE r.description END,
-                            r.strength = coalesce(r.strength, $strength)
+                            r.strength = coalesce(r.strength, $strength),
+                            r.emotionalBond = coalesce(r.emotionalBond, $emotional_bond),
+                            r.functionalTrust = coalesce(r.functionalTrust, $functional_trust),
+                            r.valueAlignment = coalesce(r.valueAlignment, $value_alignment),
+                            r.interdependence = coalesce(r.interdependence, $interdependence),
+                            r.latentTension = coalesce(r.latentTension, $latent_tension)
                     """
                     
                     await session.run(
                         rel_query,
                         pid=project_id,
-                        source=char_name,
+                        source=source_name,
                         target=target_name.strip(),
                         desc=rel_entry.get("description", ""),
                         strength=rel_entry.get("strength", 5),
+                        emotional_bond=rel_entry.get("emotional_bond", 5),
+                        functional_trust=rel_entry.get("functional_trust", 5),
+                        value_alignment=rel_entry.get("value_alignment", 5),
+                        interdependence=rel_entry.get("interdependence", 5),
+                        latent_tension=rel_entry.get("latent_tension", 5),
                         doc_id=document_id
                     )
+
+                    # If bidirectional, create reverse relationship
+                    # 🆕 INFERRED REVERSE EDGE LOGIC
+                    # 1. Only create if NOT already processed (by Global or Target's forward pass)
+                    # 2. Do NOT add to processed_pairs: We want to allow the Target's OWN analysis 
+                    #    to overwrite this inferred edge with real data later (asymmetric update).
+                    if is_bidirectional and (target_name, source_name) not in processed_pairs:
+                        # Note: We do NOT add to processed_pairs here.
+                        
+                        reverse_query = f"""
+                            MATCH (a:Character {{project_id: $pid, name: $source}})
+                            MATCH (b:Character {{project_id: $pid, name: $target}})
+                            MERGE (b)-[r:{safe_rel_type}]->(a)
+                            ON CREATE SET
+                                r.description = $desc,
+                                r.strength = $strength,
+                                r.bidirectional = $bidirectional,
+                                r.emotionalBond = $emotional_bond,
+                                r.functionalTrust = $functional_trust,
+                                r.valueAlignment = $value_alignment,
+                                r.interdependence = $interdependence,
+                                r.latentTension = $latent_tension,
+                                r.source_doc = $doc_id,
+                                r.created_at = datetime()
+                            ON MATCH SET
+                                // Only update basic info if missing or inferred
+                                // We prefer the Target's own analysis to update this later
+                                r.bidirectional = coalesce(r.bidirectional, $bidirectional)
+                        """
+
+                        await session.run(
+                            reverse_query,
+                            pid=project_id,
+                            source=source_name.strip(),
+                            target=target_name.strip(),
+                            desc=rel_entry.get("description", ""),
+                            strength=rel_entry.get("strength", 5),
+                            bidirectional=is_bidirectional,
+                            emotional_bond=rel_entry.get("emotional_bond", 5),
+                            functional_trust=rel_entry.get("functional_trust", 5),
+                            value_alignment=rel_entry.get("value_alignment", 5),
+                            interdependence=rel_entry.get("interdependence", 5),
+                            latent_tension=rel_entry.get("latent_tension", 5),
+                            doc_id=document_id
+                        )
 
             # ===== 2. Settings (Locations) =====
             # Spring의 saveSettings() 로직 통합
@@ -2128,79 +2306,8 @@ class DatabaseQueryService:
                     )
 
             # ===== 4. Relationships (Character <-> Character) =====
-            # Spring의 saveRelationships() + createRelationship() 로직
-            for rel in relationships:
-                source_name = rel.get("source")
-                target_name = rel.get("target")
-                rel_type = (rel.get("type") or rel.get("relation_type") or "RELATED_TO").upper().replace(" ", "_")
-
-                if not source_name or not target_name:
-                    continue
-
-                # Sanitize relationship type (Neo4j naming requirement)
-                safe_rel_type = re.sub(r'[^A-Z0-9_]', '_', rel_type)
-                if not safe_rel_type:
-                    safe_rel_type = "RELATED_TO"
-
-                # Create relationship with properties
-                query = f"""
-                    MATCH (a:Character {{project_id: $pid, name: $source}})
-                    MATCH (b:Character {{project_id: $pid, name: $target}})
-                    MERGE (a)-[r:{safe_rel_type}]->(b)
-                    SET r.description = $desc,
-                        r.strength = $strength,
-                        r.bidirectional = $bidirectional,
-                        r.emotionalBond = $emotional_bond,
-                        r.functionalTrust = $functional_trust,
-                        r.valueAlignment = $value_alignment,
-                        r.interdependence = $interdependence,
-                        r.latentTension = $latent_tension
-                """
-
-                await session.run(
-                    query,
-                    pid=project_id,
-                    source=source_name.strip(),
-                    target=target_name.strip(),
-                    desc=rel.get("description", ""),
-                    strength=rel.get("strength", 5),
-                    bidirectional=rel.get("bidirectional", False),
-                    emotional_bond=rel.get("emotional_bond", 5),
-                    functional_trust=rel.get("functional_trust", 5),
-                    value_alignment=rel.get("value_alignment", 5),
-                    interdependence=rel.get("interdependence", 5),
-                    latent_tension=rel.get("latent_tension", 1)
-                )
-
-                # If bidirectional, create reverse relationship
-                if rel.get("bidirectional", False):
-                    reverse_query = f"""
-                        MATCH (a:Character {{project_id: $pid, name: $source}})
-                        MATCH (b:Character {{project_id: $pid, name: $target}})
-                        MERGE (b)-[r:{safe_rel_type}]->(a)
-                        SET r.description = $desc,
-                            r.strength = $strength,
-                            r.bidirectional = $bidirectional,
-                            r.emotionalBond = $emotional_bond,
-                            r.functionalTrust = $functional_trust,
-                            r.valueAlignment = $value_alignment,
-                            r.interdependence = $interdependence,
-                            r.latentTension = $latent_tension
-                    """
-                    await session.run(
-                        reverse_query,
-                        pid=project_id,
-                        source=source_name.strip(),
-                        target=target_name.strip(),
-                        desc=rel.get("description", ""),
-                        strength=rel.get("strength", 5),
-                        bidirectional=True,
-                        emotional_bond=rel.get("emotional_bond", 5),
-                        functional_trust=rel.get("functional_trust", 5),
-                        value_alignment=rel.get("value_alignment", 5),
-                        interdependence=rel.get("interdependence", 5),
-                        latent_tension=rel.get("latent_tension", 1)
-                    )
+            # 🆕 MOVED to Section 1.5 to prioritize Global Analysis over Local Analysis
+            # See code above for implementation
 
         logger.info(
             "Neo4j sync completed",

@@ -36,8 +36,6 @@ from app.services.event_publisher import get_event_publisher
 # Context Maintenance System (Phase 1-4)
 from app.services.hierarchical_context import get_hierarchical_context_manager
 from app.services.summary_service import get_summary_service
-from app.services.project_lock import get_project_lock_manager  # 프로젝트별 순차 처리
-from app.services.batch_manager import get_batch_manager  # 🆕 배치 기반 순서 보장
 from app.utils.entity_resolution import (
     find_matching_characters,
     is_same_character,
@@ -84,8 +82,6 @@ class DocumentAnalysisConsumer:
         self._http_client: Optional[httpx.AsyncClient] = None
         self._running = False
         self._consume_task = None
-        self._lock_manager = None  # 프로젝트별 순차 처리 락
-        self._batch_manager = None  # 🆕 배치 기반 순서 보장
 
     async def start(self) -> None:
         """Consumer 시작"""
@@ -102,15 +98,6 @@ class DocumentAnalysisConsumer:
         if not await db_service.ensure_neo4j_connected():
             logger.warning("Neo4j connection failed, will retry later")
         logger.info("DB service initialized")
-
-        # 프로젝트별 순차 처리 - Redis Lock Manager 초기화
-        self._lock_manager = await get_project_lock_manager()
-        logger.info("Project Lock Manager initialized")
-
-        # 🆕 배치 기반 순서 보장 - Batch Manager 초기화
-        self._batch_manager = await get_batch_manager()
-        self._batch_manager.set_processing_callback(self._process_single_document)
-        logger.info("Batch Manager initialized")
 
         # RabbitMQ 직접 연결
         import aio_pika
@@ -182,67 +169,11 @@ class DocumentAnalysisConsumer:
                 project_id=project_id,
                 callback_url=callback_url,
                 requires_deep_analysis=msg.requires_deep_analysis,
-                batch_id=msg.batch_id,
                 trace_id=trace_id
             )
             print(f"[CONSUMER] Parsed msg.requires_deep_analysis: {msg.requires_deep_analysis}", flush=True)
 
-            # 🆕 배치 모드 체크
-            if msg.batch_id and msg.total_documents:
-                # 배치 모드: 모든 문서 도착 시까지 대기
-                logger.info(
-                    "Batch mode detected",
-                    batch_id=msg.batch_id,
-                    document_order=msg.document_order,
-                    total=msg.total_documents
-                )
-                
-                # 배치에 문서 추가 (완료 시 콜백으로 처리됨)
-                is_ready = await self._batch_manager.add_document(msg)
-                
-                if not is_ready:
-                    # 아직 모든 문서가 도착하지 않음 - ACK하고 대기
-                    await message.ack()
-                    logger.info("Document added to batch, waiting for others", batch_id=msg.batch_id)
-                    return
-                
-                # 배치 완료 - 배치 매니저가 순서대로 처리함
-                # 이 메시지는 ACK만 하고 종료 (실제 처리는 콜백에서)
-                await message.ack()
-                return
-            
-            # 일반 모드: 즉시 처리
-            await self._process_single_document(msg, message)
-
-        except Exception as e:
-            logger.error(
-                "Document analysis failed",
-                error=str(e),
-                document_id=document_id,
-                trace_id=trace_id
-            )
-            await message.nack(requeue=False)
-
-        finally:
-            # 프로젝트 락 해제 (배치 모드가 아닐 때만)
-            if project_id and job_id and not (hasattr(msg, 'batch_id') and msg.batch_id):
-                await self._lock_manager.release_lock(project_id, job_id)
-
-    async def _process_single_document(self, msg: DocumentAnalysisMessage, message: IncomingMessage = None) -> None:
-        """단일 문서 처리 (배치/일반 모드 공통)"""
-        start_time = time.time()
-        trace_id = msg.trace_id or ""
-        document_id = msg.document_id
-        job_id = msg.job_id or msg.document_id
-        project_id = msg.project_id
-        callback_url = msg.callback_url
-
-        try:
-            # 프로젝트별 순차 처리 - 수동 락 획득
-            lock_acquired = await self._lock_manager.acquire_lock(project_id, job_id)
-            logger.info("Project lock status", project_id=project_id, job_id=job_id, acquired=lock_acquired)
-
-            # PROCESSING 상태 업데이트
+            # 2. PROCESSING 상태 업데이트
             await self._update_status(job_id, "PROCESSING", trace_id)
 
             # 3. DB에서 content 조회 (Claim Check Pattern)
@@ -508,14 +439,7 @@ class DocumentAnalysisConsumer:
                 logger.warning("Failed to save result.json on error", error=str(save_err))
 
             # 실패 시 requeue하지 않음 (무한 루프 방지)
-            # 배치 모드에서는 message=None이므로 체크 필요
-            if message:
-                await message.nack(requeue=False)
-
-        finally:
-            # 🆕 프로젝트 락 해제 (성공/실패 관계없이)
-            if project_id and job_id:
-                await self._lock_manager.release_lock(project_id, job_id)
+            await message.nack(requeue=False)
 
     async def _update_status(self, job_or_doc_id: str, status: str, trace_id: str) -> None:
         """Spring API로 상태 업데이트 (Job ID 우선, 실패 시 Document ID Fallback)"""

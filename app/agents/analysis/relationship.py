@@ -275,6 +275,15 @@ async def relationship_analysis_node(state: dict) -> dict:
                 clean_traits = [t if isinstance(t, str) else str(t) for t in traits]
                 available_personalities.append(f"{name}: [{', '.join(clean_traits[:5])}]") # Limit to top 5
     
+    # 🆕 Also include existing_characters from previous chapters (e.g., 미리엘의 아내, 미리엘의 부친)
+    # These may not be in extracted_characters but are still valid relationship targets
+    existing_characters = state.get("existing_characters", [])
+    for ec in existing_characters:
+        ec_name = ec.get("name") if isinstance(ec, dict) else str(ec)
+        if ec_name and ec_name not in available_characters:
+            available_characters.append(ec_name)
+            print(f"[RELATIONSHIP] 🔗 Added existing character: {ec_name}")
+    
     pers_str = "\n".join(available_personalities) if available_personalities else "None"
     
     print(f"[RELATIONSHIP] Available characters ({len(available_characters)}): {available_characters}")
