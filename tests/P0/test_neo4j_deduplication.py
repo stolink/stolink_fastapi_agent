@@ -151,5 +151,51 @@ class TestAliasAccumulation:
         assert merged.count("Arin") == 1, "No duplicate 'Arin'"
 
 
+class TestTokenOverlapDeduplication:
+    """Test token-overlap based deduplication (TC-NEO4J-004)."""
+    
+    def test_tc_neo4j_004_token_overlap_basic(self):
+        """TC-NEO4J-004: 토큰 겹침 기반 중복 감지 (기본 케이스).
+        
+        Case: "비앵브뉘 주교" vs "샤를-프랑수아-비앵브뉘 미리엘"
+        공통 토큰: "비앵브뉘" → 같은 인물로 간주
+        """
+        from app.services.db_query_service import DatabaseQueryService as DQS
+        
+        name1 = "비앵브뉘 주교"
+        name2 = "샤를-프랑수아-비앵브뉘 미리엘"
+        
+        assert DQS._has_significant_token_overlap(name1, name2) == True, \
+            "Should detect shared token '비앵브뉘'"
+    
+    def test_tc_neo4j_005_token_overlap_negative(self):
+        """TC-NEO4J-005: 다른 인물은 병합하지 않음.
+        
+        Case: "장 발장" vs "자베르 경감"
+        공통 토큰 없음 → 다른 인물
+        """
+        from app.services.db_query_service import DatabaseQueryService as DQS
+        
+        name1 = "장 발장"
+        name2 = "자베르 경감"
+        
+        assert DQS._has_significant_token_overlap(name1, name2) == False, \
+            "Should NOT merge different characters"
+    
+    def test_tc_neo4j_006_stop_words_excluded(self):
+        """TC-NEO4J-006: 직함은 토큰 매칭에서 제외.
+        
+        Case: "김 주교" vs "박 주교"
+        공통 토큰: "주교" (직함) → 무시됨 → 다른 인물
+        """
+        from app.services.db_query_service import DatabaseQueryService as DQS
+        
+        name1 = "김 주교"
+        name2 = "박 주교"
+        
+        assert DQS._has_significant_token_overlap(name1, name2) == False, \
+            "Titles should be excluded from matching"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

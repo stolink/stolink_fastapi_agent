@@ -1528,6 +1528,51 @@ class DatabaseQueryService:
 
         print(f"[NEO4J] Cleaned up existing data for document: {document_id}")
 
+    @staticmethod
+    def _has_significant_token_overlap(name1: str, name2: str, min_overlap: int = 1) -> bool:
+        """Check if two names share significant tokens (not common titles).
+        
+        Examples:
+            - "비앵브뉘 주교" vs "샤를-프랑수아-비앵브뉘 미리엘" → True (shares "비앵브뉘")
+            - "장 발장" vs "마들렌 시장" → False (no shared tokens)
+        
+        Args:
+            name1: First character name
+            name2: Second character name
+            min_overlap: Minimum number of significant shared tokens required
+            
+        Returns:
+            True if names share enough significant tokens
+        """
+        import re
+        
+        # Common titles/honorifics to exclude from matching
+        STOP_WORDS = {
+            # Korean titles
+            "주교", "신부", "경감", "씨", "교수", "박사", "선생", "대통령", "왕", "여왕",
+            "시장", "장군", "대령", "소령", "중령", "대위", "중위", "소위", "병장",
+            "공작", "백작", "남작", "자작", "후작", "공주", "왕자",
+            # French/Western titles
+            "monsieur", "madame", "mademoiselle", "monseigneur", "père", "mère",
+            "bishop", "father", "mother", "mayor", "inspector", "captain",
+        }
+        
+        # Tokenize by hyphens and spaces
+        tokens1 = set(re.split(r'[-\s]+', name1.lower())) - STOP_WORDS
+        tokens2 = set(re.split(r'[-\s]+', name2.lower())) - STOP_WORDS
+        
+        # Remove empty and very short tokens (likely particles)
+        tokens1 = {t for t in tokens1 if len(t) >= 2}
+        tokens2 = {t for t in tokens2 if len(t) >= 2}
+        
+        overlap = tokens1 & tokens2
+        
+        # Significant overlap: shared tokens of meaningful length
+        significant = [t for t in overlap if len(t) >= 2]
+        
+        return len(significant) >= min_overlap
+
+
     async def _find_similar_character(
         self, session, project_id: str, embedding: list[float], threshold: float = 0.92
     ) -> Optional[str]:
@@ -1753,6 +1798,34 @@ class DatabaseQueryService:
                         MATCH (c:Character {project_id: $pid, name: $short_name})
                         DETACH DELETE c
                     """, pid=project_id, short_name=short_existing_name)
+                
+                # 🆕 Token-overlap deduplication: Check shared name tokens
+                # e.g., "비앵브뉘 주교" vs "샤를-프랑수아-비앵브뉘 미리엘" → shares "비앵브뉘"
+                existing_by_token = await session.run("""
+                    MATCH (c:Character {project_id: $pid})
+                    WHERE c.name <> $char_name
+                    RETURN c.name AS existing_name
+                """, pid=project_id, char_name=char_name)
+                
+                token_match_found = False
+                async for record in existing_by_token:
+                    existing_name = record["existing_name"]
+                    if self._has_significant_token_overlap(char_name, existing_name):
+                        print(f"[DEDUP] Token overlap: '{char_name}' shares tokens with '{existing_name}' - merging", flush=True)
+                        # Add current name as alias to existing character
+                        await session.run("""
+                            MATCH (c:Character {project_id: $pid, name: $existing_name})
+                            SET c.aliases = CASE
+                                WHEN c.aliases IS NULL THEN [$new_alias]
+                                WHEN NOT $new_alias IN c.aliases THEN c.aliases + $new_alias
+                                ELSE c.aliases
+                            END
+                        """, pid=project_id, existing_name=existing_name, new_alias=char_name)
+                        token_match_found = True
+                        break
+                
+                if token_match_found:
+                    continue  # Skip creating this character - merged into existing
                 
                 # 🆕 Embedding-based deduplication: Find similar existing character
                 existing_name = await self._find_similar_character(session, project_id, embedding)
