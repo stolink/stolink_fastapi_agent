@@ -36,6 +36,8 @@ from app.services.event_publisher import get_event_publisher
 # Context Maintenance System (Phase 1-4)
 from app.services.hierarchical_context import get_hierarchical_context_manager
 from app.services.summary_service import get_summary_service
+from app.services.project_lock import get_project_lock_manager  # 프로젝트별 순차 처리
+from app.services.batch_manager import get_batch_manager  # 🆕 배치 기반 순서 보장
 from app.utils.entity_resolution import (
     find_matching_characters,
     is_same_character,
@@ -82,6 +84,8 @@ class DocumentAnalysisConsumer:
         self._http_client: Optional[httpx.AsyncClient] = None
         self._running = False
         self._consume_task = None
+        self._lock_manager = None  # 프로젝트별 순차 처리 락
+        self._batch_manager = None  # 🆕 배치 기반 순서 보장
 
     async def start(self) -> None:
         """Consumer 시작"""
@@ -98,6 +102,15 @@ class DocumentAnalysisConsumer:
         if not await db_service.ensure_neo4j_connected():
             logger.warning("Neo4j connection failed, will retry later")
         logger.info("DB service initialized")
+
+        # 프로젝트별 순차 처리 - Redis Lock Manager 초기화
+        self._lock_manager = await get_project_lock_manager()
+        logger.info("Project Lock Manager initialized")
+
+        # 🆕 배치 기반 순서 보장 - Batch Manager 초기화
+        self._batch_manager = await get_batch_manager()
+        self._batch_manager.set_processing_callback(self._process_single_document)
+        logger.info("Batch Manager initialized")
 
         # RabbitMQ 직접 연결
         import aio_pika
@@ -144,11 +157,13 @@ class DocumentAnalysisConsumer:
         trace_id = ""
         document_id = ""
         callback_url = ""
+        job_id = ""
+        project_id = ""
 
         try:
-            # 1. 메시지 파싱
+            # 1. 메시지 파싱 (락 외부에서 수행 - 빠른 실패)
             body = json.loads(message.body.decode())
-            print(f"[CONSUMER] Raw RabbitMQ Body Keys: {list(body.keys())}", flush=True)  # Key 확인
+            print(f"[CONSUMER] Raw RabbitMQ Body Keys: {list(body.keys())}", flush=True)
             if "requiresDeepAnalysis" in body:
                 print(f"[CONSUMER] Raw requiresDeepAnalysis: {body['requiresDeepAnalysis']}", flush=True)
 
@@ -156,54 +171,104 @@ class DocumentAnalysisConsumer:
 
             trace_id = msg.trace_id or ""
             document_id = msg.document_id
-            job_id = msg.job_id or msg.document_id  # 🆕 Use job_id if present, else document_id
+            job_id = msg.job_id or msg.document_id
+            project_id = msg.project_id
             callback_url = msg.callback_url
 
             logger.info(
                 "Processing document analysis message",
                 job_id=job_id,
                 document_id=document_id,
-                project_id=msg.project_id,
+                project_id=project_id,
                 callback_url=callback_url,
                 requires_deep_analysis=msg.requires_deep_analysis,
+                batch_id=msg.batch_id,
                 trace_id=trace_id
             )
             print(f"[CONSUMER] Parsed msg.requires_deep_analysis: {msg.requires_deep_analysis}", flush=True)
 
-            # 2. PROCESSING 상태 업데이트
+            # 🆕 배치 모드 체크
+            if msg.batch_id and msg.total_documents:
+                # 배치 모드: 모든 문서 도착 시까지 대기
+                logger.info(
+                    "Batch mode detected",
+                    batch_id=msg.batch_id,
+                    document_order=msg.document_order,
+                    total=msg.total_documents
+                )
+                
+                # 배치에 문서 추가 (완료 시 콜백으로 처리됨)
+                is_ready = await self._batch_manager.add_document(msg)
+                
+                if not is_ready:
+                    # 아직 모든 문서가 도착하지 않음 - ACK하고 대기
+                    await message.ack()
+                    logger.info("Document added to batch, waiting for others", batch_id=msg.batch_id)
+                    return
+                
+                # 배치 완료 - 배치 매니저가 순서대로 처리함
+                # 이 메시지는 ACK만 하고 종료 (실제 처리는 콜백에서)
+                await message.ack()
+                return
+            
+            # 일반 모드: 즉시 처리
+            await self._process_single_document(msg, message)
+
+        except Exception as e:
+            logger.error(
+                "Document analysis failed",
+                error=str(e),
+                document_id=document_id,
+                trace_id=trace_id
+            )
+            await message.nack(requeue=False)
+
+        finally:
+            # 프로젝트 락 해제 (배치 모드가 아닐 때만)
+            if project_id and job_id and not (hasattr(msg, 'batch_id') and msg.batch_id):
+                await self._lock_manager.release_lock(project_id, job_id)
+
+    async def _process_single_document(self, msg: DocumentAnalysisMessage, message: IncomingMessage = None) -> None:
+        """단일 문서 처리 (배치/일반 모드 공통)"""
+        start_time = time.time()
+        trace_id = msg.trace_id or ""
+        document_id = msg.document_id
+        job_id = msg.job_id or msg.document_id
+        project_id = msg.project_id
+        callback_url = msg.callback_url
+
+        try:
+            # 프로젝트별 순차 처리 - 수동 락 획득
+            lock_acquired = await self._lock_manager.acquire_lock(project_id, job_id)
+            logger.info("Project lock status", project_id=project_id, job_id=job_id, acquired=lock_acquired)
+
+            # PROCESSING 상태 업데이트
             await self._update_status(job_id, "PROCESSING", trace_id)
 
             # 3. DB에서 content 조회 (Claim Check Pattern)
-            # 🆕 Priority: Message Content (for Testing/Dev Override) > DB Content > Raw Body
             db_service = await get_db_service()
 
             content = None
 
             # Check for override in message first
             if getattr(msg, 'content', None):
-                 logger.info("Using content from MESSAGE override", document_id=document_id)
-                 content = msg.content
+                logger.info("Using content from MESSAGE override", document_id=document_id)
+                content = msg.content
 
             # Use DB content if no override
             if not content:
                 fetched_content = await db_service.get_document_content(document_id)
                 if fetched_content:
-                    content = fetched_content.get("content")  # 🟢 Extract 'content' field from dict
+                    content = fetched_content.get("content")
 
-            # Fallbacks
+            # Content must be available from message or DB
             if not content:
-                if "content" in body:
-                    logger.warning("Using content from raw body dict", document_id=document_id)
-                    content = body["content"]
-                else:
-                    logger.error("Content NOT FOUND in Message or DB", keys=list(body.keys()))
-                    raise ValueError(f"Document content not found: {document_id}")
+                logger.error("Content NOT FOUND in Message or DB", document_id=document_id)
+                raise ValueError(f"Document content not found: {document_id}")
 
             # 🔍 Log the content being analyzed
-            # Using print() to force output to Docker logs if logger is filtered
             print(f"📄 Content fetched for analysis (length: {len(content)} chars)", flush=True)
             print(f"📄 First 500 characters of content:\n{content[:500]}...", flush=True)
-
 
             # 4. 분석 수행 (Vector Generation & Storage)
             # 🆕 We no longer save sections HERE because it overwrites the hashes
@@ -264,6 +329,18 @@ class DocumentAnalysisConsumer:
                          msg.context = system_context_text
 
                     logger.info("Hierarchical context injected", length=len(system_context_text))
+                    
+                    # === DETAILED CONTEXT LOGGING FOR DOCKER ===
+                    print(f"\n{'='*60}", flush=True)
+                    print(f"[CONTEXT] 📖 Hierarchical Context Injected", flush=True)
+                    print(f"{'='*60}", flush=True)
+                    print(f"[CONTEXT] 🔍 Mentioned characters in text: {mentioned_chars[:10]}{'...' if len(mentioned_chars) > 10 else ''}", flush=True)
+                    print(f"[CONTEXT] 📝 Context length: {len(system_context_text)} chars", flush=True)
+                    print(f"[CONTEXT] 📜 Context preview (first 500 chars):", flush=True)
+                    print(f"{system_context_text[:500]}{'...' if len(system_context_text) > 500 else ''}", flush=True)
+                    print(f"{'='*60}\n", flush=True)
+                else:
+                    print("[CONTEXT] ⚠️ No hierarchical context generated (no previous chapters)", flush=True)
 
             except Exception as e:
                 logger.error("Failed to inject hierarchical context", error=str(e))
@@ -431,7 +508,14 @@ class DocumentAnalysisConsumer:
                 logger.warning("Failed to save result.json on error", error=str(save_err))
 
             # 실패 시 requeue하지 않음 (무한 루프 방지)
-            await message.nack(requeue=False)
+            # 배치 모드에서는 message=None이므로 체크 필요
+            if message:
+                await message.nack(requeue=False)
+
+        finally:
+            # 🆕 프로젝트 락 해제 (성공/실패 관계없이)
+            if project_id and job_id:
+                await self._lock_manager.release_lock(project_id, job_id)
 
     async def _update_status(self, job_or_doc_id: str, status: str, trace_id: str) -> None:
         """Spring API로 상태 업데이트 (Job ID 우선, 실패 시 Document ID Fallback)"""
@@ -657,6 +741,15 @@ class DocumentAnalysisConsumer:
                 if i == start_batch_index and previous_summary_context:
                     batch_content = f"[이전 내용 요약]\n{previous_summary_context}\n\n[새로 추가된 내용]\n{batch_content}"
                     logger.info(f"[INCREMENTAL] Added previous summary context to batch {i+1}")
+                    
+                    # === DETAILED SUMMARY LOGGING FOR DOCKER ===
+                    print(f"\n{'='*60}", flush=True)
+                    print(f"[SUMMARY] 📋 Previous Summary Context (Incremental Mode)", flush=True)
+                    print(f"{'='*60}", flush=True)
+                    print(f"[SUMMARY] 📝 Summary length: {len(previous_summary_context)} chars", flush=True)
+                    print(f"[SUMMARY] 📜 Summary preview (first 500 chars):", flush=True)
+                    print(f"{previous_summary_context[:500]}{'...' if len(previous_summary_context) > 500 else ''}", flush=True)
+                    print(f"{'='*60}\n", flush=True)
 
                 print(f"Processing Batch {i+1}/{len(batches)} (size={len(batch_content)})", flush=True)
                 print(f"📄 Analyzing text content (first 500 chars):\n{batch_content[:500]}...", flush=True)

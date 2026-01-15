@@ -137,8 +137,18 @@ class DatabaseQueryService:
 
             # Initialize Schema (Constraints & Indexes)
             async with self._neo4j_driver.session() as session:
-                # 1. Character
-                await session.run("CREATE CONSTRAINT character_id_unique IF NOT EXISTS FOR (c:Character) REQUIRE c.id IS UNIQUE")
+                # 1. Character - Use characterId (not id)
+                # Drop conflicting index if exists before creating constraint
+                try:
+                    await session.run("DROP INDEX character_id_unique IF EXISTS")
+                except:
+                    pass  # Index might not exist
+                try:
+                    # Drop old index on c.id if exists
+                    await session.run("DROP INDEX ON :Character(id)")
+                except:
+                    pass
+                await session.run("CREATE CONSTRAINT character_id_unique IF NOT EXISTS FOR (c:Character) REQUIRE c.characterId IS UNIQUE")
                 await session.run("CREATE INDEX character_project_id_idx IF NOT EXISTS FOR (c:Character) ON (c.project_id)")
                 await session.run("CREATE INDEX character_name_idx IF NOT EXISTS FOR (c:Character) ON (c.name)")
 
@@ -542,12 +552,27 @@ class DatabaseQueryService:
         Returns:
             List of similar character dicts with similarity scores
         """
-        if not self._neo4j_driver or not query_embedding:
+        # 🆕 Validate embedding before sending to Neo4j
+        if not self._neo4j_driver:
+            return []
+        
+        if not query_embedding or not isinstance(query_embedding, list):
+            logger.warning("Invalid query_embedding: not a list")
+            return []
+        
+        # Ensure all values are floats
+        try:
+            validated_embedding = [float(x) for x in query_embedding]
+            if len(validated_embedding) == 0:
+                logger.warning("Invalid query_embedding: empty list")
+                return []
+        except (TypeError, ValueError) as e:
+            logger.warning(f"Invalid query_embedding values: {e}")
             return []
 
         query = """
             MATCH (c:Character {project_id: $project_id})
-            WHERE c.embedding IS NOT NULL
+            WHERE c.embedding IS NOT NULL AND size(c.embedding) > 0
             WITH c, vector.similarity.cosine(c.embedding, $embedding) AS score
             WHERE score > 0.6
             RETURN c.name AS name, c.status AS status, c.role AS role,
@@ -586,16 +611,30 @@ class DatabaseQueryService:
         Returns:
             List of similar event dicts with similarity scores
         """
-        if not self._neo4j_driver or not query_embedding:
+        # Validate embedding before sending to Neo4j
+        if not self._neo4j_driver:
+            return []
+        
+        if not query_embedding or not isinstance(query_embedding, list):
+            logger.warning("Invalid event query_embedding: not a list")
+            return []
+        
+        try:
+            validated_embedding = [float(x) for x in query_embedding]
+            if len(validated_embedding) == 0:
+                logger.warning("Invalid event query_embedding: empty list")
+                return []
+        except (TypeError, ValueError) as e:
+            logger.warning(f"Invalid event query_embedding values: {e}")
             return []
 
         query = """
-            MATCH (e:Event {projectId: $project_id})
-            WHERE e.embedding IS NOT NULL
+            MATCH (e:Event {project_id: $project_id})
+            WHERE e.embedding IS NOT NULL AND size(e.embedding) > 0
             WITH e, vector.similarity.cosine(e.embedding, $embedding) AS score
             WHERE score > 0.6
             RETURN e.eventId AS event_id, e.description AS description,
-                   e.participantsJson AS participants, e.chapter AS chapter, score
+                   e.participants AS participants, e.chapter AS chapter, score
             ORDER BY score DESC
             LIMIT $top_k
         """
@@ -605,7 +644,7 @@ class DatabaseQueryService:
                 result = await session.run(
                     query,
                     project_id=project_id,
-                    embedding=query_embedding,
+                    embedding=validated_embedding,  # Use validated embedding
                     top_k=top_k
                 )
                 records = await result.data()
@@ -695,6 +734,35 @@ class DatabaseQueryService:
                 events_found=len(result["events"]),
                 top_k=top_k
             )
+            
+            # === DETAILED RAG LOGGING FOR DOCKER ===
+            print(f"\n{'='*60}", flush=True)
+            print(f"[RAG] 📚 Retrieved Historical Context (top_k={top_k})", flush=True)
+            print(f"{'='*60}", flush=True)
+            
+            if result["characters"]:
+                print(f"[RAG] 👥 Historical Characters ({len(result['characters'])}):", flush=True)
+                for i, char in enumerate(result["characters"][:10]):  # Limit to 10 for readability
+                    char_name = char.get("name", "Unknown")
+                    char_role = char.get("role", "N/A")
+                    char_status = char.get("status", "N/A")
+                    score = char.get("score", 0)
+                    print(f"  [{i+1}] {char_name} (role={char_role}, status={char_status}, similarity={score:.2f})", flush=True)
+            else:
+                print("[RAG] 👥 No historical characters found", flush=True)
+            
+            if result["events"]:
+                print(f"[RAG] 📅 Historical Events ({len(result['events'])}):", flush=True)
+                for i, evt in enumerate(result["events"][:10]):  # Limit to 10
+                    evt_id = evt.get("event_id", "N/A")
+                    evt_desc = (evt.get("description") or "")[:80]
+                    chapter = evt.get("chapter", "?")
+                    score = evt.get("score", 0)
+                    print(f"  [{i+1}] Ch.{chapter}: {evt_desc}... (similarity={score:.2f})", flush=True)
+            else:
+                print("[RAG] 📅 No historical events found", flush=True)
+            
+            print(f"{'='*60}\n", flush=True)
 
         except Exception as e:
             logger.error("Failed to retrieve history", error=str(e))
@@ -1630,6 +1698,55 @@ class DatabaseQueryService:
                 # This ensures same character always gets same ID, avoiding duplicates
                 char_id = str(uuid_mod.uuid5(uuid_mod.UUID(project_id), f"character_{char_name}"))
                 
+                # 🆕 Name-based deduplication: Check if this name is substring of existing character
+                # e.g., "미리엘" should merge with "샤를 프랑수아 비앵브뉘 미리엘"
+                existing_by_name = await session.run("""
+                    MATCH (c:Character {project_id: $pid})
+                    WHERE c.name CONTAINS $short_name AND c.name <> $short_name
+                    RETURN c.name AS existing_name
+                    LIMIT 1
+                """, pid=project_id, short_name=char_name)
+                existing_record = await existing_by_name.single()
+                
+                if existing_record:
+                    existing_name = existing_record["existing_name"]
+                    print(f"[DEDUP] Name match: '{char_name}' is substring of '{existing_name}' - merging", flush=True)
+                    # Add current name as alias to existing character
+                    await session.run("""
+                        MATCH (c:Character {project_id: $pid, name: $existing_name})
+                        SET c.aliases = CASE
+                            WHEN c.aliases IS NULL THEN [$new_alias]
+                            WHEN NOT $new_alias IN c.aliases THEN c.aliases + $new_alias
+                            ELSE c.aliases
+                        END
+                    """, pid=project_id, existing_name=existing_name, new_alias=char_name)
+                    # Skip creating this character - it's merged into existing
+                    continue
+                
+                # 🆕 Also check if an existing character's name is substring of THIS name
+                # e.g., existing "미리엘" should merge into new "샤를 프랑수아 비앵브뉘 미리엘"
+                existing_shorter = await session.run("""
+                    MATCH (c:Character {project_id: $pid})
+                    WHERE $long_name CONTAINS c.name AND c.name <> $long_name
+                    RETURN c.name AS short_name, c.characterId AS short_id
+                    LIMIT 1
+                """, pid=project_id, long_name=char_name)
+                shorter_record = await existing_shorter.single()
+                
+                if shorter_record:
+                    short_existing_name = shorter_record["short_name"]
+                    print(f"[DEDUP] Absorbing shorter name: '{short_existing_name}' into '{char_name}'", flush=True)
+                    # Add shorter name as alias to this character
+                    current_aliases = char.get("aliases", []) or []
+                    if short_existing_name not in current_aliases:
+                        current_aliases.append(short_existing_name)
+                        char["aliases"] = current_aliases
+                    # Delete the shorter-named character (will be recreated as alias)
+                    await session.run("""
+                        MATCH (c:Character {project_id: $pid, name: $short_name})
+                        DETACH DELETE c
+                    """, pid=project_id, short_name=short_existing_name)
+                
                 # 🆕 Embedding-based deduplication: Find similar existing character
                 existing_name = await self._find_similar_character(session, project_id, embedding)
                 if existing_name and existing_name.lower() != char_name.lower():
@@ -1737,6 +1854,50 @@ class DatabaseQueryService:
                     aliases=char.get("aliases") or [],
                     embedding=embedding
                 )
+                
+                # 🆕 ===== Create Neo4j edges from character's relations.graph =====
+                # This converts the embedded relations JSON into actual Neo4j relationships
+                relations_graph = relations.get("graph", []) if isinstance(relations, dict) else []
+                
+                if relations_graph:
+                    print(f"[NEO4J] Creating {len(relations_graph)} relationship edges from '{char_name}' relations.graph", flush=True)
+                    
+                for rel_entry in relations_graph:
+                    target_name = rel_entry.get("target")
+                    rel_type = (rel_entry.get("type") or "RELATED_TO").upper().replace(" ", "_")
+                    
+                    if not target_name:
+                        continue
+                    
+                    # Sanitize relationship type
+                    safe_rel_type = re.sub(r'[^A-Z0-9_]', '_', rel_type)
+                    if not safe_rel_type:
+                        safe_rel_type = "RELATED_TO"
+                    
+                    # Create relationship edge
+                    rel_query = f"""
+                        MATCH (a:Character {{project_id: $pid, name: $source}})
+                        MATCH (b:Character {{project_id: $pid, name: $target}})
+                        MERGE (a)-[r:{safe_rel_type}]->(b)
+                        ON CREATE SET 
+                            r.description = $desc,
+                            r.strength = $strength,
+                            r.source_doc = $doc_id,
+                            r.created_at = datetime()
+                        ON MATCH SET
+                            r.description = CASE WHEN r.description IS NULL OR r.description = '' THEN $desc ELSE r.description END,
+                            r.strength = coalesce(r.strength, $strength)
+                    """
+                    
+                    await session.run(
+                        rel_query,
+                        pid=project_id,
+                        source=char_name,
+                        target=target_name.strip(),
+                        desc=rel_entry.get("description", ""),
+                        strength=rel_entry.get("strength", 5),
+                        doc_id=document_id
+                    )
 
             # ===== 2. Settings (Locations) =====
             # Spring의 saveSettings() 로직 통합
@@ -1936,29 +2097,33 @@ class DatabaseQueryService:
 
                     participant_name = participant_name.strip()
 
+                    # 🆕 Use eventId for reliable matching (not narrativeSummary which may vary)
                     await session.run(
                         """
                         MATCH (c:Character {project_id: $pid, name: $char_name})
-                        MATCH (e:Event {project_id: $pid, narrativeSummary: $narrative_summary})
+                        MATCH (e:Event {eventId: $evt_id})
                         MERGE (c)-[r:PARTICIPATES_IN]->(e)
+                        ON CREATE SET r.created_at = datetime()
                         """,
                         pid=project_id,
                         char_name=participant_name,
-                        narrative_summary=evt.get("narrative_summary", "")
+                        evt_id=evt_id_with_doc
                     )
 
                 # Create HAPPENED_AT relationship (Event -> Setting)
                 # Spring의 eventNeo4jRepository.createHappenedAtEdge() 로직
                 location_ref = evt.get("location_ref") or evt.get("location")
                 if location_ref:
+                    # 🆕 Use eventId for reliable matching
                     await session.run(
                         """
-                        MATCH (e:Event {project_id: $pid, narrativeSummary: $narrative_summary})
+                        MATCH (e:Event {eventId: $evt_id})
                         MATCH (s:Setting {project_id: $pid, name: $loc_name})
                         MERGE (e)-[r:HAPPENED_AT]->(s)
+                        ON CREATE SET r.created_at = datetime()
                         """,
                         pid=project_id,
-                        narrative_summary=evt.get("narrative_summary", ""),
+                        evt_id=evt_id_with_doc,
                         loc_name=location_ref
                     )
 
