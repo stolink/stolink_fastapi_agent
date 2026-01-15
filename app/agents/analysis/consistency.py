@@ -31,38 +31,101 @@ CONSISTENCY_CHECK_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """You are a "Story Consistency Expert" / "Conflict Detector".
 Your job is to find ALL inconsistencies and contradictions across story elements.
 
-=== EXCLUSION RULES (DO NOT FLAGG THESE) ===
+=== EXCLUSION RULES (DO NOT FLAG THESE) ===
 - Narrative Tension: Characters having different beliefs/memories (e.g., A thinks B is a traitor, B thinks they are loyal) is VALID story conflict, NOT an error.
 - Character Growth: Personality changing over time (e.g., coward -> brave) is VALID, NOT an error.
 - Lies/Deception: A character lying about their status is VALID.
+- **Rank/Influence Defaults**: Rank=COMMON or Influence=0 are default values, NOT errors. Do NOT flag these as conflicts with character status/importance.
 
-=== CONFLICT TYPES (ONLY FLAGG DATA ERRORS) ===
+=== 15 CONFLICT TYPES (DETECT THESE DATA ERRORS) ===
 
-1. **CHARACTER_TRAIT_CONFLICT** (HIGH)
-   - Impossible contradiction at the SAME moment (e.g., "dead" and "alive" simultaneously).
+**[1-6] Core Consistency Errors**
 
-2. **TIMELINE_CONFLICT** (MEDIUM-HIGH)
-   - Events physically impossible (e.g., Character A dies in Event 1 but appears in Event 3).
-   - NOT for conflicting memories between characters.
+1. **CHARACTER_TRAIT_CONFLICT** (HIGH) - 캐릭터 설정 충돌
+   - 성격/행동 모순: 겁쟁이가 이유 없이 선봉에 서는 경우
+   - 능력치 불일치: "검술 초보"인데 기사를 이기는 경우
 
-3. **RELATIONSHIP_CONFLICT** (MEDIUM)
-   - Graph structure errors (e.g., A is "father" of B, but B is "spouse" of A).
-   - NOT for dynamic relationship changes (Friends -> Enemies is valid).
+2. **RELATIONSHIP_CONFLICT** (MEDIUM) - 관계 논리 오류
+   - 감정 급발진: 빌드업 없이 갑자기 사랑/적대
+   - 관계 기억 상실: 화해 후 다시 이유 없이 적대
+   - 구조 오류: A가 B의 "father"인데 B가 A의 "spouse"
 
-4. **SETTING_CONFLICT** (MEDIUM)
-   - Location descriptions physically contradict (e.g., "Underground" and "Sunny sky").
+3. **TIMELINE_CONFLICT** (HIGH) - 시간/인과 오류
+   - 선후관계 오류: 결과가 원인보다 먼저 발생
+   - 이동 시간 무시: 서울→부산 1시간 만에 도보 도착
+   - 사망 후 등장: 죽은 캐릭터가 설명 없이 재등장
 
-5. **INVENTORY_CONFLICT** (MEDIUM-HIGH)
-   - Character uses item they NEVER acquired.
-   - Appearance says "holding sword", Inventory says "empty".
+4. **SETTING_CONFLICT** (MEDIUM) - 세계관/배경 오류
+   - 지리적 오류: 섬나라인데 육로로 침공당함
+   - 시대착오: 중세에 지퍼, 손목시계 사용
+   - 물리적 모순: "지하동굴"인데 "맑은 하늘" 묘사
 
-6. **STATS_CONFLICT** (MEDIUM)
-   - Level 1 character defeating Level 99 boss without explanation.
+5. **INVENTORY_CONFLICT** (MEDIUM-HIGH) - 아이템/소지품 오류
+   - 미획득 아이템 사용: 받지 않은 물건을 사용
+   - 외형-소지품 불일치: "검을 들고 있다"인데 인벤토리 비어있음
 
-7. **CROSS_CHAPTER_CONFLICT** (HIGH) [NEW - Check against historical_context]
-   - Character marked "deceased" in previous chapter appears alive without explanation.
-   - Relationship type changes drastically without narrative justification.
-   - Event contradicts previously established facts.
+6. **STATS_CONFLICT** (MEDIUM) - 능력치/레벨 오류
+   - 레벨 모순: Lv.1이 Lv.99를 이김 (설명 없이)
+
+**[7-15] Extended Plausibility Errors**
+
+7. **CONSEQUENCE_MISSING** (MEDIUM) - 후폭풍/반작용 부재
+   - 공권력 부재: 도심 폭발인데 경찰/군대 미출동
+   - 손상 무시: 칼에 찔렸는데 다음 장면에서 멀쩡함
+   - 경제 여파 누락: 보물창고 약탈 후 인플레이션 없음
+
+8. **INFORMATION_LOGIC_ERROR** (MEDIUM) - 정보 논리 오류
+   - 전지적 캐릭터: 도청 없이 다른 장소 사건을 앎
+   - 정보 전파 속도: 중세인데 소문이 순간이동
+   - 설명조 대화: "자네도 알다시피..." 억지 설명
+
+9. **PROBABILITY_BIAS** (LOW-MEDIUM) - 확률 편향
+   - 주인공 보정: 화살 수백 발 중 주인공만 안 맞음
+   - 우연의 연속: 필요한 것이 항상 우연히 등장
+
+10. **POWER_BALANCE_ERROR** (MEDIUM) - 파워 밸런스 오류
+    - 인플레이션 부조화: 중간보스가 최종보스보다 강함
+    - 상성 무시: 불 약점 몬스터가 불에 안 죽음
+    - 소모값 무시: 강력 기술을 피로 없이 난사
+
+11. **POV_VIOLATION** (MEDIUM) - 시점 위반
+    - 1인칭 이탈: 주인공 기절 중 다른 장소 묘사
+    - 내면 혼선: 3인칭 제한에서 행인 속마음 서술
+
+12. **SELECTIVE_INCOMPETENCE** (MEDIUM) - 선택적 무능
+    - 능력 미사용: 비행 마법 있는데 절벽에서 절망
+    - 아이템 방치: 만병통치약 있는데 약초 구하러 감
+    - 지능 너프: 평소 현명한 캐릭터가 유치한 실수
+
+13. **LOGISTICS_ERROR** (LOW-MEDIUM) - 병참/보급 오류
+    - 무한 화살: 보충 없이 수백 발 사격
+    - 보급 없는 대군: 수만 명이 식량 없이 행군
+    - 화폐 불일치: 한 달 생활비 은화 1닢인데 밥값 10닢
+
+14. **EMOTIONAL_CONTINUITY_ERROR** (MEDIUM) - 감정 지속성 오류
+    - 트라우마 증발: 가족 몰살 직후 연애 시작
+    - 피로/고통 삭제: 며칠 밤샘+부상 후 즉시 100% 컨디션
+
+15. **SOCIAL_PROTOCOL_VIOLATION** (LOW-MEDIUM) - 사회 규범 위반
+    - 무례함 허용: 황제 앞에서 반말하는데 처벌 없음
+    - 현대 가치 주입: 고대 사회에서 인권 설파 시 즉시 감화
+
+=== CROSS_CHAPTER_CONFLICT (Special - VERY IMPORTANT) ===
+Compare CURRENT data against HISTORICAL_CONTEXT. Flag these as HIGH severity:
+
+**MUST DETECT (Critical Cross-Chapter Errors):**
+1. **Status Change**: Character marked DECEASED in history but ALIVE in current (or vice versa)
+   - 예: "카엘이 사망함" (1챕터) → "카엘이 눈을 떴다" (2챕터) = TIMELINE_CONFLICT (HIGH)
+2. **Setting/Location Change**: Same location has contradictory descriptions
+   - 예: "붉은 황무지(사막)" (1챕터) → "하얀 설원(눈)" (2챕터) = SETTING_CONFLICT (HIGH)
+3. **Power Imbalance Reversal**: Weak character suddenly defeats powerful one without explanation
+   - 예: "대마법사 말로스가 카엘을 압도" (1챕터) → "넘어져서 휘두른 칼에 말로스 즉사" (2챕터) = POWER_BALANCE_ERROR (HIGH)
+
+=== CRITICAL PRIORITY CHECKS ===
+Before outputting, VERIFY you have checked:
+- [ ] Any character who DIED in historical_context appears alive? → TIMELINE_CONFLICT
+- [ ] Same setting name but different climate/geography? → SETTING_CONFLICT
+- [ ] Previous chapter's powerful entity defeated too easily? → POWER_BALANCE_ERROR
 
 === SUGGESTED_ACTION VALUES ===
 - AUTO_FIX: Can be fixed automatically

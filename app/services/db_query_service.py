@@ -1874,6 +1874,14 @@ class DatabaseQueryService:
             # 🆕 ===== 1.5. Global Relationships (Priority 1) =====
             # Process Global Analysis results FIRST as they are the source of truth
             # Moved from Section 4 to here to establish precedence
+            
+            # 🆕 Relationship Type Priority (higher index = higher priority)
+            RELATIONSHIP_PRIORITY = {
+                "NEUTRAL": 0, "RELATED_TO": 1, "FRIENDLY": 2, "MENTOR": 3,
+                "RIVAL": 4, "ALLY": 5, "ENEMY": 6, "BETRAYED": 7,
+                "ROMANTIC": 8, "FAMILY": 9
+            }
+            
             for rel in relationships:
                 source_name = rel.get("source")
                 target_name = rel.get("target")
@@ -1886,16 +1894,31 @@ class DatabaseQueryService:
                 # We track (source, target) to skip exact duplicates from local analysis
                 processed_pairs.add((source_name, target_name))
 
-                # Sanitize relationship type (Neo4j naming requirement)
+                # Sanitize relationship type (for storing as property)
                 safe_rel_type = re.sub(r'[^A-Z0-9_]', '_', rel_type)
                 if not safe_rel_type:
                     safe_rel_type = "RELATED_TO"
 
-                # Create relationship with properties
+                # 🆕 CONDITIONAL RELATIONSHIP HISTORY
+                # Only add if relationship TYPE is different (track evolution)
+                # Same type (A→ALLY→B, A→ALLY→B) = skip
+                # Different type (A→ALLY→B, A→ENEMY→B) = add
+                # 🆕 Using CONTAINS for fuzzy name matching (e.g., "민혁" matches "강민혁")
+
                 query = f"""
-                    MATCH (a:Character {{project_id: $pid, name: $source}})
-                    MATCH (b:Character {{project_id: $pid, name: $target}})
-                    MERGE (a)-[r:{safe_rel_type}]->(b)
+                    MATCH (a:Character {{project_id: $pid}})
+                    WHERE a.name = $source OR a.name CONTAINS $source OR $source CONTAINS a.name
+                    WITH a ORDER BY CASE WHEN a.name = $source THEN 0 ELSE 1 END, size(a.name) ASC LIMIT 1
+                    MATCH (b:Character {{project_id: $pid}})
+                    WHERE b.name = $target OR b.name CONTAINS $target OR $target CONTAINS b.name
+                    WITH a, b ORDER BY CASE WHEN b.name = $target THEN 0 ELSE 1 END, size(b.name) ASC LIMIT 1
+                    
+                    // Only create if this relationship type doesn't already exist
+                    WHERE NOT EXISTS {{
+                        MATCH (a)-[existing:{safe_rel_type}]->(b)
+                    }}
+                    
+                    CREATE (a)-[r:{safe_rel_type}]->(b)
                     SET r.description = $desc,
                         r.strength = $strength,
                         r.bidirectional = $bidirectional,
@@ -1905,7 +1928,8 @@ class DatabaseQueryService:
                         r.interdependence = $interdependence,
                         r.latentTension = $latent_tension,
                         r.source_doc = $doc_id,
-                        r.created_at = datetime()
+                        r.created_at = datetime(),
+                        r.updated_at = datetime()
                 """
 
                 await session.run(
@@ -1930,10 +1954,22 @@ class DatabaseQueryService:
                 if rel.get("bidirectional", False):
                     processed_pairs.add((target_name, source_name))
                     
+                    # CREATE reverse relationship (conditional - skip if same type exists)
+                    # 🆕 Using CONTAINS for fuzzy name matching
                     reverse_query = f"""
-                        MATCH (a:Character {{project_id: $pid, name: $source}})
-                        MATCH (b:Character {{project_id: $pid, name: $target}})
-                        MERGE (b)-[r:{safe_rel_type}]->(a)
+                        MATCH (a:Character {{project_id: $pid}})
+                        WHERE a.name = $source OR a.name CONTAINS $source OR $source CONTAINS a.name
+                        WITH a ORDER BY CASE WHEN a.name = $source THEN 0 ELSE 1 END, size(a.name) ASC LIMIT 1
+                        MATCH (b:Character {{project_id: $pid}})
+                        WHERE b.name = $target OR b.name CONTAINS $target OR $target CONTAINS b.name
+                        WITH a, b ORDER BY CASE WHEN b.name = $target THEN 0 ELSE 1 END, size(b.name) ASC LIMIT 1
+                        
+                        // Only create if this relationship type doesn't already exist
+                        WHERE NOT EXISTS {{
+                            MATCH (b)-[existing:{safe_rel_type}]->(a)
+                        }}
+                        
+                        CREATE (b)-[r:{safe_rel_type}]->(a)
                         SET r.description = $desc,
                             r.strength = $strength,
                             r.bidirectional = $bidirectional,
@@ -1943,7 +1979,8 @@ class DatabaseQueryService:
                             r.interdependence = $interdependence,
                             r.latentTension = $latent_tension,
                             r.source_doc = $doc_id,
-                            r.created_at = datetime()
+                            r.created_at = datetime(),
+                            r.updated_at = datetime()
                     """
 
                     await session.run(
@@ -1991,14 +2028,25 @@ class DatabaseQueryService:
                     if safe_rel_type in SYMMETRIC_TYPES:
                         is_bidirectional = True
                     
-                    # Create relationship edge
+                    # Create relationship edge (conditional - skip if same type exists)
                     # Note: Both Source and Target MUST exist now
+                    # 🆕 Using CONTAINS for fuzzy name matching (e.g., "민혁" matches "강민혁")
                     rel_query = f"""
                         MATCH (a:Character {{project_id: $pid, name: $source}})
-                        MATCH (b:Character {{project_id: $pid, name: $target}})
-                        MERGE (a)-[r:{safe_rel_type}]->(b)
-                        ON CREATE SET 
-                            r.description = $desc,
+                        MATCH (b:Character {{project_id: $pid}})
+                        WHERE b.name = $target OR b.name CONTAINS $target OR $target CONTAINS b.name
+                        WITH a, b ORDER BY 
+                            CASE WHEN b.name = $target THEN 0 ELSE 1 END,
+                            size(b.name) ASC
+                        LIMIT 1
+                        
+                        // Only create if this relationship type doesn't already exist
+                        WHERE NOT EXISTS {{
+                            MATCH (a)-[existing:{safe_rel_type}]->(b)
+                        }}
+                        
+                        CREATE (a)-[r:{safe_rel_type}]->(b)
+                        SET r.description = $desc,
                             r.strength = $strength,
                             r.emotionalBond = $emotional_bond,
                             r.functionalTrust = $functional_trust,
@@ -2006,15 +2054,8 @@ class DatabaseQueryService:
                             r.interdependence = $interdependence,
                             r.latentTension = $latent_tension,
                             r.source_doc = $doc_id,
-                            r.created_at = datetime()
-                        ON MATCH SET
-                            r.description = CASE WHEN r.description IS NULL OR r.description = '' THEN $desc ELSE r.description END,
-                            r.strength = coalesce(r.strength, $strength),
-                            r.emotionalBond = coalesce(r.emotionalBond, $emotional_bond),
-                            r.functionalTrust = coalesce(r.functionalTrust, $functional_trust),
-                            r.valueAlignment = coalesce(r.valueAlignment, $value_alignment),
-                            r.interdependence = coalesce(r.interdependence, $interdependence),
-                            r.latentTension = coalesce(r.latentTension, $latent_tension)
+                            r.created_at = datetime(),
+                            r.updated_at = datetime()
                     """
                     
                     await session.run(
@@ -2040,12 +2081,23 @@ class DatabaseQueryService:
                     if is_bidirectional and (target_name, source_name) not in processed_pairs:
                         # Note: We do NOT add to processed_pairs here.
                         
+                        # CREATE reverse relationship (conditional - skip if same type exists)
+                        # 🆕 Using CONTAINS for fuzzy name matching
                         reverse_query = f"""
-                            MATCH (a:Character {{project_id: $pid, name: $source}})
-                            MATCH (b:Character {{project_id: $pid, name: $target}})
-                            MERGE (b)-[r:{safe_rel_type}]->(a)
-                            ON CREATE SET
-                                r.description = $desc,
+                            MATCH (a:Character {{project_id: $pid}})
+                            WHERE a.name = $source OR a.name CONTAINS $source OR $source CONTAINS a.name
+                            WITH a ORDER BY CASE WHEN a.name = $source THEN 0 ELSE 1 END, size(a.name) ASC LIMIT 1
+                            MATCH (b:Character {{project_id: $pid}})
+                            WHERE b.name = $target OR b.name CONTAINS $target OR $target CONTAINS b.name
+                            WITH a, b ORDER BY CASE WHEN b.name = $target THEN 0 ELSE 1 END, size(b.name) ASC LIMIT 1
+                            
+                            // Only create if this relationship type doesn't already exist
+                            WHERE NOT EXISTS {{
+                                MATCH (b)-[existing:{safe_rel_type}]->(a)
+                            }}
+                            
+                            CREATE (b)-[r:{safe_rel_type}]->(a)
+                            SET r.description = $desc,
                                 r.strength = $strength,
                                 r.bidirectional = $bidirectional,
                                 r.emotionalBond = $emotional_bond,
@@ -2054,11 +2106,8 @@ class DatabaseQueryService:
                                 r.interdependence = $interdependence,
                                 r.latentTension = $latent_tension,
                                 r.source_doc = $doc_id,
-                                r.created_at = datetime()
-                            ON MATCH SET
-                                // Only update basic info if missing or inferred
-                                // We prefer the Target's own analysis to update this later
-                                r.bidirectional = coalesce(r.bidirectional, $bidirectional)
+                                r.created_at = datetime(),
+                                r.updated_at = datetime()
                         """
 
                         await session.run(
