@@ -137,18 +137,14 @@ class DatabaseQueryService:
 
             # Initialize Schema (Constraints & Indexes)
             async with self._neo4j_driver.session() as session:
-                # 1. Character - Use characterId (not id)
+                # 1. Character - Use id (migrated from characterId)
                 # Drop conflicting index if exists before creating constraint
                 try:
                     await session.run("DROP INDEX character_id_unique IF EXISTS")
                 except:
                     pass  # Index might not exist
-                try:
-                    # Drop old index on c.id if exists
-                    await session.run("DROP INDEX ON :Character(id)")
-                except:
-                    pass
-                await session.run("CREATE CONSTRAINT character_id_unique IF NOT EXISTS FOR (c:Character) REQUIRE c.characterId IS UNIQUE")
+                
+                await session.run("CREATE CONSTRAINT character_uuid_unique IF NOT EXISTS FOR (c:Character) REQUIRE c.id IS UNIQUE")
                 await session.run("CREATE INDEX character_project_id_idx IF NOT EXISTS FOR (c:Character) ON (c.project_id)")
                 await session.run("CREATE INDEX character_name_idx IF NOT EXISTS FOR (c:Character) ON (c.name)")
 
@@ -1780,7 +1776,7 @@ class DatabaseQueryService:
                 existing_shorter = await session.run("""
                     MATCH (c:Character {project_id: $pid})
                     WHERE $long_name CONTAINS c.name AND c.name <> $long_name
-                    RETURN c.name AS short_name, c.characterId AS short_id
+                    RETURN c.name AS short_name, c.id AS short_id
                     LIMIT 1
                 """, pid=project_id, long_name=char_name)
                 shorter_record = await existing_shorter.single()
@@ -1850,7 +1846,7 @@ class DatabaseQueryService:
 
                 await session.run(
                     """
-                    MERGE (c:Character {characterId: $char_id})
+                    MERGE (c:Character {id: $char_id})
                     ON CREATE SET 
                         c.project_id = $pid,
                         c.name = $name,
