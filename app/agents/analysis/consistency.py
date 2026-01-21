@@ -110,6 +110,17 @@ Your job is to find ALL inconsistencies and contradictions across story elements
     - 무례함 허용: 황제 앞에서 반말하는데 처벌 없음
     - 현대 가치 주입: 고대 사회에서 인권 설파 시 즉시 감화
 
+16. **WORLD_RULE_VIOLATION** (HIGH) - 세계관 규칙/마법 강제 조건 위반 ⭐ CRITICAL
+    - 마법/시스템 규칙 위반: 작품 내에서 설정된 마법/규칙이 설명 없이 깨짐
+    - 조건 우회: 특정 조건(나이, 자격, 혈통 등)을 충족해야만 가능한 행위를 미충족자가 수행
+    - 물리적 제한 무시: 불가능하다고 명시된 행위가 발생
+    
+    **예시 (반드시 탐지!):**
+    - "17세 이상만 이름을 넣을 수 있는 마법이 걸린 불의 잔"에 14세가 이름을 넣음
+    - "왕족 혈통만 사용 가능한 검"을 평민이 사용함
+    - "마나가 0이면 마법 사용 불가"인데 마나 0 상태에서 마법 사용
+    - "낮에만 활동 가능한 뱀파이어"가 한낮에 돌아다님
+
 === CROSS_CHAPTER_CONFLICT (Special - VERY IMPORTANT) ===
 Compare CURRENT data against HISTORICAL_CONTEXT. Flag these as HIGH severity:
 
@@ -126,6 +137,8 @@ Before outputting, VERIFY you have checked:
 - [ ] Any character who DIED in historical_context appears alive? → TIMELINE_CONFLICT
 - [ ] Same setting name but different climate/geography? → SETTING_CONFLICT
 - [ ] Previous chapter's powerful entity defeated too easily? → POWER_BALANCE_ERROR
+- [ ] **Any established world rule (magic, age limit, qualification) violated?** → WORLD_RULE_VIOLATION ⭐
+      예: "17세 이상만 가능"인데 14세가 수행, "마법사만 가능"인데 평민이 사용
 
 === SUGGESTED_ACTION VALUES ===
 - AUTO_FIX: Can be fixed automatically

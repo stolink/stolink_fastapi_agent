@@ -24,7 +24,7 @@ AI_BACKEND*.md
 JOB*.md
 ref.md
 FUTURE_TASKS.md
-
+포스트.md
 # --- Python Compiled Files (자동 생성되는 파일들) ---
 __pycache__/
 *.pyc
