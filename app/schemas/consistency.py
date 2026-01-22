@@ -38,6 +38,7 @@ class ConflictType(str, Enum):
     LOGISTICS_ERROR = "LOGISTICS_ERROR"                        # 13. 병참/보급/경제 오류
     EMOTIONAL_CONTINUITY_ERROR = "EMOTIONAL_CONTINUITY_ERROR"  # 14. 감정 지속성 오류 (트라우마 증발)
     SOCIAL_PROTOCOL_VIOLATION = "SOCIAL_PROTOCOL_VIOLATION"    # 15. 사회적 신분/예법 파괴
+    WORLD_RULE_VIOLATION = "WORLD_RULE_VIOLATION"              # 16. 세계관 규칙/마법 강제 조건 위반 🆕
     
     # === Legacy/Alias Types ===
     PERSONALITY_CONFLICT = "PERSONALITY_CONFLICT"              # Alias for CHARACTER_TRAIT_CONFLICT
