@@ -12,16 +12,6 @@
 
 StoLink AI Backend는 LangGraph 기반 **멀티 에이전트 파이프라인**으로 소설 텍스트를 분석합니다. Spring Boot로부터 RabbitMQ 메시지를 수신하여 비동기로 처리하고, 결과를 콜백으로 전송합니다.
 
-### 주요 링크
-
-| 환경                | URL / 경로                                                  |
-| ------------------- | ----------------------------------------------------------- |
-| **Local**           | `http://localhost:8000`                                     |
-| **RabbitMQ UI**     | `http://localhost:15672` (guest/guest)                      |
-| **Neo4j Browser**   | `http://localhost:7474` (neo4j/stolink123)                  |
-| **Architecture**    | [SYSTEM_FLOW.md](./SYSTEM_FLOW.md)                          |
-| **Troubleshooting** | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md)                  |
-
 ---
 
 ## 2. Tech Stack & Decision Log
@@ -37,15 +27,7 @@ StoLink AI Backend는 LangGraph 기반 **멀티 에이전트 파이프라인**�
 | **Agent**      | LangGraph  | 0.2     | 상태 기반 워크플로우, 조건부 라우팅, 재시도 지원        |
 | **Packaging**  | uv         | -       | pip 대비 10배 빠른 설치, 의존성 잠금                    |
 
-### 2.2 LLM Provider
-
-| Category           | Technology      | Model             | Decision Rationale                     |
-| ------------------ | --------------- | ----------------- | -------------------------------------- |
-| **Primary**        | Google Gemini   | gemini-2.0-flash  | 한국어 성능, 무료 티어, 빠른 응답      |
-| **Fallback**       | AWS Bedrock     | Claude 3.5 Haiku  | 엔터프라이즈 안정성, 멀티 리전         |
-| **Embedding**      | Gemini          | text-embedding    | 768/1024차원, 시맨틱 청킹 및 RAG       |
-
-### 2.3 Database
+### 2.2 Database
 
 | Category      | Technology | Version | Decision Rationale                                 |
 | ------------- | ---------- | ------- | -------------------------------------------------- |
@@ -53,14 +35,14 @@ StoLink AI Backend는 LangGraph 기반 **멀티 에이전트 파이프라인**�
 | **Vector DB** | pgvector   | -       | PostgreSQL 확장, 섹션 임베딩 저장                  |
 | **Cache**     | Redis      | 7.x     | 임베딩 캐시, 프로젝트 락 (Sorted Set)              |
 
-### 2.4 Message Queue
+### 2.3 Message Queue
 
 | Category       | Technology | Version | Decision Rationale                          |
 | -------------- | ---------- | ------- | ------------------------------------------- |
 | **Broker**     | RabbitMQ   | 3.13    | Spring AMQP 호환, 우선순위 큐, ACK/NACK     |
 | **Client**     | aio_pika   | -       | asyncio 네이티브, Connection Pooling        |
 
-### 2.5 Utilities
+### 2.4 Utilities
 
 | Category           | Technology | Version | Decision Rationale                               |
 | ------------------ | ---------- | ------- | ------------------------------------------------ |
