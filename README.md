@@ -301,7 +301,7 @@ SET lock:project:A job2 NX EX 600  # 락 획득
 | ----------------------------------------------------------- | ---------------------------- |
 | [SYSTEM_FLOW.md](./SYSTEM_FLOW.md)                          | 전체 시스템 흐름 분석 (필독) |
 | [MULTI-AGENT_ARCHITECTURE.md](./MULTI-AGENT_ARCHITECTURE.md)| 에이전트 아키텍처 상세       |
-| [ACK_TIMEOUT_WALKTHROUGH.md](./ACK_TIMEOUT_WALKTHROUGH.md)  | ACK 타임아웃/재전송 흐름     |
+| [ACK_TIMEOUT_FLOW.md](./ACK_TIMEOUT_FLOW.md)  | ACK 타임아웃/재전송 흐름     |
 
 ---
 
