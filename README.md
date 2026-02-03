@@ -12,7 +12,7 @@
 
 StoLink AI Backend는 LangGraph 기반 **멀티 에이전트 파이프라인**으로 소설 텍스트를 분석합니다. Spring Boot로부터 RabbitMQ 메시지를 수신하여 비동기로 처리하고, 결과를 콜백으로 전송합니다.
 
-## 1-1. Additional Documentation
+### 1-1. Additional Documentation
 
 | 문서                                                        | 설명                         |
 | ----------------------------------------------------------- | ---------------------------- |
