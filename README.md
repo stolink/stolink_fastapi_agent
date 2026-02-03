@@ -12,6 +12,14 @@
 
 StoLink AI Backend는 LangGraph 기반 **멀티 에이전트 파이프라인**으로 소설 텍스트를 분석합니다. Spring Boot로부터 RabbitMQ 메시지를 수신하여 비동기로 처리하고, 결과를 콜백으로 전송합니다.
 
+## 1-1. Additional Documentation
+
+| 문서                                                        | 설명                         |
+| ----------------------------------------------------------- | ---------------------------- |
+| [SYSTEM_FLOW.md](./SYSTEM_FLOW.md)                          | 전체 시스템 흐름 분석 (필독) |
+| [MULTI-AGENT_ARCHITECTURE.md](./MULTI-AGENT_ARCHITECTURE.md)| 에이전트 아키텍처 상세       |
+| [ACK_TIMEOUT_FLOW.md](./ACK_TIMEOUT_FLOW.md)  | ACK 타임아웃/재전송 흐름     |
+
 ---
 
 ## 2. Tech Stack & Decision Log
@@ -275,21 +283,11 @@ SET lock:project:A job2 NX EX 600  # 락 획득
 }
 ```
 
----
 
-## 6. Additional Documentation
 
-| 문서                                                        | 설명                         |
-| ----------------------------------------------------------- | ---------------------------- |
-| [SYSTEM_FLOW.md](./SYSTEM_FLOW.md)                          | 전체 시스템 흐름 분석 (필독) |
-| [MULTI-AGENT_ARCHITECTURE.md](./MULTI-AGENT_ARCHITECTURE.md)| 에이전트 아키텍처 상세       |
-| [ACK_TIMEOUT_FLOW.md](./ACK_TIMEOUT_FLOW.md)  | ACK 타임아웃/재전송 흐름     |
+## 6. Contributing
 
----
-
-## 7. Contributing
-
-### 7.1 Commit Convention
+### 6.1 Commit Convention
 
 ```
 feat: 새 기능 추가
@@ -300,7 +298,7 @@ test: 테스트 추가
 chore: 빌드, 설정 변경
 ```
 
-### 7.2 Code Style
+### 6.2 Code Style
 
 - **Black** 포매터 사용
 - **isort** import 정렬
